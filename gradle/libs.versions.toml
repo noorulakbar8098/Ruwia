@@ -1,5 +1,8 @@
 [versions]
 agp = "9.0.1"
+supabase = "3.1.1"
+ktor = "3.1.1"
+koin = "4.0.2"
 android-compileSdk = "36"
 android-minSdk = "24"
 android-targetSdk = "36"
@@ -36,6 +39,15 @@ compose-components-resources = { module = "org.jetbrains.compose.components:comp
 compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "composeMultiplatform" }
 kotlinx-coroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
 wrappers-browser = { module = "org.jetbrains.kotlin-wrappers:kotlin-browser", version.ref = "kotlin-wrappers" }
+supabase-bom       = { module = "io.github.jan-tennert.supabase:bom", version.ref = "supabase" }
+supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt" }
+supabase-auth      = { module = "io.github.jan-tennert.supabase:auth-kt" }
+supabase-realtime  = { module = "io.github.jan-tennert.supabase:realtime-kt" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
+ktor-client-js     = { module = "io.ktor:ktor-client-js", version.ref = "ktor" }
+koin-core          = { module = "io.insert-koin:koin-core", version.ref = "koin" }
+koin-compose       = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
@@ -44,3 +56,4 @@ composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMul
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
