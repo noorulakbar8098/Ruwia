@@ -414,7 +414,7 @@ fun LoginScreen(
                             if (isSignUp) {
                                 vm.signUp(email.trim(), pass, signupName.trim(), signupPhone.trim())
                             } else {
-                                vm.login(email.trim(), pass)
+                                vm.login(email.trim(), pass, selectedRole)
                             }
                         },
                         enabled = !state.loading && email.isNotBlank() && pass.length >= 6,

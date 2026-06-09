@@ -1,300 +1,768 @@
 package com.example.ruwia.ui
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
+import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.EmployeeInfo
+import com.example.ruwia.domain.Order
+import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.presentation.AdminViewModel
-import org.jetbrains.compose.resources.painterResource
-import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.app_logo
+import com.example.ruwia.presentation.EmployeeCreationState
+import com.example.ruwia.SystemBackHandler
+import com.example.ruwia.ui.dashboard.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+// ─────────────────────────────────────────────────────────────
+//  Admin Dashboard Screen — Neer Thuli
+//  Premium SaaS Water Delivery Management Dashboard
+// ─────────────────────────────────────────────────────────────
+
 @Composable
 fun AdminDashboardScreen(
     vm: AdminViewModel,
     onLogout: () -> Unit
 ) {
     val state by vm.state.collectAsState()
-    var selectedTab by remember { mutableStateOf(0) } // 0: Home/Dashboard, 1: Orders, 2: Stocks, 3: Employees, 4: Reports
+    var selectedTab    by remember { mutableStateOf(0) }
+    var showStock      by remember { mutableStateOf(false) }
+    var showAddStock   by remember { mutableStateOf(false) }
+    var showSettings   by remember { mutableStateOf(false) }
+    var showEmployees    by remember { mutableStateOf(false) }
+    var showAddEmployee  by remember { mutableStateOf(false) }
+    var showPricing      by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Image(
-                            painter = painterResource(Res.drawable.app_logo),
-                            contentDescription = "App Logo",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .padding(end = 0.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text("Neer Thuli Admin", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF006D77))
-                            Text("Enterprise Control Portal", fontSize = 11.sp, color = Color(0xFF6C757D))
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onLogout) {
-                        Text("🚪", fontSize = 20.sp)
-                    }
+    // ── Deepest level ─────────────────────────────────────────
+    if (showPricing) {
+        SystemBackHandler { showPricing = false }
+        ProductPricingScreen(
+            stockItems = state.stockItems,
+            onBack     = { showPricing = false }
+        )
+        return
+    }
+    if (showAddEmployee) {
+        val creation = state.employeeCreation
+
+        // ── Credentials dialog — only after Supabase confirms ─────────────
+        if (creation is EmployeeCreationState.Success) {
+            SystemBackHandler { /* block back while dialog is open */ }
+            EmployeeCreatedDialog(
+                creation = creation,
+                onDone   = {
+                    vm.clearEmployeeCreation()
+                    showAddEmployee = false
                 }
             )
-        },
-        bottomBar = {
-            NavigationBar(
-                containerColor = Color.White,
-                tonalElevation = 8.dp
-            ) {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Text("📊", fontSize = 20.sp) },
-                    label = { Text("Dashboard", fontSize = 11.sp) }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Text("📋", fontSize = 20.sp) },
-                    label = { Text("Orders", fontSize = 11.sp) }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Text("📦", fontSize = 20.sp) },
-                    label = { Text("Stock", fontSize = 11.sp) }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Text("👥", fontSize = 20.sp) },
-                    label = { Text("Staff", fontSize = 11.sp) }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 4,
-                    onClick = { selectedTab = 4 },
-                    icon = { Text("⚙️", fontSize = 20.sp) },
-                    label = { Text("Config", fontSize = 11.sp) }
-                )
-            }
+            return
         }
-    ) { padding ->
+
+        // ── Creation form ─────────────────────────────────────────────────
+        SystemBackHandler {
+            vm.clearEmployeeCreation()
+            showAddEmployee = false
+        }
+        AddEmployeeScreen(
+            isSaving   = creation is EmployeeCreationState.Loading,
+            saveError  = (creation as? EmployeeCreationState.Error)?.message,
+            onBack     = { vm.clearEmployeeCreation(); showAddEmployee = false },
+            onClose    = { vm.clearEmployeeCreation(); showAddEmployee = false; showEmployees = false },
+            onSave     = { name, phone, role, shop, salary, email, password ->
+                vm.addEmployee(name, phone, role, shop, salary, email, password)
+            }
+        )
+        return
+    }
+    if (showEmployees) {
+        SystemBackHandler { showEmployees = false }
+        EmployeesScreen(
+            employees     = state.employees,
+            onBack        = { showEmployees = false },
+            onAddEmployee = { showAddEmployee = true }
+        )
+        return
+    }
+
+    // ── Settings ──────────────────────────────────────────────
+    if (showSettings) {
+        SystemBackHandler { showSettings = false }
+        SettingsScreen(
+            state                  = state,
+            onBack                 = { showSettings = false },
+            onNavigateToEmployees  = { showEmployees = true },
+            onNavigateToPricing    = { showPricing = true },
+            onLogout               = onLogout
+        )
+        return
+    }
+
+    // ── Add stock purchase ────────────────────────────────────
+    if (showAddStock) {
+        SystemBackHandler { showAddStock = false }
+        AddStockPurchaseScreen(
+            stockItems = state.stockItems,
+            onBack     = { showAddStock = false },
+            onClose    = { showAddStock = false; showStock = false; selectedTab = 0 },
+            onSave     = { _, _, _, _, _ ->
+                showAddStock = false
+                vm.loadData()
+            }
+        )
+        return
+    }
+
+    // ── Stock dashboard ───────────────────────────────────────
+    if (showStock) {
+        SystemBackHandler { showStock = false; selectedTab = 0 }
+        StockDashboardScreen(
+            state      = state,
+            onBack     = { showStock = false; selectedTab = 0 },
+            onRefresh  = vm::loadData,
+            onAddStock = { showAddStock = true }
+        )
+        return
+    }
+
+    Scaffold(
+        containerColor = NTColors.Background,
+        bottomBar = {
+            NTBottomNavigation(
+                selectedTab = selectedTab,
+                onTabSelected = { tab ->
+                    if (tab == 1) showStock = true else selectedTab = tab
+                },
+                onFabClick = { /* open new-order sheet */ },
+                tabs = listOf(
+                    NTNavTab(0, "Home",      Icons.Rounded.Home),
+                    NTNavTab(1, "Stock",     Icons.Rounded.Inventory2),
+                    NTNavTab(2, "Customers", Icons.Rounded.Group),
+                    NTNavTab(3, "Reports",   Icons.Rounded.BarChart),
+                )
+            )
+        }
+    ) { contentPadding ->
         when (selectedTab) {
-            0 -> SaaSAnalyticsDashboard(state.mrr, state.csat, state.fleetActiveCount, padding)
-            1 -> AdminOrdersTab(state.orders, vm, padding)
-            2 -> AdminStockTab(state.stockItems, vm, padding)
-            3 -> AdminEmployeesTab(state.employees, vm, padding)
-            4 -> AdminConfigTab(padding)
+            0 -> AdminHomeTab(state, vm, contentPadding, onLogout,
+                    onAddStock      = { showAddStock = true },
+                    onOpenSettings  = { showSettings = true })
+            2 -> AdminCustomersTab(state.customers, contentPadding)
+            3 -> AdminReportsTab(state, contentPadding)
         }
     }
 }
 
+// ── Home tab ──────────────────────────────────────────────────
+
 @Composable
-fun SaaSAnalyticsDashboard(
-    mrr: Double,
-    csat: Double,
-    fleetActive: Int,
-    padding: PaddingValues
+private fun AdminHomeTab(
+    state: AdminState,
+    vm: AdminViewModel,
+    contentPadding: PaddingValues,
+    onLogout: () -> Unit,
+    onAddStock: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
 ) {
+    when {
+        state.loading  -> NTDashboardSkeleton(contentPadding)
+        state.error != null -> NTErrorState(
+            message = state.error,
+            onRetry  = vm::loadData,
+            contentPadding = contentPadding
+        )
+        else -> AdminDashboardContent(state, contentPadding, onLogout, onAddStock, onOpenSettings)
+    }
+}
+
+@Composable
+private fun AdminDashboardContent(
+    state: AdminState,
+    contentPadding: PaddingValues,
+    @Suppress("UNUSED_PARAMETER") onLogout: () -> Unit,
+    onAddStock: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
+) {
+    // ── Derive dashboard metrics from real AdminState ────────
+    val totalStock     = state.stockItems.sumOf { it.stockAvailable }
+    val pendingOrders  = state.orders.count { it.status == "pending" }
+    val deliveredToday = state.orders.count { it.status == "delivered" }
+    val dueAmount      = state.customers.filter { it.balance > 0 }.sumOf { it.balance }
+    val dueCount       = state.customers.count { it.balance > 0 }
+    val activeStaff    = state.employees.count { it.status != "inactive" }
+    val emptyCans      = state.customers.sumOf { it.cansHeld }
+
+    val (greeting, subtext) = buildGreeting(
+        mrr         = state.mrr,
+        pending     = pendingOrders,
+        delivered   = deliveredToday
+    )
+
+    val kpiItems = buildKpis(
+        totalStock    = totalStock,
+        mrr           = state.mrr,
+        emptyCans     = emptyCans,
+        dueAmount     = dueAmount,
+        dueCount      = dueCount,
+        pendingOrders = pendingOrders,
+        customers     = state.customers.size
+    )
+
+    val quickActions = listOf(
+        NTQuickAction("a1", "New order",       Icons.Rounded.AddShoppingCart, NTColors.PrimaryDark),
+        NTQuickAction("a2", "Add customer",    Icons.Rounded.PersonAdd,       NTColors.PrimaryMid),
+        NTQuickAction("a3", "Add stock",       Icons.Rounded.LocalShipping,   NTColors.Accent),
+        NTQuickAction("a4", "View reports",    Icons.Rounded.Analytics,       NTColors.TextPrimary),
+        NTQuickAction("a5", "Collect payment", Icons.Rounded.Payments,        NTColors.Info, badgeCount = dueCount.coerceAtMost(99)),
+        NTQuickAction("a6", "Assign driver",   Icons.Rounded.DirectionsCar,   NTColors.AvatarPurple),
+    )
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(padding)
-            .background(Color(0xFFF8F9FA))
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .background(NTColors.Background),
+        contentPadding = PaddingValues(
+            top    = contentPadding.calculateTopPadding(),
+            bottom = contentPadding.calculateBottomPadding() + 16.dp
+        )
     ) {
-        item { Spacer(modifier = Modifier.height(4.dp)) }
-
-        // Top Metrics
+        // Header
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                SaaSCard(modifier = Modifier.weight(1f)) {
-                    Text("TOTAL MRR", fontSize = 10.sp, color = Color(0xFF6C757D), fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("₹${mrr.toInt()}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF212529))
-                    Text("+8.2% vs last mo", fontSize = 10.sp, color = Color(0xFF2A9D8F))
-                }
-
-                SaaSCard(modifier = Modifier.weight(1f)) {
-                    Text("FLEET ON ROAD", fontSize = 10.sp, color = Color(0xFF6C757D), fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("$fleetActive active", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF212529))
-                    Text("92% complete", fontSize = 10.sp, color = Color(0xFF2A9D8F))
-                }
-
-                SaaSCard(modifier = Modifier.weight(1f)) {
-                    Text("CSAT RATING", fontSize = 10.sp, color = Color(0xFF6C757D), fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("$csat / 5.0", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF212529))
-                    Text("91% Positive", fontSize = 10.sp, color = Color(0xFF2A9D8F))
-                }
-            }
+            NTDashboardHeader(
+                shopName            = "Neer Thuli",
+                adminName           = "Admin",
+                notificationCount   = pendingOrders,
+                onAvatarClick       = onOpenSettings, // tap avatar → Settings
+                onSearchClick       = {},
+                onNotificationClick = {}
+            )
         }
 
-        // Charts: Monthly Volume
+        // Greeting
         item {
-            SaaSCard {
-                Text("STOCK ANALYTICS", fontSize = 12.sp, color = Color(0xFF6C757D), fontWeight = FontWeight.Bold)
-                Text("Monthly Volume (Liters)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF212529))
-                Spacer(modifier = Modifier.height(16.dp))
+            NTGreetingSection(greeting = greeting, subtext = subtext)
+        }
 
-                // Custom bar chart rendering with canvas
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp)
-                ) {
-                    val bars = listOf(90f, 130f, 150f, 115f, 125f, 145f)
-                    val months = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun")
-                    val space = size.width / (bars.size)
-                    val barWidth = 30.dp.toPx()
+        // Revenue hero card
+        item {
+            NTRevenueHeroCard(
+                shopName       = "Neer Thuli",
+                mrr            = state.mrr,
+                totalOrders    = state.orders.size,
+                totalCustomers = state.customers.size,
+                activeStaff    = activeStaff,
+                fleetActive    = state.fleetActiveCount,
+                growthPercent  = 8.2,
+                dateLabel      = "This Month"
+            )
+        }
 
-                    bars.forEachIndexed { i, h ->
-                        val x = i * space + (space - barWidth) / 2
-                        val progress = h / 160f
-                        val barHeight = size.height * progress
+        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
-                        // Draw background bar
-                        drawRoundRect(
-                            color = Color(0xFFE9ECEF),
-                            topLeft = Offset(x, 0f),
-                            size = Size(barWidth, size.height),
-                            cornerRadius = CornerRadius(6.dp.toPx())
-                        )
+        // KPI grid
+        item {
+            NTKpiGrid(items = kpiItems)
+        }
 
-                        // Draw active volume bar
-                        drawRoundRect(
-                            color = Color(0xFF2A9D8F),
-                            topLeft = Offset(x, size.height - barHeight),
-                            size = Size(barWidth, barHeight),
-                            cornerRadius = CornerRadius(6.dp.toPx())
-                        )
+        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+
+        // Quick actions
+        item {
+            NTQuickActionsRow(
+                actions = quickActions,
+                onActionClick = { action ->
+                    when (action.id) {
+                        "a3" -> onAddStock()  // Add stock → opens AddStockPurchaseScreen
+                        else -> { /* other actions handled later */ }
                     }
                 }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun").forEach {
-                        Text(it, fontSize = 11.sp, color = Color(0xFF6C757D), modifier = Modifier.width(40.dp), textAlign = TextAlign.Center)
-                    }
-                }
-            }
+            )
         }
 
-        // Active Delivery Fleet Tracking Canvas
+        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+
+        // Analytics section — line chart
+        if (state.weeklyRevenuePoints.isNotEmpty()) {
+            item {
+                Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
+                    NTSectionHeader(label = "ANALYTICS", title = "Revenue trend")
+                    Spacer(modifier = Modifier.height(NTDp.md))
+                    NTDateRangePicker(
+                        selected = NTDateRange.WEEKLY,
+                        onSelect = {}
+                    )
+                    Spacer(modifier = Modifier.height(NTDp.md))
+                    NTLineChartCard(
+                        title         = "WEEKLY REVENUE",
+                        valueLabel    = state.weeklyRevenueLabel,
+                        growthPercent = 18.0,
+                        points        = state.weeklyRevenuePoints,
+                        labels        = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+                    )
+                }
+            }
+            item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+        }
+
+        // Stock performance chart
+        if (state.stockItems.isNotEmpty()) {
+            item {
+                Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
+                    val stockPoints = state.stockItems
+                        .map { it.stockAvailable.toFloat() }
+                        .let { pts ->
+                            val max = pts.maxOrNull() ?: 1f
+                            pts.map { it / max }
+                        }
+                    NTLineChartCard(
+                        title         = "STOCK LEVELS",
+                        valueLabel    = "$totalStock cans on hand",
+                        growthPercent = -3.0,
+                        points        = if (stockPoints.size >= 2) stockPoints else List(7) { 0.5f },
+                        labels        = state.stockItems.map { it.name.take(3).uppercase() }
+                            .let { l -> if (l.size < 2) listOf("5L", "10L", "20L", "Bulk") else l }
+                    )
+                }
+            }
+            item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+        }
+
+        // Activity feed
         item {
-            SaaSCard {
-                Text("ACTIVE FLEET TRACKER", fontSize = 12.sp, color = Color(0xFF6C757D), fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(150.dp)
-                        .background(Color(0xFFE9ECEF), RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Simple interactive map telemetry graphics
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        // Draw simulated roads
-                        drawLine(Color.White, Offset(10f, 50f), Offset(size.width - 10f, 50f), strokeWidth = 10f)
-                        drawLine(Color.White, Offset(100f, 10f), Offset(100f, size.height - 10f), strokeWidth = 10f)
-                        drawLine(Color.White, Offset(size.width - 120f, 10f), Offset(size.width - 120f, size.height - 10f), strokeWidth = 10f)
-
-                        // Draw driver hubs
-                        drawCircle(Color(0xFF006D77), radius = 12f, center = Offset(100f, 50f))
-                        drawCircle(Color(0xFF2A9D8F), radius = 12f, center = Offset(size.width - 120f, 90f))
-                        drawCircle(Color(0xFFF4A261), radius = 12f, center = Offset(100f, 110f))
-                    }
-                    Text("Live Fleet Map Active (32 Vehicles)", color = Color(0xFF006D77), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("🚚 Active: 32", fontSize = 12.sp, color = Color(0xFF2A9D8F), fontWeight = FontWeight.Bold)
-                    Text("✅ Delivered: 12", fontSize = 12.sp, color = Color(0xFF6C757D))
-                    Text("⚠️ Idle: 4", fontSize = 12.sp, color = Color(0xFFF4A261))
-                }
-            }
+            NTActivityFeedSection(
+                orders    = state.orders,
+                customers = state.customers,
+                onViewAll = {}
+            )
         }
 
-        // Quick Admin Controls Grid
-        item {
-            Text("QUICK OPERATIONAL ACTIONS", fontSize = 12.sp, color = Color(0xFF6C757D), fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                QuickActionButton("➕ Order", Color(0xFF006D77), Modifier.weight(1f))
-                QuickActionButton("👤 Customer", Color(0xFF2A9D8F), Modifier.weight(1f))
-                QuickActionButton("🚚 Route", Color(0xFFF4A261), Modifier.weight(1f))
-            }
-        }
+        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
-        item { Spacer(modifier = Modifier.height(16.dp)) }
+        // Staff overview row
+        if (state.employees.isNotEmpty()) {
+            item {
+                Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
+                    NTSectionHeader(label = "TEAM", title = "Staff overview")
+                    Spacer(modifier = Modifier.height(NTDp.md))
+                }
+            }
+            items(items = state.employees.take(3)) { emp ->
+                NTStaffCard(employee = emp, modifier = Modifier.padding(horizontal = NTDp.screenPad))
+                Spacer(modifier = Modifier.height(NTDp.sm))
+            }
+            item { Spacer(modifier = Modifier.height(NTDp.sm)) }
+        }
     }
 }
 
+// ── Staff card ────────────────────────────────────────────────
+
 @Composable
-fun SaaSCard(
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit
-) {
+private fun NTStaffCard(employee: EmployeeInfo, modifier: Modifier = Modifier) {
+    val (statusColor, statusLabel) = when (employee.status) {
+        "on_delivery" -> NTColors.Success to "On Delivery"
+        "active"      -> NTColors.Primary to "Active"
+        else          -> NTColors.TextTertiary to "Inactive"
+    }
     Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, Color(0xFFE9ECEF)),
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(NTDp.radXxl),
+        colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-//        Column(
-//            modifier = Modifier.padding(16.dp),
-//            content = content
-//        ) {
-//
-//        }
+        Row(
+            modifier = Modifier.padding(NTDp.md),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(NTDp.radMd))
+                    .background(NTColors.PrimaryLight),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.Person, contentDescription = null,
+                    tint = NTColors.Primary, modifier = Modifier.size(NTDp.iconLg))
+            }
+            Spacer(modifier = Modifier.width(NTDp.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(employee.name, color = NTColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("${employee.completedDeliveries} deliveries · ${employee.rating} rating", color = NTColors.TextTertiary, fontSize = 12.sp)
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(NTDp.radFull))
+                    .background(statusColor.copy(alpha = 0.12f))
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Text(statusLabel, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+// ── Orders tab ────────────────────────────────────────────────
+
+@Composable
+private fun NTOrderCard(order: Order, @Suppress("UNUSED_PARAMETER") onAssign: (String) -> Unit) {
+    val (statusColor, statusBg) = when (order.status) {
+        "delivered" -> NTColors.Success to NTColors.SuccessLight
+        "approved"  -> NTColors.Primary to NTColors.PrimaryLight
+        "cancelled" -> NTColors.Error   to NTColors.ErrorLight
+        else        -> NTColors.Warning to NTColors.WarningLight
+    }
+    Card(
+        shape = RoundedCornerShape(NTDp.radXxl),
+        colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(modifier = Modifier.padding(NTDp.md), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(NTDp.radMd)).background(statusBg),
+                contentAlignment = Alignment.Center
+            ) { Icon(Icons.Rounded.Inventory2, contentDescription = null,
+                tint = statusColor, modifier = Modifier.size(NTDp.iconLg)) }
+            Spacer(modifier = Modifier.width(NTDp.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Order #${order.id?.take(6) ?: "—"}", color = NTColors.TextPrimary,
+                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("Qty: ${order.qty} cans · ${order.createdAt?.take(10) ?: ""}",
+                    color = NTColors.TextTertiary, fontSize = 12.sp)
+            }
+            Box(
+                modifier = Modifier.clip(RoundedCornerShape(NTDp.radFull))
+                    .background(statusBg).padding(horizontal = 10.dp, vertical = 4.dp)
+            ) { Text(order.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+// ── Customers tab ─────────────────────────────────────────────
+
+@Composable
+fun AdminCustomersTab(customers: List<Customer>, contentPadding: PaddingValues) {
+    if (customers.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(NTColors.Background).padding(contentPadding),
+            contentAlignment = Alignment.Center
+        ) {
+            NTEmptyState(
+                icon     = Icons.Rounded.Group,
+                title    = "No Customers Yet",
+                subtitle = "Customers will appear here once they sign up.",
+                ctaLabel = "Add Customer"
+            )
+        }
+        return
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(NTColors.Background),
+        contentPadding = PaddingValues(
+            top   = contentPadding.calculateTopPadding() + 16.dp,
+            bottom = contentPadding.calculateBottomPadding() + 16.dp,
+            start = NTDp.screenPad, end = NTDp.screenPad
+        ),
+        verticalArrangement = Arrangement.spacedBy(NTDp.sm)
+    ) {
+        item {
+            Text("Customers", color = NTColors.TextPrimary, fontSize = 22.sp,
+                fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = NTDp.sm))
+        }
+        items(items = customers, key = { it.id ?: it.hashCode().toString() }) { cust ->
+            Card(
+                shape = RoundedCornerShape(NTDp.radXxl),
+                colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Row(modifier = Modifier.padding(NTDp.md), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(NTDp.radMd))
+                            .background(NTColors.PrimaryLight),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Rounded.Person, contentDescription = null,
+                        tint = NTColors.Primary, modifier = Modifier.size(NTDp.iconLg)) }
+                    Spacer(modifier = Modifier.width(NTDp.md))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(cust.name, color = NTColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${cust.cansHeld} cans held · ${cust.phone ?: ""}",
+                            color = NTColors.TextTertiary, fontSize = 12.sp)
+                    }
+                    if (cust.balance > 0) {
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("₹${cust.balance.toInt()}", color = NTColors.Error,
+                                fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text("DUE", color = NTColors.Error, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Reports tab ───────────────────────────────────────────────
+
+@Composable
+fun AdminReportsTab(state: AdminState, contentPadding: PaddingValues) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(NTColors.Background),
+        contentPadding = PaddingValues(
+            top = contentPadding.calculateTopPadding() + 16.dp,
+            bottom = contentPadding.calculateBottomPadding() + 16.dp,
+            start = NTDp.screenPad, end = NTDp.screenPad
+        ),
+        verticalArrangement = Arrangement.spacedBy(NTDp.md)
+    ) {
+        item {
+            Text("Reports", color = NTColors.TextPrimary, fontSize = 22.sp,
+                fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = NTDp.xs))
+        }
+        // Revenue chart
+        if (state.weeklyRevenuePoints.isNotEmpty()) {
+            item {
+                NTLineChartCard(
+                    title = "WEEKLY REVENUE", valueLabel = state.weeklyRevenueLabel,
+                    growthPercent = 18.0, points = state.weeklyRevenuePoints,
+                    labels = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+                )
+            }
+        }
+        // CSAT card
+        item {
+            Card(
+                shape = RoundedCornerShape(NTDp.radXxl),
+                colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Row(modifier = Modifier.padding(NTDp.cardPad), verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(NTDp.radMd))
+                        .background(NTColors.SuccessLight), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.StarRate, contentDescription = null,
+                            tint = NTColors.Success, modifier = Modifier.size(NTDp.iconLg))
+                    }
+                    Spacer(modifier = Modifier.width(NTDp.md))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("CSAT SCORE", color = NTColors.TextTertiary, fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+                        Text("${state.csat} / 5.0", color = NTColors.TextPrimary, fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold)
+                    }
+                    NTGrowthBadge(percent = 3.5)
+                }
+            }
+        }
+        // Fleet summary
+        item {
+            Card(
+                shape = RoundedCornerShape(NTDp.radXxl),
+                colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Row(modifier = Modifier.padding(NTDp.cardPad), verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(NTDp.radMd))
+                        .background(NTColors.DelivIconBg), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.LocalShipping, contentDescription = null,
+                            tint = NTColors.DelivIconFg, modifier = Modifier.size(NTDp.iconLg))
+                    }
+                    Spacer(modifier = Modifier.width(NTDp.md))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("FLEET ACTIVE", color = NTColors.TextTertiary, fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+                        Text("${state.fleetActiveCount} vehicles", color = NTColors.TextPrimary,
+                            fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Helper functions ──────────────────────────────────────────
+
+private fun buildGreeting(mrr: Double, pending: Int, delivered: Int): Pair<String, String> {
+    val greeting = "Good morning"  // Platform time can override via ViewModel if needed
+    val subtext = when {
+        pending > 5   -> "$pending orders are pending dispatch."
+        delivered > 0 -> "$delivered deliveries completed today."
+        mrr > 20_000  -> "Revenue is on track this month."
+        else          -> "Here's how your business is doing today."
+    }
+    return greeting to subtext
+}
+
+private fun buildKpis(
+    totalStock: Int,
+    mrr: Double,
+    emptyCans: Int,
+    dueAmount: Double,
+    dueCount: Int,
+    pendingOrders: Int,
+    customers: Int
+): List<NTKpiItem> = listOf(
+    NTKpiItem(
+        title = "STOCK ON HAND",   value = "$totalStock",
+        subtitle = "${totalStock / 10 + 1} SKUs · live",
+        icon = Icons.Rounded.Inventory2,
+        iconBg = NTColors.SuccessLight, iconFg = NTColors.Success,
+        statusColor = NTColors.Success, subtitleColor = NTColors.SuccessText
+    ),
+    NTKpiItem(
+        title = "MONTHLY REVENUE", value = formatAmount(mrr),
+        subtitle = "+8.2% vs last month",
+        icon = Icons.Rounded.AccountBalanceWallet,
+        iconBg = NTColors.SuccessLight, iconFg = NTColors.Success,
+        statusColor = NTColors.Success, subtitleColor = NTColors.SuccessText
+    ),
+    NTKpiItem(
+        title = "EMPTY CANS",      value = "$emptyCans",
+        subtitle = "With customers",
+        icon = Icons.Rounded.Water,
+        iconBg = NTColors.SurfaceVar, iconFg = NTColors.TextSecondary,
+        statusColor = NTColors.TextTertiary, subtitleColor = NTColors.TextSecondary
+    ),
+    NTKpiItem(
+        title = "DUE PAYMENTS",    value = formatAmount(dueAmount),
+        subtitle = "$dueCount customers",
+        icon = Icons.Rounded.Warning,
+        iconBg = NTColors.ErrorLight, iconFg = NTColors.Error,
+        statusColor = NTColors.Error, subtitleColor = NTColors.ErrorText
+    ),
+    NTKpiItem(
+        title = "PENDING ORDERS",  value = "$pendingOrders",
+        subtitle = "Awaiting dispatch",
+        icon = Icons.Rounded.PendingActions,
+        iconBg = NTColors.WarningLight, iconFg = NTColors.Warning,
+        statusColor = NTColors.Warning, subtitleColor = NTColors.WarningText
+    ),
+    NTKpiItem(
+        title = "TOTAL CUSTOMERS", value = "$customers",
+        subtitle = "Active accounts",
+        icon = Icons.Rounded.Group,
+        iconBg = NTColors.PrimaryLight, iconFg = NTColors.Primary,
+        statusColor = NTColors.Primary, subtitleColor = NTColors.PrimaryDark
+    ),
+)
+
+private fun formatAmount(amount: Double): String = when {
+    amount >= 1_00_000 -> "₹${(amount / 1_00_000 * 10).toLong() / 10.0}L"
+    amount >= 1_000    -> "₹${amount.toLong()}"
+    else               -> "₹${amount.toLong()}"
+}
+
+// ── Employee created — credentials dialog ─────────────────────
+//   Fires ONLY when Supabase confirms the auth user was created.
+
+@Composable
+fun EmployeeCreatedDialog(
+    creation: EmployeeCreationState.Success,
+    onDone: () -> Unit
+) {
+    Dialog(onDismissRequest = {}) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(NTDp.radXxl))
+                .background(NTColors.Surface)
+                .padding(NTDp.lg),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Success icon
+            Box(
+                modifier = Modifier.size(64.dp).clip(CircleShape)
+                    .background(NTColors.SuccessLight),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.CheckCircle, contentDescription = null,
+                    tint = NTColors.Success, modifier = Modifier.size(32.dp))
+            }
+
+            Spacer(modifier = Modifier.height(NTDp.md))
+
+            Text("Account created!",
+                color = NTColors.TextPrimary, fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold)
+            Text("Share these credentials with ${creation.name}",
+                color = NTColors.TextSecondary, fontSize = 13.sp,
+                modifier = Modifier.padding(top = 4.dp))
+
+            Spacer(modifier = Modifier.height(NTDp.lg))
+
+            // Credentials card
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(NTDp.radLg))
+                    .background(NTColors.SurfaceVar)
+                    .padding(NTDp.md),
+                verticalArrangement = Arrangement.spacedBy(NTDp.md)
+            ) {
+                EmpCredRow("Name",     creation.name,     Icons.Rounded.Person)
+                EmpCredRow("Role",     creation.role.replaceFirstChar { it.uppercaseChar() }, Icons.Rounded.Badge)
+                EmpCredRow("Shop",     creation.shop,     Icons.Rounded.Store)
+                HorizontalDivider(color = NTColors.Border)
+                EmpCredRow("Email",    creation.email,    Icons.Rounded.Email)
+                EmpCredRow("Password", creation.password, Icons.Rounded.Key)
+            }
+
+            // Warning
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .padding(top = NTDp.md)
+                    .clip(RoundedCornerShape(NTDp.radMd))
+                    .background(NTColors.WarningLight)
+                    .padding(NTDp.sm),
+                horizontalArrangement = Arrangement.spacedBy(NTDp.sm)
+            ) {
+                Icon(Icons.Rounded.Warning, contentDescription = null,
+                    tint = NTColors.Warning,
+                    modifier = Modifier.size(14.dp).padding(top = 2.dp))
+                Text(
+                    "Ask the employee to change their password after first login.",
+                    color = NTColors.WarningText, fontSize = 11.sp, lineHeight = 16.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(NTDp.lg))
+
+            Box(
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+                    .clip(RoundedCornerShape(NTDp.radFull))
+                    .background(NTColors.Primary)
+                    .clickable(onClick = onDone),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Done", color = Color.White, fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold)
+            }
+        }
     }
 }
 
 @Composable
-fun QuickActionButton(
-    text: String,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .background(color.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
-            .clickable { }
-            .padding(vertical = 16.dp),
-        contentAlignment = Alignment.Center
+private fun EmpCredRow(label: String, value: String, icon: ImageVector) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NTDp.sm)
     ) {
-        Text(text, color = color, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Icon(icon, contentDescription = null, tint = NTColors.TextTertiary,
+            modifier = Modifier.size(16.dp))
+        Text(label, color = NTColors.TextTertiary, fontSize = 12.sp,
+            modifier = Modifier.width(64.dp))
+        Text(value, color = NTColors.TextPrimary, fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold)
     }
 }

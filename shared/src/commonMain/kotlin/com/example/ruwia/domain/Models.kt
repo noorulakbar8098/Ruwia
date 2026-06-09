@@ -73,7 +73,9 @@ data class StockItem(
     val name: String,
     val capacityLiters: Int,
     val stockAvailable: Int,
-    val pricePerCan: Double
+    val pricePerCan: Double,
+    val costPrice: Double = 0.0,  // purchase cost per can
+    val tags: String = ""          // e.g. "DAILY · STAPLE"
 )
 
 @Serializable
@@ -81,11 +83,15 @@ data class EmployeeInfo(
     val id: String,
     val name: String,
     val phone: String,
-    val status: String = "active", // "active" | "inactive" | "on_delivery"
+    val status: String = "active",   // "active" | "inactive" | "on_delivery"
+    val role: String = "staff",      // "manager" | "stock" | "cashier" | "driver"
+    val shopName: String = "Shop 1",
     val completedDeliveries: Int = 0,
     val totalDeliveries: Int = 0,
     val monthlySalary: Double = 0.0,
-    val rating: Double = 5.0
+    val rating: Double = 5.0,
+    val todayStat: Int = 0,          // key daily metric value
+    val statLabel: String = "TODAY"  // label for todayStat
 )
 
 @Serializable
@@ -97,5 +103,27 @@ data class DeliveryTask(
     val canQty: Int,
     val etaText: String,
     val status: String = "queued" // "queued" | "en_route" | "delivered" | "cancelled"
+)
+
+@Serializable
+data class ShopStockInfo(
+    val id: String,
+    val name: String,       // e.g. "Shop 1 · Main"
+    val location: String,   // e.g. "SAIBABA COLONY"
+    val totalCans: Int,
+    val fullCans: Int,
+    val emptyCans: Int,
+    val cansWithCustomers: Int,
+    val isLive: Boolean = true
+)
+
+@Serializable
+data class StockMovement(
+    val id: String,
+    val source: String,     // supplier name or customer name
+    val qty: Int,
+    val type: String,       // "inward" | "outward" | "adjustment"
+    val shopName: String,
+    @SerialName("created_at") val createdAt: String? = null
 )
 

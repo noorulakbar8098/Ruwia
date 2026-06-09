@@ -13,7 +13,7 @@ val appModule = module {
     single { CustomerRepository(get()) }
     single { AdminRepository() }
     single { EmployeeRepository() }
-    factory { AuthViewModel(get()) }
+    single { AuthViewModel(get()) }
     factory { UserViewModel(get(), get()) }
     factory { AdminViewModel(get()) }
     factory { EmployeeViewModel(get()) }

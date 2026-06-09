@@ -1,20 +1,17 @@
+
 package com.example.ruwia
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import com.example.ruwia.domain.UserRole
 import com.example.ruwia.presentation.AdminViewModel
 import com.example.ruwia.presentation.AuthViewModel
 import com.example.ruwia.presentation.EmployeeViewModel
-import com.example.ruwia.presentation.UserViewModel
 import com.example.ruwia.ui.AdminDashboardScreen
 import com.example.ruwia.ui.EmployeeDashboardScreen
 import com.example.ruwia.ui.ForgotPasswordScreen
 import com.example.ruwia.ui.LoginScreen
-import com.example.ruwia.ui.PlaceOrderScreen
 import com.example.ruwia.ui.SplashScreen
-import com.example.ruwia.ui.UserHomeScreen
 import org.koin.compose.koinInject
 
 private sealed class Screen {
@@ -30,24 +27,62 @@ private sealed class Screen {
 fun App() {
     MaterialTheme {
         var screen by remember { mutableStateOf<Screen>(Screen.Splash) }
+        val authVm = koinInject<AuthViewModel>()
+        val authState by authVm.state.collectAsState()
+
+        // Global guard: directly collect the StateFlow (bypasses collectAsState's one-frame
+        // delay) so that any loggedIn→false transition navigates to Login immediately,
+        // regardless of what triggered it (logout button, token expiry, etc.).
+        LaunchedEffect(authVm) {
+            authVm.state.collect { state ->
+                if (!state.loggedIn &&
+                    screen != Screen.Splash &&
+                    screen != Screen.Login &&
+                    screen != Screen.ForgotPassword
+                ) {
+                    screen = Screen.Login
+                }
+            }
+        }
 
         when (screen) {
             Screen.Splash -> {
-                SplashScreen(
-                    onTimeout = { screen = Screen.Login }
-                )
+                var minTimeDone by remember { mutableStateOf(false) }
+
+                // Start session check + minimum display timer in parallel
+                LaunchedEffect(Unit) {
+                    authVm.checkSession()
+                    kotlinx.coroutines.delay(2500L)
+                    minTimeDone = true
+                }
+
+                // Navigate only when BOTH: 2.5 s elapsed AND session check finished
+                LaunchedEffect(minTimeDone, authState.loading) {
+                    if (minTimeDone && !authState.loading) {
+                        screen = when {
+                            authState.loggedIn -> when (authState.role) {
+                                UserRole.admin    -> Screen.AdminHome
+                                UserRole.employee -> Screen.EmployeeHome
+                                else              -> Screen.UserHome
+                            }
+                            else -> Screen.Login
+                        }
+                    }
+                }
+
+                // Splash renders normally; navigation is driven by the LaunchedEffect above
+                SplashScreen(onTimeout = {})
             }
 
             Screen.Login -> {
-                val vm = koinInject<AuthViewModel>()
                 LoginScreen(
-                    vm = vm,
+                    vm = authVm,
                     onForgotPassword = { screen = Screen.ForgotPassword },
                     onLoggedIn = { role ->
                         screen = when (role) {
-                            UserRole.admin -> Screen.AdminHome
+                            UserRole.admin    -> Screen.AdminHome
                             UserRole.employee -> Screen.EmployeeHome
-                            else -> Screen.UserHome
+                            else              -> Screen.UserHome
                         }
                     }
                 )
@@ -60,24 +95,21 @@ fun App() {
             }
 
             Screen.UserHome -> {
-                val vm = koinInject<UserViewModel>()
-                var showPlaceOrder by remember { mutableStateOf(false) }
-                if (showPlaceOrder) {
-                    PlaceOrderScreen(vm, onBack = { showPlaceOrder = false })
-                } else {
-                    UserHomeScreen(
-                        vm = vm,
-                        onPlaceOrder = { showPlaceOrder = true },
-                        onLogout = { screen = Screen.Login },
-                    )
-                }
+                // Role came back null (no profile row yet, network hiccup, etc.)
+                // Default to the employee dashboard so a staff member is never
+                // accidentally shown the owner/admin UI.
+                val vm = koinInject<EmployeeViewModel>()
+                EmployeeDashboardScreen(
+                    vm = vm,
+                    onLogout = { authVm.logout(); screen = Screen.Login }
+                )
             }
 
             Screen.AdminHome -> {
                 val vm = koinInject<AdminViewModel>()
                 AdminDashboardScreen(
                     vm = vm,
-                    onLogout = { screen = Screen.Login }
+                    onLogout = { authVm.logout(); screen = Screen.Login }
                 )
             }
 
@@ -85,7 +117,7 @@ fun App() {
                 val vm = koinInject<EmployeeViewModel>()
                 EmployeeDashboardScreen(
                     vm = vm,
-                    onLogout = { screen = Screen.Login }
+                    onLogout = { authVm.logout(); screen = Screen.Login }
                 )
             }
         }

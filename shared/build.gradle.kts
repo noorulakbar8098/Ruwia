@@ -51,6 +51,7 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.androidx.activity.compose) // needed for BackHandler
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
