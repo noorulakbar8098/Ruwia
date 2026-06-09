@@ -1,16 +1,23 @@
 package com.example.ruwia.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.example.ruwia.domain.Order
 import com.example.ruwia.presentation.UserViewModel
+import org.jetbrains.compose.resources.painterResource
+import ruwia.shared.generated.resources.Res
+import ruwia.shared.generated.resources.app_logo
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -24,7 +31,20 @@ fun UserHomeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("My Account") },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(Res.drawable.app_logo),
+                            contentDescription = "App Logo",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("My Account")
+                    }
+                },
                 actions = {
                     TextButton(onClick = { vm.logout(); onLogout() }) {
                         Text("Logout")

@@ -3,7 +3,7 @@ package com.example.ruwia.domain
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-enum class UserRole { admin, user }
+enum class UserRole { admin, user, employee }
 
 @Serializable
 data class Profile(
@@ -66,3 +66,36 @@ data class StockSummary(
     @SerialName("total_empty") val totalEmpty: Int,
     @SerialName("cans_with_customers") val cansWithCustomers: Int,
 )
+
+@Serializable
+data class StockItem(
+    val id: String? = null,
+    val name: String,
+    val capacityLiters: Int,
+    val stockAvailable: Int,
+    val pricePerCan: Double
+)
+
+@Serializable
+data class EmployeeInfo(
+    val id: String,
+    val name: String,
+    val phone: String,
+    val status: String = "active", // "active" | "inactive" | "on_delivery"
+    val completedDeliveries: Int = 0,
+    val totalDeliveries: Int = 0,
+    val monthlySalary: Double = 0.0,
+    val rating: Double = 5.0
+)
+
+@Serializable
+data class DeliveryTask(
+    val id: String,
+    val customerName: String,
+    val phone: String,
+    val address: String,
+    val canQty: Int,
+    val etaText: String,
+    val status: String = "queued" // "queued" | "en_route" | "delivered" | "cancelled"
+)
+

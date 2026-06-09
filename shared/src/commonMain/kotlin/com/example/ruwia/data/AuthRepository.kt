@@ -14,6 +14,7 @@ class AuthRepository {
             this.password = password
             data = buildMap {
                 put("full_name", kotlinx.serialization.json.JsonPrimitive(fullName))
+                put("phone", kotlinx.serialization.json.JsonPrimitive(phone))
             }.let { kotlinx.serialization.json.JsonObject(it) }
         }
     }
