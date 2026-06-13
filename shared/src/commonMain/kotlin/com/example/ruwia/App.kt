@@ -57,13 +57,21 @@ fun App() {
                 }
 
                 // Navigate only when BOTH: 2.5 s elapsed AND session check finished
-                LaunchedEffect(minTimeDone, authState.loading) {
+                LaunchedEffect(minTimeDone, authState.loading, authState.role, authState.loggedIn) {
                     if (minTimeDone && !authState.loading) {
                         screen = when {
                             authState.loggedIn -> when (authState.role) {
                                 UserRole.admin    -> Screen.AdminHome
                                 UserRole.employee -> Screen.EmployeeHome
-                                else              -> Screen.UserHome
+                                UserRole.user     -> Screen.UserHome
+                                // Role is unknown (network failure & no cache).
+                                // Stay on splash — `checkSession()` will keep
+                                // refreshing the role in the background; the
+                                // moment it resolves, this LaunchedEffect re-fires
+                                // and routes to the correct dashboard. We must
+                                // NOT silently default to UserHome/Employee
+                                // because that would show the wrong UI to admins.
+                                null              -> Screen.Splash
                             }
                             else -> Screen.Login
                         }
@@ -82,7 +90,11 @@ fun App() {
                         screen = when (role) {
                             UserRole.admin    -> Screen.AdminHome
                             UserRole.employee -> Screen.EmployeeHome
-                            else              -> Screen.UserHome
+                            UserRole.user     -> Screen.UserHome
+                            // Defensive fallback — login should always resolve
+                            // a role, but if it doesn't, stay on Login rather
+                            // than showing the wrong dashboard.
+                            null              -> Screen.Login
                         }
                     }
                 )
@@ -95,9 +107,8 @@ fun App() {
             }
 
             Screen.UserHome -> {
-                // Role came back null (no profile row yet, network hiccup, etc.)
-                // Default to the employee dashboard so a staff member is never
-                // accidentally shown the owner/admin UI.
+                // End-customer dashboard (UserRole.user). Currently reuses the
+                // employee dashboard until a dedicated customer UI is built.
                 val vm = koinInject<EmployeeViewModel>()
                 EmployeeDashboardScreen(
                     vm = vm,

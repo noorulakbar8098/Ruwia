@@ -2,6 +2,7 @@ package com.example.ruwia.ui.dashboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import com.example.ruwia.util.sanitizeError
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -175,7 +176,7 @@ fun NTErrorState(
         Text("Something went wrong", color = NTColors.TextPrimary,
             fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(NTDp.sm))
-        Text(message, color = NTColors.TextSecondary, fontSize = 13.sp,
+        Text(sanitizeError(message), color = NTColors.TextSecondary, fontSize = 13.sp,
             textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(NTDp.lg))
         Button(

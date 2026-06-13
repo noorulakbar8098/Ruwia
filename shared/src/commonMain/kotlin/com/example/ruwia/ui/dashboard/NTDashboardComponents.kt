@@ -2,10 +2,9 @@ package com.example.ruwia.ui.dashboard
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -14,8 +13,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -178,8 +184,14 @@ fun NTGreetingSection(
     }
 }
 
-// ── Revenue hero card ─────────────────────────────────────────
+// ── Revenue hero card color tokens ───────────────────────────
 
+private val HeroBg1     = Color(0xFF0D3330)
+private val HeroBg2     = Color(0xFF091F1D)
+private val HeroSurface = Color(0xFF1A4844)
+private val HeroLine    = Color(0xFF4EECD8)
+
+// ── Revenue hero card ─────────────────────────────────────────
 @Composable
 fun NTRevenueHeroCard(
     @Suppress("UNUSED_PARAMETER") shopName: String = "",
@@ -190,63 +202,213 @@ fun NTRevenueHeroCard(
     fleetActive: Int,
     growthPercent: Double = 8.2,
     dateLabel: String = "This Month",
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier.fillMaxWidth()
+    val stats = listOf(
+        HeroStat("ORDERS",    "$totalOrders",    "This Month", Icons.Rounded.ShoppingBag,   Color(0xFF193E3A), HeroLine.copy(alpha = 0.90f),        HeroLine),
+        HeroStat("CUSTOMERS", "$totalCustomers", "This Month", Icons.Rounded.Groups,        Color(0xFF193E3A), HeroLine.copy(alpha = 0.90f),        HeroLine),
+        HeroStat("FLEET",     "$fleetActive",    "Active",     Icons.Rounded.LocalShipping, Color(0xFF1A2F50), NTColors.Info.copy(alpha = 0.90f),   NTColors.Info),
+        HeroStat("STAFF",     "$activeStaff",    "Active",     Icons.Rounded.Badge,         Color(0xFF3D2E14), NTColors.Warning.copy(alpha = 0.90f),NTColors.Warning),
+    )
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
             .clip(RoundedCornerShape(NTDp.radXxl))
-            .background(Brush.linearGradient(colors = listOf(NTColors.GradStart, NTColors.GradEnd)))
+            .background(Brush.verticalGradient(colors = listOf(HeroBg1, HeroBg2)))
+            .padding(NTDp.cardPad),
     ) {
-        Box(
-            modifier = Modifier.size(180.dp).offset(x = 200.dp, y = (-40).dp)
-                .clip(CircleShape).background(NTColors.GradAccent)
-        )
-        Column(modifier = Modifier.padding(NTDp.cardPad)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "MONTHLY REVENUE",
-                    color = NTColors.PrimaryLight.copy(alpha = 0.8f),
-                    fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp
-                )
-                Row(
-                    modifier = Modifier.clip(RoundedCornerShape(NTDp.radFull))
-                        .background(NTColors.GradAccent)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+        // ── Header ─────────────────────────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(38.dp).clip(CircleShape).background(HeroSurface),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text(dateLabel, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null,
-                        tint = Color.White, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Rounded.AccountBalanceWallet, null, tint = HeroLine, modifier = Modifier.size(19.dp))
                 }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "REVENUE OVERVIEW",
+                    color = Color.White, fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp,
+                )
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.Rounded.Info, null, tint = Color.White.copy(alpha = 0.30f), modifier = Modifier.size(14.dp))
             }
-            Spacer(modifier = Modifier.height(NTDp.md))
-            Row(verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(NTDp.sm)) {
-                Text(formatMrr(mrr), color = Color.White, fontSize = 32.sp,
-                    fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
-                NTGrowthBadge(percent = growthPercent)
-            }
-            Spacer(modifier = Modifier.height(NTDp.xs))
-            Text(
-                "vs ${formatMrr(mrr * 0.92)} last month · $fleetActive fleet active",
-                color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp
-            )
-            Spacer(modifier = Modifier.height(NTDp.lg))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
-            Spacer(modifier = Modifier.height(NTDp.md))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                NTRevStat("ORDERS",    totalOrders.toString(),    Modifier.weight(1f))
-                NTRevStat("CUSTOMERS", totalCustomers.toString(), Modifier.weight(1f))
-                NTRevStat("FLEET",     fleetActive.toString(),    Modifier.weight(1f))
-                NTRevStat("STAFF",     activeStaff.toString(),    Modifier.weight(1f))
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(HeroSurface)
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(dateLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(4.dp))
+                Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.size(16.dp))
             }
         }
+
+        Spacer(Modifier.height(NTDp.md))
+
+        // ── Revenue value + Chart ───────────────────────────────
+        Row(modifier = Modifier.fillMaxWidth()) {
+            // Left: numbers
+            Column(modifier = Modifier.weight(0.44f).padding(end = 6.dp)) {
+                Text(
+                    "TOTAL REVENUE",
+                    color = Color.White.copy(alpha = 0.48f),
+                    fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp,
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    formatMrr(mrr),
+                    color = Color.White,
+                    fontSize = 30.sp, fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-1).sp, lineHeight = 34.sp,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(NTDp.radFull))
+                        .background(NTColors.Success)
+                        .padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.ArrowUpward, null, tint = Color.White, modifier = Modifier.size(11.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text("${growthPercent}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                }
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    "vs ${formatMrr(mrr * 0.92)} last month",
+                    color = Color.White.copy(alpha = 0.48f), fontSize = 11.sp,
+                )
+            }
+
+            // Right: chart
+            Column(modifier = Modifier.weight(0.56f)) {
+                Row(modifier = Modifier.fillMaxWidth().height(110.dp)) {
+                    HeroRevenueChart(modifier = Modifier.weight(1f).fillMaxHeight())
+                    // Y-axis labels
+                    Column(
+                        modifier = Modifier.width(28.dp).fillMaxHeight(),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                        horizontalAlignment = Alignment.End,
+                    ) {
+                        listOf("30K", "20K", "10K", "0").forEach { lbl ->
+                            Text(lbl, color = Color.White.copy(alpha = 0.32f), fontSize = 8.sp)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(end = 28.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    listOf("1 Jun", "8 Jun", "15 Jun", "22 Jun", "30 Jun").forEach { lbl ->
+                        Text(lbl, color = Color.White.copy(alpha = 0.36f), fontSize = 8.sp)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(NTDp.md))
+        HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+        Spacer(Modifier.height(NTDp.md))
+
+        // ── Stats row ───────────────────────────────────────────
+        Row(modifier = Modifier.fillMaxWidth()) {
+            stats.forEachIndexed { i, stat ->
+                HeroStatTile(stat = stat, modifier = Modifier.weight(1f))
+                if (i < stats.lastIndex) {
+                    Box(modifier = Modifier.width(0.8.dp).height(60.dp).background(Color.White.copy(alpha = 0.10f)))
+                }
+            }
+        }
+    }
+}
+
+private data class HeroStat(
+    val label: String,
+    val value: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val iconBg: Color,
+    val iconFg: Color,
+    val subtitleColor: Color,
+)
+
+@Composable
+private fun HeroStatTile(stat: HeroStat, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(stat.iconBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(stat.icon, null, tint = stat.iconFg, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(stat.label, color = Color.White.copy(alpha = 0.48f), fontSize = 9.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+        Spacer(Modifier.height(2.dp))
+        Text(stat.value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.3).sp)
+        Spacer(Modifier.height(2.dp))
+        Text(stat.subtitle, color = stat.subtitleColor, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun HeroRevenueChart(modifier: Modifier = Modifier) {
+    val pts = listOf(0.92f, 0.82f, 0.76f, 0.78f, 0.65f, 0.58f, 0.52f, 0.46f, 0.38f, 0.30f, 0.20f, 0.06f)
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val vPad = h * 0.06f
+        val chartH = h - vPad * 2
+
+        val offsets = pts.mapIndexed { i, v ->
+            Offset(w * i / (pts.size - 1).toFloat(), vPad + chartH * v)
+        }
+
+        // Dashed grid lines
+        listOf(0.0f, 0.33f, 0.67f, 1.0f).forEach { r ->
+            val y = vPad + chartH * r
+            drawLine(
+                color = Color.White.copy(alpha = 0.07f),
+                start = Offset(0f, y), end = Offset(w, y),
+                strokeWidth = 0.7.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 4f)),
+            )
+        }
+
+        // Build smooth bezier path
+        val line = Path().apply {
+            moveTo(offsets[0].x, offsets[0].y)
+            for (i in 1 until offsets.size) {
+                val mid = (offsets[i - 1].x + offsets[i].x) / 2f
+                cubicTo(mid, offsets[i - 1].y, mid, offsets[i].y, offsets[i].x, offsets[i].y)
+            }
+        }
+
+        // Area fill
+        val fill = Path().apply {
+            addPath(line)
+            lineTo(w, h); lineTo(0f, h); close()
+        }
+        drawPath(fill, Brush.verticalGradient(listOf(HeroLine.copy(alpha = 0.30f), Color.Transparent), startY = 0f, endY = h))
+
+        // Line stroke
+        drawPath(line, color = HeroLine, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+
+        // End dot
+        val last = offsets.last()
+        drawCircle(color = HeroBg1, radius = 5.dp.toPx(), center = last)
+        drawCircle(color = HeroLine, radius = 3.5.dp.toPx(), center = last)
     }
 }
 
@@ -258,28 +420,19 @@ fun NTGrowthBadge(percent: Double) {
             .background(Color.White.copy(alpha = 0.18f))
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(
             imageVector = if (isPos) Icons.Rounded.TrendingUp else Icons.Rounded.TrendingDown,
             contentDescription = null,
             tint = if (isPos) NTColors.PrimaryLight else NTColors.ErrorLight,
-            modifier = Modifier.size(14.dp)
+            modifier = Modifier.size(14.dp),
         )
         Text(
             "${if (isPos) "+" else ""}${(abs(percent) * 10).toLong() / 10.0}%",
             color = if (isPos) NTColors.PrimaryLight else NTColors.ErrorLight,
-            fontSize = 12.sp, fontWeight = FontWeight.SemiBold
+            fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
         )
-    }
-}
-
-@Composable
-private fun NTRevStat(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text(label, color = Color.White.copy(alpha = 0.6f), fontSize = 10.sp,
-            fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp)
     }
 }
 
@@ -295,11 +448,15 @@ data class NTKpiItem(
     val title: String,
     val value: String,
     val subtitle: String,
+    val subtitleColor: Color,
     val icon: ImageVector,
     val iconBg: Color,
     val iconFg: Color,
-    val statusColor: Color,
-    val subtitleColor: Color
+    val accentColor: Color,
+    val footerText: String,
+    val footerIcon: ImageVector,
+    val footerColor: Color,
+    val cardIndex: Int,             // 0=stock, 1=revenue, 2=cans, 3=customers
 )
 
 @Composable
@@ -308,8 +465,10 @@ fun NTKpiGrid(items: List<NTKpiItem>, modifier: Modifier = Modifier) {
         NTSectionHeader(label = "AT A GLANCE", title = "Key metrics")
         Spacer(modifier = Modifier.height(NTDp.md))
         items.chunked(2).forEach { row ->
-            Row(modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(NTDp.md)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(NTDp.md),
+            ) {
                 row.forEach { item -> NTKpiCard(item = item, modifier = Modifier.weight(1f)) }
                 if (row.size == 1) Spacer(modifier = Modifier.weight(1f))
             }
@@ -320,34 +479,227 @@ fun NTKpiGrid(items: List<NTKpiItem>, modifier: Modifier = Modifier) {
 
 @Composable
 fun NTKpiCard(item: NTKpiItem, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(NTDp.radXxl),
-        colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    Column(
+        modifier = modifier
+            .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
+            .clip(RoundedCornerShape(NTDp.radLg)),
     ) {
-        Column(modifier = Modifier.padding(NTDp.cardPad)) {
-            Box(
-                modifier = Modifier.size(NTDp.kpiIconBox)
-                    .clip(RoundedCornerShape(NTDp.radMd)).background(item.iconBg),
-                contentAlignment = Alignment.Center
+        // ── Main body ──────────────────────────────────────────
+        Column(modifier = Modifier.padding(NTDp.md)) {
+            // Icon + Live badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
             ) {
-                Icon(item.icon, contentDescription = null, tint = item.iconFg,
-                    modifier = Modifier.size(NTDp.iconLg))
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(item.iconBg),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(item.icon, null, tint = item.iconFg, modifier = Modifier.size(20.dp))
+                }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(NTDp.radFull))
+                        .background(item.accentColor.copy(alpha = 0.10f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(item.accentColor))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "Live", fontSize = 9.sp, color = item.accentColor,
+                        fontWeight = FontWeight.SemiBold, letterSpacing = 0.3.sp,
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(NTDp.md))
-            Text(item.title, color = NTColors.TextTertiary, fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
-            Spacer(modifier = Modifier.height(NTDp.xs))
-            Text(item.value, color = NTColors.TextPrimary, fontSize = 22.sp,
-                fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp)
-            Spacer(modifier = Modifier.height(NTDp.xs))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(item.statusColor))
-                Spacer(modifier = Modifier.width(NTDp.xs))
-                Text(item.subtitle, color = item.subtitleColor, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+
+            Spacer(Modifier.height(12.dp))
+
+            // Title + Value + Illustration
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        item.title,
+                        fontSize = 10.sp, color = NTColors.TextTertiary,
+                        fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        item.value,
+                        fontSize = 26.sp, color = NTColors.TextPrimary,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.5).sp, lineHeight = 30.sp,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        item.subtitle,
+                        fontSize = 12.sp, color = item.subtitleColor,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                // Decorative illustration
+                KpiIllustration(
+                    cardIndex = item.cardIndex,
+                    color     = item.iconFg,
+                    modifier  = Modifier.size(60.dp),
+                )
             }
+
+            Spacer(Modifier.height(12.dp))
         }
+
+        // ── Footer strip ───────────────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(item.accentColor.copy(alpha = 0.07f))
+                .padding(horizontal = NTDp.md, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                item.footerIcon, null,
+                tint = item.footerColor,
+                modifier = Modifier.size(13.dp),
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                item.footerText,
+                fontSize = 11.sp, color = item.footerColor,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    }
+}
+
+// ── KPI Card illustrations (Canvas) ──────────────────────────
+
+@Composable
+private fun KpiIllustration(cardIndex: Int, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        when (cardIndex) {
+            0 -> drawBoxStack(color)
+            1 -> drawMiniChart(color)
+            2 -> drawJarWithWarning(color)
+            3 -> drawCustomerGroup(color)
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBoxStack(color: Color) {
+    val bw = size.width * 0.50f
+    val bh = size.height * 0.28f
+    val off = size.width * 0.09f
+    for (i in 2 downTo 0) {
+        val alpha = 0.20f + i * 0.13f
+        val left = size.width * 0.24f - i * off
+        val top  = size.height * 0.60f - i * (bh * 0.88f)
+        drawRoundRect(
+            color        = color.copy(alpha = alpha),
+            topLeft      = Offset(left, top),
+            size         = Size(bw, bh),
+            cornerRadius = CornerRadius(3.dp.toPx()),
+        )
+        drawLine(
+            color       = color.copy(alpha = alpha * 0.6f),
+            start       = Offset(left, top + bh * 0.32f),
+            end         = Offset(left + bw, top + bh * 0.32f),
+            strokeWidth = 1.dp.toPx(),
+        )
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMiniChart(color: Color) {
+    val pts = listOf(0.88f, 0.76f, 0.82f, 0.60f, 0.68f, 0.42f, 0.18f)
+    val w   = size.width
+    val hRange = size.height * 0.78f
+    val yOff   = size.height * 0.10f
+    val path     = Path()
+    val fillPath = Path()
+    val firstY = yOff + hRange * pts.first()
+    path.moveTo(0f, firstY)
+    fillPath.moveTo(0f, size.height)
+    fillPath.lineTo(0f, firstY)
+    pts.forEachIndexed { i, p ->
+        val x = w * i / (pts.size - 1).toFloat()
+        val y = yOff + hRange * p
+        if (i > 0) { path.lineTo(x, y); fillPath.lineTo(x, y) }
+    }
+    fillPath.lineTo(w, size.height)
+    fillPath.close()
+    drawPath(
+        fillPath,
+        Brush.verticalGradient(
+            listOf(color.copy(alpha = 0.18f), Color.Transparent),
+            startY = firstY, endY = size.height,
+        ),
+    )
+    drawPath(path, color = color.copy(alpha = 0.55f), style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+    val lastX = w
+    val lastY = yOff + hRange * pts.last()
+    drawCircle(color = color, radius = 3.5.dp.toPx(), center = Offset(lastX, lastY))
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawJarWithWarning(color: Color) {
+    val cx    = size.width * 0.50f
+    val cy    = size.height * 0.50f
+    val rw    = size.width  * 0.22f
+    val jarH  = size.height * 0.50f
+    // Body
+    drawRoundRect(
+        color        = color.copy(alpha = 0.28f),
+        topLeft      = Offset(cx - rw, cy - jarH / 2),
+        size         = Size(rw * 2, jarH),
+        cornerRadius = CornerRadius(rw * 0.4f),
+    )
+    // Lid
+    drawRoundRect(
+        color        = color.copy(alpha = 0.45f),
+        topLeft      = Offset(cx - rw * 0.80f, cy - jarH / 2 - size.height * 0.09f),
+        size         = Size(rw * 1.60f, size.height * 0.09f),
+        cornerRadius = CornerRadius(2.dp.toPx()),
+    )
+    // Warning badge
+    val bx = cx + rw * 0.70f
+    val by = cy + jarH * 0.28f
+    drawCircle(color = Color(0xFFF97316), radius = 7.dp.toPx(), center = Offset(bx, by))
+    drawLine(
+        color       = Color.White,
+        start       = Offset(bx, by - 2.5.dp.toPx()),
+        end         = Offset(bx, by + 0.8.dp.toPx()),
+        strokeWidth = 1.8.dp.toPx(),
+        cap         = StrokeCap.Round,
+    )
+    drawCircle(color = Color.White, radius = 0.9.dp.toPx(), center = Offset(bx, by + 3.dp.toPx()))
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCustomerGroup(color: Color) {
+    data class Person(val cx: Float, val cy: Float, val alpha: Float)
+    val persons = listOf(
+        Person(size.width * 0.22f, size.height * 0.38f, 0.22f),
+        Person(size.width * 0.50f, size.height * 0.30f, 0.40f),
+        Person(size.width * 0.78f, size.height * 0.38f, 0.28f),
+    )
+    val headR = size.width * 0.13f
+    val bodyW = size.width * 0.20f
+    val bodyH = size.height * 0.20f
+    persons.forEach { p ->
+        drawCircle(color = color.copy(alpha = p.alpha), radius = headR, center = Offset(p.cx, p.cy))
+        drawArc(
+            color      = color.copy(alpha = p.alpha),
+            startAngle = 0f,
+            sweepAngle = 180f,
+            useCenter  = true,
+            topLeft    = Offset(p.cx - bodyW / 2, p.cy + headR * 0.55f),
+            size       = Size(bodyW, bodyH),
+        )
     }
 }
 
@@ -365,54 +717,70 @@ data class NTQuickAction(
 fun NTQuickActionsRow(
     actions: List<NTQuickAction>,
     onActionClick: (NTQuickAction) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
-        NTSectionHeader(label = "QUICK ACCESS", title = "Shortcuts",
-            modifier = Modifier.padding(horizontal = NTDp.screenPad))
+    Column(modifier = modifier.padding(horizontal = NTDp.screenPad)) {
+        NTSectionHeader(label = "QUICK ACCESS", title = "Shortcuts")
         Spacer(modifier = Modifier.height(NTDp.md))
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = NTDp.screenPad),
-            horizontalArrangement = Arrangement.spacedBy(NTDp.md)
-        ) {
-            items(items = actions, key = { it.id }) { action ->
-                NTQuickActionButton(action = action, onClick = { onActionClick(action) })
+        actions.chunked(3).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
+            ) {
+                row.forEach { action ->
+                    NTActionTile(
+                        action  = action,
+                        onClick = { onActionClick(action) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(3 - row.size) { Spacer(modifier = Modifier.weight(1f)) }
             }
+            Spacer(modifier = Modifier.height(NTDp.sm))
         }
     }
 }
 
 @Composable
-private fun NTQuickActionButton(action: NTQuickAction, onClick: () -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(74.dp).clickable(onClick = onClick)
+private fun NTActionTile(action: NTQuickAction, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 14.dp),
     ) {
-        Box {
+        Column {
             Box(
-                modifier = Modifier.size(NTDp.qaIconBox)
-                    .clip(RoundedCornerShape(NTDp.radLg)).background(action.bgColor),
-                contentAlignment = Alignment.Center
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(NTDp.radSm))
+                    .background(action.bgColor.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
             ) {
-                Icon(action.icon, contentDescription = action.label,
-                    tint = Color.White, modifier = Modifier.size(NTDp.iconXl))
+                Icon(action.icon, null, tint = action.bgColor, modifier = Modifier.size(NTDp.iconMd))
             }
-            if (action.badgeCount > 0) {
-                Box(
-                    modifier = Modifier.align(Alignment.TopEnd)
-                        .offset(x = 4.dp, y = (-4).dp).size(18.dp)
-                        .clip(CircleShape).background(NTColors.Error),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(action.badgeCount.toString(), color = Color.White,
-                        fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                }
+            Spacer(Modifier.height(NTDp.sm))
+            Text(
+                action.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                color = NTColors.TextPrimary, lineHeight = 15.sp,
+            )
+        }
+        if (action.badgeCount > 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(NTColors.Error),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (action.badgeCount > 9) "9+" else action.badgeCount.toString(),
+                    color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold,
+                )
             }
         }
-        Spacer(modifier = Modifier.height(NTDp.sm))
-        Text(action.label, color = NTColors.TextSecondary, fontSize = 11.sp,
-            fontWeight = FontWeight.Medium, textAlign = TextAlign.Center,
-            maxLines = 2, lineHeight = 14.sp)
     }
 }
 
@@ -459,48 +827,36 @@ private fun NTDateRange.label() = when (this) {
     NTDateRange.YEARLY    -> "Year"
 }
 
-// ── Bottom navigation with centre FAB ────────────────────────
+// ── Bottom navigation — floating pill ────────────────────────
 
 data class NTNavTab(val index: Int, val label: String, val icon: ImageVector, val badge: Int = 0)
+
+private val NavBarBg = Color(0xFF0A2E2A)
 
 @Composable
 fun NTBottomNavigation(
     selectedTab: Int,
     onTabSelected: (Int) -> Unit,
-    onFabClick: () -> Unit,
     tabs: List<NTNavTab> = defaultNavTabs(),
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    Box(modifier = modifier.fillMaxWidth().background(NTColors.Surface)) {
-        HorizontalDivider(color = NTColors.Border, thickness = 0.5.dp)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color.Transparent)
+            .navigationBarsPadding()
+            .padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+    ) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(NTDp.bottomNavH)
-                .padding(horizontal = NTDp.sm),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(10.dp, RoundedCornerShape(24.dp), clip = false)
+                .background(NavBarBg, RoundedCornerShape(24.dp))
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            val leftTabs  = tabs.filter { it.index <= 1 }
-            val rightTabs = tabs.filter { it.index >= 2 }
-
-            leftTabs.forEach { tab ->
-                NTNavTabItem(tab, selectedTab == tab.index) { onTabSelected(tab.index) }
-            }
-
-            // Centre FAB
-            Box(modifier = Modifier.weight(1f).wrapContentSize(Alignment.Center)) {
-                FloatingActionButton(
-                    onClick = onFabClick,
-                    modifier = Modifier.size(NTDp.fabSz).offset(y = (-8).dp),
-                    containerColor = NTColors.Accent,
-                    contentColor = Color.White,
-                    elevation = FloatingActionButtonDefaults.elevation(
-                        defaultElevation = 6.dp, pressedElevation = 3.dp)
-                ) {
-                    Icon(Icons.Rounded.Add, contentDescription = "New",
-                        modifier = Modifier.size(NTDp.iconXl))
-                }
-            }
-
-            rightTabs.forEach { tab ->
+            tabs.forEach { tab ->
                 NTNavTabItem(tab, selectedTab == tab.index) { onTabSelected(tab.index) }
             }
         }
@@ -510,50 +866,59 @@ fun NTBottomNavigation(
 @Composable
 private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: () -> Unit) {
     Column(
-        modifier = Modifier.weight(1f).clickable(onClick = onClick)
-            .padding(vertical = NTDp.sm),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier = Modifier
+            .weight(1f)
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box {
-            Box(
-                modifier = Modifier.clip(RoundedCornerShape(NTDp.radFull))
-                    .background(if (isSelected) NTColors.PrimaryLight else Color.Transparent)
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    tab.icon, contentDescription = tab.label,
-                    tint = if (isSelected) NTColors.Primary else NTColors.TextTertiary,
-                    modifier = Modifier.size(20.dp)
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    if (isSelected) NTColors.Primary.copy(alpha = 0.25f)
+                    else Color.Transparent
                 )
-            }
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = tab.icon,
+                contentDescription = tab.label,
+                tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.48f),
+                modifier = Modifier.size(22.dp),
+            )
             if (tab.badge > 0) {
                 Box(
-                    modifier = Modifier.align(Alignment.TopEnd)
-                        .offset(x = 4.dp, y = (-4).dp).size(16.dp)
-                        .clip(CircleShape).background(NTColors.Error),
-                    contentAlignment = Alignment.Center
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 6.dp, y = (-4).dp)
+                        .size(15.dp)
+                        .clip(CircleShape)
+                        .background(NTColors.Error),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text(tab.badge.toString(), color = Color.White,
-                        fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    Text(tab.badge.toString(), color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
-        Spacer(modifier = Modifier.height(2.dp))
+        Spacer(Modifier.height(3.dp))
         Text(
-            tab.label,
-            color = if (isSelected) NTColors.Primary else NTColors.TextTertiary,
-            fontSize = 10.sp,
-            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+            text       = tab.label,
+            color      = if (isSelected) Color.White else Color.White.copy(alpha = 0.48f),
+            fontSize   = 10.sp,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines   = 1,
+            overflow   = TextOverflow.Ellipsis,
         )
     }
 }
 
 fun defaultNavTabs() = listOf(
-    NTNavTab(0, "Home",      Icons.Rounded.Home),
-    NTNavTab(1, "Stock",     Icons.Rounded.Inventory2),
-    NTNavTab(2, "Customers", Icons.Rounded.Group),
-    NTNavTab(3, "Reports",   Icons.Rounded.BarChart),
+    NTNavTab(0, "Home",     Icons.Rounded.Home),
+    NTNavTab(1, "Products", Icons.Rounded.Category),
+    NTNavTab(2, "Stocks",   Icons.Rounded.Inventory2),
+    NTNavTab(3, "Profit",   Icons.Rounded.BarChart),
 )
 
 // ── Shimmer brush ─────────────────────────────────────────────

@@ -77,7 +77,7 @@ fun NTLineChartCard(
                         modifier = Modifier.size(14.dp)
                     )
                     Text(
-                        text = "${if (isPos) "+" else ""}${"%.0f".format(abs(growthPercent))}%",
+                        text = "${if (isPos) "+" else ""}${abs(growthPercent).toInt()}%",
                         color = if (isPos) NTColors.SuccessText else NTColors.ErrorText,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold

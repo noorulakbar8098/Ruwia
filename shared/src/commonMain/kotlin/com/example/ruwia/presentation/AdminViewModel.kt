@@ -5,20 +5,26 @@ import androidx.lifecycle.viewModelScope
 import com.example.ruwia.data.AdminRepository
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.EmployeeInfo
+import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.Order
+import com.example.ruwia.domain.ProductCategory
+import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.util.sanitizeError
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.time.Clock
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 /** Tracks the lifecycle of a single employee-creation attempt. */
 sealed class EmployeeCreationState {
     object Idle    : EmployeeCreationState()
     object Loading : EmployeeCreationState()
-    /** Supabase confirmed the user was created; carries the credentials to display. */
     data class Success(
         val userId:   String,
         val name:     String,
@@ -44,8 +50,11 @@ data class AdminState(
     val weeklyRevenueLabel: String = "",
     val shopStocks: List<ShopStockInfo> = emptyList(),
     val recentMovements: List<StockMovement> = emptyList(),
-    // Dedicated state for the employee-creation flow
-    val employeeCreation: EmployeeCreationState = EmployeeCreationState.Idle
+    val productCategories: List<ProductCategory> = emptyList(),
+    val saleEntries: List<SaleEntry> = emptyList(),
+    val currentMonthExpense: MonthlyExpense? = null,
+    val suppliers: List<String> = emptyList(),
+    val employeeCreation: EmployeeCreationState = EmployeeCreationState.Idle,
 )
 
 class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
@@ -60,36 +69,132 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     fun loadData() = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
-            val mrr = repo.getMRR()
-            val csat = repo.getCSAT()
-            val fleet = repo.getActiveFleetCount()
-            val stocks = repo.getStockSummaryList()
-            val orders = repo.getAllOrders()
-            val customers = repo.getAllCustomers()
-            val employees = repo.getEmployees()
+            val mrr              = repo.getMRR()
+            val csat             = repo.getCSAT()
+            val fleet            = repo.getActiveFleetCount()
+            val stocks           = repo.getStockSummaryList()
+            val orders           = repo.getAllOrders()
+            val customers        = repo.getAllCustomers()
+            val employees        = repo.getEmployees()
             val (weeklyPts, weeklyLabel) = repo.getWeeklyRevenueSummary()
-            val shopStocks  = repo.getShopStocks()
-            val movements   = repo.getRecentMovements()
+            val shopStocks       = repo.getShopStocks()
+            val movements        = repo.getRecentMovements()
+            val productCategories = repo.getProductCategories()
+            val saleEntries      = repo.getSaleEntries()
+            val currentMonth     = currentYearMonth()
+            val expense          = repo.getMonthlyExpense(currentMonth)
+            val suppliers        = repo.getSuppliers()
             AdminState(
-                loading = false,
-                mrr = mrr,
-                csat = csat,
-                fleetActiveCount = fleet,
-                stockItems = stocks,
-                orders = orders,
-                customers = customers,
-                employees = employees,
-                weeklyRevenuePoints = weeklyPts,
-                weeklyRevenueLabel = weeklyLabel,
-                shopStocks = shopStocks,
-                recentMovements = movements
+                loading              = false,
+                mrr                  = mrr,
+                csat                 = csat,
+                fleetActiveCount     = fleet,
+                stockItems           = stocks,
+                orders               = orders,
+                customers            = customers,
+                employees            = employees,
+                weeklyRevenuePoints  = weeklyPts,
+                weeklyRevenueLabel   = weeklyLabel,
+                shopStocks           = shopStocks,
+                recentMovements      = movements,
+                productCategories    = productCategories,
+                saleEntries          = saleEntries,
+                currentMonthExpense  = expense,
+                suppliers            = suppliers,
             )
         }.onSuccess { newState ->
             _state.value = newState
         }.onFailure {
-            _state.value = _state.value.copy(loading = false, error = it.message ?: "Failed to load admin telemetry")
+            _state.value = _state.value.copy(
+                loading = false,
+                error   = it.message ?: "Failed to load admin telemetry"
+            )
         }
     }
+
+    // ── Product categories ────────────────────────────────────────────────────
+
+    fun addProductCategory(cat: ProductCategory) = viewModelScope.launch {
+        runCatching { repo.addProductCategory(cat) }
+            .onSuccess {
+                val updated = repo.getProductCategories()
+                _state.value = _state.value.copy(productCategories = updated)
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    fun updateProductCategory(cat: ProductCategory) = viewModelScope.launch {
+        runCatching { repo.updateProductCategory(cat) }
+            .onSuccess {
+                _state.value = _state.value.copy(
+                    productCategories = _state.value.productCategories.map {
+                        if (it.id == cat.id) cat else it
+                    }
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    fun deleteProductCategory(id: String) = viewModelScope.launch {
+        runCatching { repo.deleteProductCategory(id) }
+            .onSuccess {
+                _state.value = _state.value.copy(
+                    productCategories = _state.value.productCategories.filter { it.id != id }
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    // ── Sales ─────────────────────────────────────────────────────────────────
+
+    fun addSaleEntry(entry: SaleEntry) = viewModelScope.launch {
+        runCatching { repo.addSaleEntry(entry) }
+            .onSuccess {
+                _state.value = _state.value.copy(
+                    saleEntries = listOf(entry) + _state.value.saleEntries
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    // ── Expenses ──────────────────────────────────────────────────────────────
+
+    fun saveMonthlyExpense(expense: MonthlyExpense) = viewModelScope.launch {
+        runCatching { repo.saveMonthlyExpense(expense) }
+            .onSuccess { _state.value = _state.value.copy(currentMonthExpense = expense) }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    // ── Stock movements ───────────────────────────────────────────────────────
+
+    fun addStockMovement(
+        source: String,
+        qty: Int,
+        type: String,
+        shopName: String,
+        productId: String? = null,
+    ) = viewModelScope.launch {
+        runCatching { repo.addStockMovement(source, qty, type, shopName, productId) }
+            .onSuccess {
+                val updated = repo.getRecentMovements()
+                _state.value = _state.value.copy(recentMovements = updated)
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    // ── Customers ─────────────────────────────────────────────────────────────
+
+    fun addCustomer(customer: Customer) = viewModelScope.launch {
+        runCatching { repo.addCustomer(customer) }
+            .onSuccess { saved ->
+                _state.value = _state.value.copy(
+                    customers = _state.value.customers + saved
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    // ── Employees ─────────────────────────────────────────────────────────────
 
     fun addEmployee(
         name: String,
@@ -100,9 +205,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         email: String,
         password: String
     ) = viewModelScope.launch {
-        _state.value = _state.value.copy(
-            employeeCreation = EmployeeCreationState.Loading
-        )
+        _state.value = _state.value.copy(employeeCreation = EmployeeCreationState.Loading)
         runCatching { repo.addEmployee(name, phone, role, shop, salary, email, password) }
             .onSuccess { newEmp ->
                 _state.value = _state.value.copy(
@@ -111,7 +214,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                         userId   = newEmp.id,
                         name     = newEmp.name,
                         email    = email,
-                        password = password,   // shown once to admin, not persisted
+                        password = password,
                         role     = newEmp.role,
                         shop     = newEmp.shopName
                     )
@@ -120,13 +223,12 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             .onFailure { err ->
                 _state.value = _state.value.copy(
                     employeeCreation = EmployeeCreationState.Error(
-                        err.message ?: "Failed to create employee account"
+                        sanitizeError(err.message)
                     )
                 )
             }
     }
 
-    /** Call after the admin has seen (and dismissed) the credentials dialog. */
     fun clearEmployeeCreation() {
         _state.value = _state.value.copy(employeeCreation = EmployeeCreationState.Idle)
     }
@@ -134,5 +236,14 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     fun assignOrderToEmployee(orderId: String, employeeId: String) = viewModelScope.launch {
         repo.assignEmployee(orderId, employeeId)
         loadData()
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun currentYearMonth(): String {
+        return try {
+            val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+            "${now.year}-${now.monthNumber.toString().padStart(2, '0')}"
+        } catch (_: Exception) { "" }
     }
 }

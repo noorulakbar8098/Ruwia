@@ -5,6 +5,8 @@ import com.example.ruwia.domain.UserRole
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.postgrest.from
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 class AuthRepository {
 
@@ -26,7 +28,22 @@ class AuthRepository {
         }
     }
 
-    suspend fun logout() = supabase.auth.signOut()
+    /**
+     * Sign out and wipe the local session from disk.
+     *
+     * Supabase's `signOut()` makes a network call to revoke the token FIRST
+     * and clears local storage AFTER the response. If this coroutine is
+     * cancelled mid-flight (or the app is killed), the local session stays
+     * on disk and gets auto-restored on next launch — meaning the user
+     * appears to still be "logged in" as the previous account.
+     *
+     * Wrapping in [NonCancellable] guarantees the whole signOut runs to
+     * completion regardless of parent cancellation, so the on-disk session
+     * is always cleared.
+     */
+    suspend fun logout() = withContext(NonCancellable) {
+        runCatching { supabase.auth.signOut() }
+    }
 
     fun currentUserId(): String? = supabase.auth.currentUserOrNull()?.id
 

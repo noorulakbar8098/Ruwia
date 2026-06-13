@@ -69,6 +69,8 @@ kotlin {
             implementation(libs.supabase.realtime)
             implementation(libs.koin.core)
             implementation(libs.koin.compose)
+            implementation(libs.multiplatform.settings.no.arg)
+            implementation(libs.kotlinx.datetime)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

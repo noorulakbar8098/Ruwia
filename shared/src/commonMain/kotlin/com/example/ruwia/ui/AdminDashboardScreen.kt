@@ -1,6 +1,7 @@
 package com.example.ruwia.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,6 +28,9 @@ import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.presentation.AdminViewModel
 import com.example.ruwia.presentation.EmployeeCreationState
 import com.example.ruwia.SystemBackHandler
+import com.example.ruwia.ui.admin.ProductDetailScreen
+import com.example.ruwia.ui.admin.ProductManagementScreen
+import com.example.ruwia.ui.admin.SalesSummaryScreen
 import com.example.ruwia.ui.dashboard.*
 
 // ─────────────────────────────────────────────────────────────
@@ -40,13 +44,24 @@ fun AdminDashboardScreen(
     onLogout: () -> Unit
 ) {
     val state by vm.state.collectAsState()
-    var selectedTab    by remember { mutableStateOf(0) }
-    var showStock      by remember { mutableStateOf(false) }
-    var showAddStock   by remember { mutableStateOf(false) }
-    var showSettings   by remember { mutableStateOf(false) }
-    var showEmployees    by remember { mutableStateOf(false) }
-    var showAddEmployee  by remember { mutableStateOf(false) }
-    var showPricing      by remember { mutableStateOf(false) }
+    var selectedTab       by remember { mutableStateOf(0) }
+    var showAddStock      by remember { mutableStateOf(false) }
+    var showSettings      by remember { mutableStateOf(false) }
+    var showEmployees     by remember { mutableStateOf(false) }
+    var showAddEmployee   by remember { mutableStateOf(false) }
+    var showPricing       by remember { mutableStateOf(false) }
+    var productDetailName by remember { mutableStateOf<String?>(null) }
+
+    // ── Full-screen overlays ──────────────────────────────────
+    productDetailName?.let { pName ->
+        SystemBackHandler { productDetailName = null }
+        ProductDetailScreen(
+            productName  = pName,
+            transactions = state.saleEntries.filter { it.productName.contains(pName, ignoreCase = true) },
+            onBack       = { productDetailName = null },
+        )
+        return
+    }
 
     // ── Deepest level ─────────────────────────────────────────
     if (showPricing) {
@@ -117,24 +132,17 @@ fun AdminDashboardScreen(
         SystemBackHandler { showAddStock = false }
         AddStockPurchaseScreen(
             stockItems = state.stockItems,
+            products   = state.productCategories,
+            suppliers  = state.suppliers,
             onBack     = { showAddStock = false },
-            onClose    = { showAddStock = false; showStock = false; selectedTab = 0 },
-            onSave     = { _, _, _, _, _ ->
+            onClose    = { showAddStock = false },
+            onSave     = { supplier, _, _, quantities, _ ->
+                quantities.filter { it.value > 0 }.forEach { (_, qty) ->
+                    vm.addStockMovement(supplier, qty, "inward", "Admin", null)
+                }
                 showAddStock = false
                 vm.loadData()
             }
-        )
-        return
-    }
-
-    // ── Stock dashboard ───────────────────────────────────────
-    if (showStock) {
-        SystemBackHandler { showStock = false; selectedTab = 0 }
-        StockDashboardScreen(
-            state      = state,
-            onBack     = { showStock = false; selectedTab = 0 },
-            onRefresh  = vm::loadData,
-            onAddStock = { showAddStock = true }
         )
         return
     }
@@ -143,26 +151,43 @@ fun AdminDashboardScreen(
         containerColor = NTColors.Background,
         bottomBar = {
             NTBottomNavigation(
-                selectedTab = selectedTab,
-                onTabSelected = { tab ->
-                    if (tab == 1) showStock = true else selectedTab = tab
-                },
-                onFabClick = { /* open new-order sheet */ },
-                tabs = listOf(
-                    NTNavTab(0, "Home",      Icons.Rounded.Home),
-                    NTNavTab(1, "Stock",     Icons.Rounded.Inventory2),
-                    NTNavTab(2, "Customers", Icons.Rounded.Group),
-                    NTNavTab(3, "Reports",   Icons.Rounded.BarChart),
-                )
+                selectedTab   = selectedTab,
+                onTabSelected = { selectedTab = it },
             )
         }
     ) { contentPadding ->
         when (selectedTab) {
-            0 -> AdminHomeTab(state, vm, contentPadding, onLogout,
-                    onAddStock      = { showAddStock = true },
-                    onOpenSettings  = { showSettings = true })
-            2 -> AdminCustomersTab(state.customers, contentPadding)
-            3 -> AdminReportsTab(state, contentPadding)
+            0 -> AdminHomeTab(
+                     state          = state,
+                     vm             = vm,
+                     contentPadding = contentPadding,
+                     onLogout       = onLogout,
+                     onOpenSettings = { showSettings = true },
+                 )
+            1 -> ProductManagementScreen(
+                     products        = state.productCategories,
+                     onAddProduct    = vm::addProductCategory,
+                     onUpdateProduct = vm::updateProductCategory,
+                     onDeleteProduct = vm::deleteProductCategory,
+                     onBack          = { selectedTab = 0 },
+                     contentPadding  = contentPadding,
+                 )
+            2 -> StockDashboardScreen(
+                     state          = state,
+                     onBack         = {},
+                     onRefresh      = vm::loadData,
+                     onAddStock     = { showAddStock = true },
+                     contentPadding = contentPadding,
+                 )
+            3 -> SalesSummaryScreen(
+                     saleEntries       = state.saleEntries,
+                     productCategories = state.productCategories,
+                     currentExpense    = state.currentMonthExpense,
+                     onExpenseSave     = vm::saveMonthlyExpense,
+                     onBack            = {},
+                     onProductClick    = { pName -> productDetailName = pName },
+                     contentPadding    = contentPadding,
+                 )
         }
     }
 }
@@ -175,8 +200,7 @@ private fun AdminHomeTab(
     vm: AdminViewModel,
     contentPadding: PaddingValues,
     onLogout: () -> Unit,
-    onAddStock: () -> Unit = {},
-    onOpenSettings: () -> Unit = {}
+    onOpenSettings: () -> Unit = {},
 ) {
     when {
         state.loading  -> NTDashboardSkeleton(contentPadding)
@@ -185,7 +209,7 @@ private fun AdminHomeTab(
             onRetry  = vm::loadData,
             contentPadding = contentPadding
         )
-        else -> AdminDashboardContent(state, contentPadding, onLogout, onAddStock, onOpenSettings)
+        else -> AdminDashboardContent(state, contentPadding, onLogout, onOpenSettings)
     }
 }
 
@@ -194,42 +218,28 @@ private fun AdminDashboardContent(
     state: AdminState,
     contentPadding: PaddingValues,
     @Suppress("UNUSED_PARAMETER") onLogout: () -> Unit,
-    onAddStock: () -> Unit = {},
-    onOpenSettings: () -> Unit = {}
+    onOpenSettings: () -> Unit = {},
 ) {
     // ── Derive dashboard metrics from real AdminState ────────
     val totalStock     = state.stockItems.sumOf { it.stockAvailable }
     val pendingOrders  = state.orders.count { it.status == "pending" }
     val deliveredToday = state.orders.count { it.status == "delivered" }
-    val dueAmount      = state.customers.filter { it.balance > 0 }.sumOf { it.balance }
-    val dueCount       = state.customers.count { it.balance > 0 }
     val activeStaff    = state.employees.count { it.status != "inactive" }
     val emptyCans      = state.customers.sumOf { it.cansHeld }
 
     val (greeting, subtext) = buildGreeting(
-        mrr         = state.mrr,
-        pending     = pendingOrders,
-        delivered   = deliveredToday
+        mrr       = state.mrr,
+        pending   = pendingOrders,
+        delivered = deliveredToday,
     )
 
     val kpiItems = buildKpis(
-        totalStock    = totalStock,
-        mrr           = state.mrr,
-        emptyCans     = emptyCans,
-        dueAmount     = dueAmount,
-        dueCount      = dueCount,
-        pendingOrders = pendingOrders,
-        customers     = state.customers.size
+        totalStock = totalStock,
+        mrr        = state.mrr,
+        emptyCans  = emptyCans,
+        customers  = state.customers.size,
     )
 
-    val quickActions = listOf(
-        NTQuickAction("a1", "New order",       Icons.Rounded.AddShoppingCart, NTColors.PrimaryDark),
-        NTQuickAction("a2", "Add customer",    Icons.Rounded.PersonAdd,       NTColors.PrimaryMid),
-        NTQuickAction("a3", "Add stock",       Icons.Rounded.LocalShipping,   NTColors.Accent),
-        NTQuickAction("a4", "View reports",    Icons.Rounded.Analytics,       NTColors.TextPrimary),
-        NTQuickAction("a5", "Collect payment", Icons.Rounded.Payments,        NTColors.Info, badgeCount = dueCount.coerceAtMost(99)),
-        NTQuickAction("a6", "Assign driver",   Icons.Rounded.DirectionsCar,   NTColors.AvatarPurple),
-    )
 
     LazyColumn(
         modifier = Modifier
@@ -276,21 +286,6 @@ private fun AdminDashboardContent(
         // KPI grid
         item {
             NTKpiGrid(items = kpiItems)
-        }
-
-        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
-
-        // Quick actions
-        item {
-            NTQuickActionsRow(
-                actions = quickActions,
-                onActionClick = { action ->
-                    when (action.id) {
-                        "a3" -> onAddStock()  // Add stock → opens AddStockPurchaseScreen
-                        else -> { /* other actions handled later */ }
-                    }
-                }
-            )
         }
 
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
@@ -378,39 +373,38 @@ private fun NTStaffCard(employee: EmployeeInfo, modifier: Modifier = Modifier) {
         "active"      -> NTColors.Primary to "Active"
         else          -> NTColors.TextTertiary to "Inactive"
     }
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(NTDp.radXxl),
-        colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
+            .padding(NTDp.md),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(NTDp.md),
-            verticalAlignment = Alignment.CenterVertically
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(NTDp.radMd))
+                .background(NTColors.PrimaryLight),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(NTDp.radMd))
-                    .background(NTColors.PrimaryLight),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Rounded.Person, contentDescription = null,
-                    tint = NTColors.Primary, modifier = Modifier.size(NTDp.iconLg))
-            }
-            Spacer(modifier = Modifier.width(NTDp.md))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(employee.name, color = NTColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text("${employee.completedDeliveries} deliveries · ${employee.rating} rating", color = NTColors.TextTertiary, fontSize = 12.sp)
-            }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(NTDp.radFull))
-                    .background(statusColor.copy(alpha = 0.12f))
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
-            ) {
-                Text(statusLabel, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            }
+            Icon(Icons.Rounded.Person, null, tint = NTColors.Primary, modifier = Modifier.size(NTDp.iconMd))
+        }
+        Spacer(modifier = Modifier.width(NTDp.md))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(employee.name, color = NTColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "${employee.completedDeliveries} deliveries · ${employee.rating} rating",
+                color = NTColors.TextTertiary, fontSize = 12.sp,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(NTDp.radFull))
+                .background(statusColor.copy(alpha = 0.10f))
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        ) {
+            Text(statusLabel, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -483,30 +477,40 @@ fun AdminCustomersTab(customers: List<Customer>, contentPadding: PaddingValues) 
                 fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = NTDp.sm))
         }
         items(items = customers, key = { it.id ?: it.hashCode().toString() }) { cust ->
-            Card(
-                shape = RoundedCornerShape(NTDp.radXxl),
-                colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
+                    .padding(NTDp.md),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(modifier = Modifier.padding(NTDp.md), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(42.dp).clip(RoundedCornerShape(NTDp.radMd))
+                        .background(NTColors.PrimaryLight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Person, null, tint = NTColors.Primary, modifier = Modifier.size(NTDp.iconMd))
+                }
+                Spacer(modifier = Modifier.width(NTDp.md))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(cust.name, color = NTColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${cust.cansHeld} cans held · ${cust.phone ?: ""}",
+                        color = NTColors.TextTertiary, fontSize = 12.sp,
+                    )
+                }
+                if (cust.balance > 0) {
                     Box(
-                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(NTDp.radMd))
-                            .background(NTColors.PrimaryLight),
-                        contentAlignment = Alignment.Center
-                    ) { Icon(Icons.Rounded.Person, contentDescription = null,
-                        tint = NTColors.Primary, modifier = Modifier.size(NTDp.iconLg)) }
-                    Spacer(modifier = Modifier.width(NTDp.md))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(cust.name, color = NTColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        Text("${cust.cansHeld} cans held · ${cust.phone ?: ""}",
-                            color = NTColors.TextTertiary, fontSize = 12.sp)
-                    }
-                    if (cust.balance > 0) {
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("₹${cust.balance.toInt()}", color = NTColors.Error,
-                                fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text("DUE", color = NTColors.Error, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(NTDp.radFull))
+                            .background(NTColors.ErrorLight)
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            "₹${cust.balance.toInt()} DUE",
+                            color = NTColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
             }
@@ -543,48 +547,56 @@ fun AdminReportsTab(state: AdminState, contentPadding: PaddingValues) {
         }
         // CSAT card
         item {
-            Card(
-                shape = RoundedCornerShape(NTDp.radXxl),
-                colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
+                    .padding(NTDp.md),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(modifier = Modifier.padding(NTDp.cardPad), verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(NTDp.radMd))
-                        .background(NTColors.SuccessLight), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.StarRate, contentDescription = null,
-                            tint = NTColors.Success, modifier = Modifier.size(NTDp.iconLg))
-                    }
-                    Spacer(modifier = Modifier.width(NTDp.md))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("CSAT SCORE", color = NTColors.TextTertiary, fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
-                        Text("${state.csat} / 5.0", color = NTColors.TextPrimary, fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold)
-                    }
-                    NTGrowthBadge(percent = 3.5)
+                Box(
+                    modifier = Modifier.size(42.dp).clip(RoundedCornerShape(NTDp.radMd))
+                        .background(NTColors.SuccessLight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.StarRate, null, tint = NTColors.Success, modifier = Modifier.size(NTDp.iconMd))
                 }
+                Spacer(modifier = Modifier.width(NTDp.md))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "CSAT SCORE", color = NTColors.TextTertiary, fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
+                    )
+                    Text("${state.csat} / 5.0", color = NTColors.TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                }
+                NTGrowthBadge(percent = 3.5)
             }
         }
         // Fleet summary
         item {
-            Card(
-                shape = RoundedCornerShape(NTDp.radXxl),
-                colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
+                    .padding(NTDp.md),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(modifier = Modifier.padding(NTDp.cardPad), verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(NTDp.radMd))
-                        .background(NTColors.DelivIconBg), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.LocalShipping, contentDescription = null,
-                            tint = NTColors.DelivIconFg, modifier = Modifier.size(NTDp.iconLg))
-                    }
-                    Spacer(modifier = Modifier.width(NTDp.md))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("FLEET ACTIVE", color = NTColors.TextTertiary, fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
-                        Text("${state.fleetActiveCount} vehicles", color = NTColors.TextPrimary,
-                            fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    }
+                Box(
+                    modifier = Modifier.size(42.dp).clip(RoundedCornerShape(NTDp.radMd))
+                        .background(NTColors.DelivIconBg),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.LocalShipping, null, tint = NTColors.DelivIconFg, modifier = Modifier.size(NTDp.iconMd))
+                }
+                Spacer(modifier = Modifier.width(NTDp.md))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "FLEET ACTIVE", color = NTColors.TextTertiary, fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
+                    )
+                    Text("${state.fleetActiveCount} vehicles", color = NTColors.TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
         }
@@ -608,52 +620,63 @@ private fun buildKpis(
     totalStock: Int,
     mrr: Double,
     emptyCans: Int,
-    dueAmount: Double,
-    dueCount: Int,
-    pendingOrders: Int,
-    customers: Int
+    customers: Int,
 ): List<NTKpiItem> = listOf(
     NTKpiItem(
-        title = "STOCK ON HAND",   value = "$totalStock",
-        subtitle = "${totalStock / 10 + 1} SKUs · live",
-        icon = Icons.Rounded.Inventory2,
-        iconBg = NTColors.SuccessLight, iconFg = NTColors.Success,
-        statusColor = NTColors.Success, subtitleColor = NTColors.SuccessText
+        title        = "STOCK ON HAND",
+        value        = "$totalStock",
+        subtitle     = "${totalStock / 10 + 1} SKUs · Up to date",
+        subtitleColor = NTColors.SuccessText,
+        icon         = Icons.Rounded.Inventory2,
+        iconBg       = NTColors.SuccessLight,
+        iconFg       = NTColors.Success,
+        accentColor  = NTColors.Success,
+        footerText   = "+4.6% vs last month",
+        footerIcon   = Icons.Rounded.TrendingUp,
+        footerColor  = NTColors.SuccessText,
+        cardIndex    = 0,
     ),
     NTKpiItem(
-        title = "MONTHLY REVENUE", value = formatAmount(mrr),
-        subtitle = "+8.2% vs last month",
-        icon = Icons.Rounded.AccountBalanceWallet,
-        iconBg = NTColors.SuccessLight, iconFg = NTColors.Success,
-        statusColor = NTColors.Success, subtitleColor = NTColors.SuccessText
+        title        = "MONTHLY REVENUE",
+        value        = formatAmount(mrr),
+        subtitle     = "+8.2% vs last month",
+        subtitleColor = NTColors.PrimaryDark,
+        icon         = Icons.Rounded.AccountBalanceWallet,
+        iconBg       = NTColors.PrimaryLight,
+        iconFg       = NTColors.Primary,
+        accentColor  = NTColors.Primary,
+        footerText   = "vs ${formatAmount(mrr * 0.92)} last month",
+        footerIcon   = Icons.Rounded.BarChart,
+        footerColor  = NTColors.PrimaryDark,
+        cardIndex    = 1,
     ),
     NTKpiItem(
-        title = "EMPTY CANS",      value = "$emptyCans",
-        subtitle = "With customers",
-        icon = Icons.Rounded.Water,
-        iconBg = NTColors.SurfaceVar, iconFg = NTColors.TextSecondary,
-        statusColor = NTColors.TextTertiary, subtitleColor = NTColors.TextSecondary
+        title        = "EMPTY CANS",
+        value        = "$emptyCans",
+        subtitle     = "With customers",
+        subtitleColor = NTColors.TextSecondary,
+        icon         = Icons.Rounded.Water,
+        iconBg       = Color(0xFFFFF3E8),
+        iconFg       = Color(0xFFF97316),
+        accentColor  = Color(0xFFF97316),
+        footerText   = "No changes vs last month",
+        footerIcon   = Icons.Rounded.Schedule,
+        footerColor  = Color(0xFFF97316),
+        cardIndex    = 2,
     ),
     NTKpiItem(
-        title = "DUE PAYMENTS",    value = formatAmount(dueAmount),
-        subtitle = "$dueCount customers",
-        icon = Icons.Rounded.Warning,
-        iconBg = NTColors.ErrorLight, iconFg = NTColors.Error,
-        statusColor = NTColors.Error, subtitleColor = NTColors.ErrorText
-    ),
-    NTKpiItem(
-        title = "PENDING ORDERS",  value = "$pendingOrders",
-        subtitle = "Awaiting dispatch",
-        icon = Icons.Rounded.PendingActions,
-        iconBg = NTColors.WarningLight, iconFg = NTColors.Warning,
-        statusColor = NTColors.Warning, subtitleColor = NTColors.WarningText
-    ),
-    NTKpiItem(
-        title = "TOTAL CUSTOMERS", value = "$customers",
-        subtitle = "Active accounts",
-        icon = Icons.Rounded.Group,
-        iconBg = NTColors.PrimaryLight, iconFg = NTColors.Primary,
-        statusColor = NTColors.Primary, subtitleColor = NTColors.PrimaryDark
+        title        = "TOTAL CUSTOMERS",
+        value        = "$customers",
+        subtitle     = "Active accounts",
+        subtitleColor = NTColors.SuccessText,
+        icon         = Icons.Rounded.Group,
+        iconBg       = NTColors.SuccessLight,
+        iconFg       = NTColors.Success,
+        accentColor  = NTColors.Success,
+        footerText   = "No changes vs last month",
+        footerIcon   = Icons.Rounded.PersonAdd,
+        footerColor  = NTColors.SuccessText,
+        cardIndex    = 3,
     ),
 )
 

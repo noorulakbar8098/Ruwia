@@ -1,8 +1,9 @@
 [versions]
 agp = "9.0.1"
-supabase = "3.1.1"
-ktor = "3.1.1"
+supabase = "3.2.1"
+ktor = "3.2.1"
 koin = "4.0.2"
+multiplatformSettings = "1.2.0"
 android-compileSdk = "36"
 android-minSdk = "24"
 android-targetSdk = "36"
@@ -17,6 +18,7 @@ junit = "4.13.2"
 kotlin = "2.3.21"
 kotlin-wrappers = "2026.5.3"
 kotlinx-coroutines = "1.11.0"
+kotlinxDatetime = "0.7.1"
 material3 = "1.11.0-alpha07"
 
 [libraries]
@@ -49,6 +51,8 @@ ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "kto
 ktor-client-js     = { module = "io.ktor:ktor-client-js", version.ref = "ktor" }
 koin-core          = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koin-compose       = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
+multiplatform-settings-no-arg = { module = "com.russhwolf:multiplatform-settings-no-arg", version.ref = "multiplatformSettings" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

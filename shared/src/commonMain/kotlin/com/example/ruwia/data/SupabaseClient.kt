@@ -20,7 +20,7 @@ private const val SUPABASE_ANON_KEY = "sb_publishable_N3oENikhDxobWX5dcEJoMw_FMb
 //     It looks like: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIi...
 //     For production → move employee creation to a Supabase Edge Function and
 //     remove this key from the client entirely.
-internal const val SUPABASE_SERVICE_KEY = "YOUR_SERVICE_ROLE_KEY_HERE"  // ← replace this
+internal const val SUPABASE_SERVICE_KEY = "sb_secret_F8KyUwYsXLvzcdM_5TQqRg_a7IHDjEr"  // ← replace this
 
 /** Regular client — anon key, used for all user-level operations. */
 val supabase: SupabaseClient = createSupabaseClient(
@@ -57,5 +57,10 @@ val supabaseAdmin: SupabaseClient = createSupabaseClient(
  * header is populated on every subsequent request.
  */
 suspend fun initAdminSession() {
+    check(SUPABASE_SERVICE_KEY != "YOUR_SERVICE_ROLE_KEY_HERE" && SUPABASE_SERVICE_KEY.isNotBlank()) {
+        "Supabase service-role key is not configured. Open SupabaseClient.kt and set " +
+            "SUPABASE_SERVICE_KEY to your project's service_role key " +
+            "(Supabase Dashboard → Project Settings → API → service_role)."
+    }
     supabaseAdmin.auth.importAuthToken(SUPABASE_SERVICE_KEY)
 }
