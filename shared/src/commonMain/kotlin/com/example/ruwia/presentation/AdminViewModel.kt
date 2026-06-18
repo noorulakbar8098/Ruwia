@@ -12,7 +12,9 @@ import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.Supplier
 import com.example.ruwia.util.sanitizeError
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,8 +55,15 @@ data class AdminState(
     val productCategories: List<ProductCategory> = emptyList(),
     val saleEntries: List<SaleEntry> = emptyList(),
     val currentMonthExpense: MonthlyExpense? = null,
+    val lastMonthExpense: MonthlyExpense? = null,
     val suppliers: List<String> = emptyList(),
+    /** Typed supplier rows including IDs — for the management screen. */
+    val suppliersFull: List<Supplier> = emptyList(),
     val employeeCreation: EmployeeCreationState = EmployeeCreationState.Idle,
+    /** "YYYY-MM" — set in [AdminViewModel.loadData]. Empty until first load. */
+    val currentMonth: String = "",
+    /** "YYYY-MM" of the previous calendar month. */
+    val previousMonth: String = "",
 )
 
 class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
@@ -64,6 +73,36 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
 
     init {
         loadData()
+        startPeriodicRefresh()
+    }
+
+    private fun startPeriodicRefresh() {
+        viewModelScope.launch {
+            while (true) {
+                delay(15_000L) // Poll every 15 seconds
+                runCatching {
+                    // Cross-app freshness: customers / suppliers / products /
+                    // stock numbers all change when an employee logs activity,
+                    // so we re-pull everything an admin watches at a glance.
+                    val shopStocks = repo.getShopStocks()
+                    val movements  = repo.getRecentMovements()
+                    val customers  = repo.getAllCustomers()
+                    val suppliers     = repo.getSuppliers()
+                    val suppliersFull = repo.getSuppliersFull()
+                    val products      = repo.getProductCategories()
+                    val stockItems    = repo.getStockSummaryList()
+                    _state.value = _state.value.copy(
+                        shopStocks        = shopStocks,
+                        recentMovements   = movements,
+                        customers         = customers,
+                        suppliers         = suppliers,
+                        suppliersFull     = suppliersFull,
+                        productCategories = products,
+                        stockItems        = stockItems,
+                    )
+                }
+            }
+        }
     }
 
     fun loadData() = viewModelScope.launch {
@@ -82,8 +121,11 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             val productCategories = repo.getProductCategories()
             val saleEntries      = repo.getSaleEntries()
             val currentMonth     = currentYearMonth()
+            val previousMonth    = previousYearMonth()
             val expense          = repo.getMonthlyExpense(currentMonth)
+            val lastExpense      = repo.getMonthlyExpense(previousMonth)
             val suppliers        = repo.getSuppliers()
+            val suppliersFull    = repo.getSuppliersFull()
             AdminState(
                 loading              = false,
                 mrr                  = mrr,
@@ -100,7 +142,11 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 productCategories    = productCategories,
                 saleEntries          = saleEntries,
                 currentMonthExpense  = expense,
+                lastMonthExpense     = lastExpense,
                 suppliers            = suppliers,
+                suppliersFull        = suppliersFull,
+                currentMonth         = currentMonth,
+                previousMonth        = previousMonth,
             )
         }.onSuccess { newState ->
             _state.value = newState
@@ -187,9 +233,17 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     fun addCustomer(customer: Customer) = viewModelScope.launch {
         runCatching { repo.addCustomer(customer) }
             .onSuccess { saved ->
-                _state.value = _state.value.copy(
-                    customers = _state.value.customers + saved
-                )
+                // Drop any optimistic placeholder for the same customer name
+                // (drafted by the picker with id = null or "local_...") and
+                // append the saved DB row so the picker ends up with a single
+                // entry carrying the real UUID.
+                val merged = _state.value.customers
+                    .filterNot { existing ->
+                        ((existing.id == null || existing.id.startsWith("local_")) &&
+                         existing.name.trim().equals(saved.name.trim(), ignoreCase = true)) ||
+                        existing.id == saved.id
+                    } + saved
+                _state.value = _state.value.copy(customers = merged)
             }
             .onFailure { _state.value = _state.value.copy(error = it.message) }
     }
@@ -238,12 +292,55 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         loadData()
     }
 
+    // ── Suppliers ─────────────────────────────────────────────────────────────
+
+    fun addSupplier(name: String, location: String?) = viewModelScope.launch {
+        runCatching { repo.addSupplier(name, location) }
+            .onSuccess {
+                // Refresh both list views — the picker (string) and the
+                // management screen (typed) are kept in sync.
+                val full     = repo.getSuppliersFull()
+                val display  = repo.getSuppliers()
+                _state.value = _state.value.copy(
+                    suppliersFull = full,
+                    suppliers     = display,
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    fun deleteSupplier(id: String) = viewModelScope.launch {
+        runCatching { repo.deleteSupplier(id) }
+            .onSuccess {
+                val full     = repo.getSuppliersFull()
+                val display  = repo.getSuppliers()
+                _state.value = _state.value.copy(
+                    suppliersFull = full,
+                    suppliers     = display,
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun currentYearMonth(): String {
         return try {
             val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
             "${now.year}-${now.monthNumber.toString().padStart(2, '0')}"
+        } catch (_: Exception) { "" }
+    }
+
+    /** Returns the calendar month immediately before the current one, e.g. "2026-05". */
+    private fun previousYearMonth(): String {
+        return try {
+            val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+            val (py, pm) = if (now.monthNumber == 1) {
+                (now.year - 1) to 12
+            } else {
+                now.year to (now.monthNumber - 1)
+            }
+            "$py-${pm.toString().padStart(2, '0')}"
         } catch (_: Exception) { "" }
     }
 }

@@ -195,12 +195,24 @@ private val HeroLine    = Color(0xFF4EECD8)
 @Composable
 fun NTRevenueHeroCard(
     @Suppress("UNUSED_PARAMETER") shopName: String = "",
-    mrr: Double,
+    /** Headline value shown big — caller decides revenue vs profit. */
+    headlineValue: Double,
+    /** Comparison baseline shown as "vs ₹X last month". */
+    lastMonthValue: Double,
+    /** Real growth %; null = no baseline → render a neutral "—" badge. */
+    growthPercent: Double?,
     totalOrders: Int,
     totalCustomers: Int,
     activeStaff: Int,
     fleetActive: Int,
-    growthPercent: Double = 8.2,
+    /** 0..1 normalised daily series for the hero chart. Empty = flat baseline. */
+    chartPoints: List<Float> = emptyList(),
+    /** Top→bottom Y-axis ticks, e.g. ["30K", "20K", "10K", "0"]. */
+    yAxisLabels: List<String> = listOf("30K", "20K", "10K", "0"),
+    /** Left→right X-axis labels along the chart. */
+    xAxisLabels: List<String> = listOf("1", "8", "15", "22", "30"),
+    /** Optional subtitle beneath the headline (e.g. "TOTAL REVENUE" / "NET PROFIT"). */
+    headlineLabel: String = "TOTAL REVENUE",
     dateLabel: String = "This Month",
     modifier: Modifier = Modifier,
 ) {
@@ -210,6 +222,14 @@ fun NTRevenueHeroCard(
         HeroStat("FLEET",     "$fleetActive",    "Active",     Icons.Rounded.LocalShipping, Color(0xFF1A2F50), NTColors.Info.copy(alpha = 0.90f),   NTColors.Info),
         HeroStat("STAFF",     "$activeStaff",    "Active",     Icons.Rounded.Badge,         Color(0xFF3D2E14), NTColors.Warning.copy(alpha = 0.90f),NTColors.Warning),
     )
+
+    // Decide direction & accent for the growth badge.
+    val isPositive = (growthPercent ?: 0.0) >= 0.0
+    val badgeColor = when {
+        growthPercent == null -> Color(0xFF6E7E89) // neutral grey when no baseline
+        isPositive            -> NTColors.Success
+        else                  -> NTColors.Error
+    }
 
     Column(
         modifier = modifier
@@ -261,32 +281,45 @@ fun NTRevenueHeroCard(
             // Left: numbers
             Column(modifier = Modifier.weight(0.44f).padding(end = 6.dp)) {
                 Text(
-                    "TOTAL REVENUE",
+                    headlineLabel,
                     color = Color.White.copy(alpha = 0.48f),
                     fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp,
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
-                    formatMrr(mrr),
+                    formatMrr(headlineValue),
                     color = Color.White,
                     fontSize = 30.sp, fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-1).sp, lineHeight = 34.sp,
                 )
                 Spacer(Modifier.height(10.dp))
+                // Growth badge — colour & icon depend on real data
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(NTDp.radFull))
-                        .background(NTColors.Success)
+                        .background(badgeColor)
                         .padding(horizontal = 9.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Rounded.ArrowUpward, null, tint = Color.White, modifier = Modifier.size(11.dp))
-                    Spacer(Modifier.width(3.dp))
-                    Text("${growthPercent}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                    when {
+                        growthPercent == null -> {
+                            Text("—", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                        }
+                        isPositive -> {
+                            Icon(Icons.Rounded.ArrowUpward, null, tint = Color.White, modifier = Modifier.size(11.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("${formatPct(growthPercent)}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                        }
+                        else -> {
+                            Icon(Icons.Rounded.ArrowDownward, null, tint = Color.White, modifier = Modifier.size(11.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text("${formatPct(growthPercent)}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
                 }
                 Spacer(Modifier.height(7.dp))
                 Text(
-                    "vs ${formatMrr(mrr * 0.92)} last month",
+                    "vs ${formatMrr(lastMonthValue)} last month",
                     color = Color.White.copy(alpha = 0.48f), fontSize = 11.sp,
                 )
             }
@@ -294,14 +327,18 @@ fun NTRevenueHeroCard(
             // Right: chart
             Column(modifier = Modifier.weight(0.56f)) {
                 Row(modifier = Modifier.fillMaxWidth().height(110.dp)) {
-                    HeroRevenueChart(modifier = Modifier.weight(1f).fillMaxHeight())
-                    // Y-axis labels
+                    HeroRevenueChart(
+                        points = chartPoints,
+                        isPositive = isPositive,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                    // Y-axis labels (top → bottom)
                     Column(
                         modifier = Modifier.width(28.dp).fillMaxHeight(),
                         verticalArrangement = Arrangement.SpaceBetween,
                         horizontalAlignment = Alignment.End,
                     ) {
-                        listOf("30K", "20K", "10K", "0").forEach { lbl ->
+                        yAxisLabels.forEach { lbl ->
                             Text(lbl, color = Color.White.copy(alpha = 0.32f), fontSize = 8.sp)
                         }
                     }
@@ -311,7 +348,7 @@ fun NTRevenueHeroCard(
                     modifier = Modifier.fillMaxWidth().padding(end = 28.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    listOf("1 Jun", "8 Jun", "15 Jun", "22 Jun", "30 Jun").forEach { lbl ->
+                    xAxisLabels.forEach { lbl ->
                         Text(lbl, color = Color.White.copy(alpha = 0.36f), fontSize = 8.sp)
                     }
                 }
@@ -363,16 +400,33 @@ private fun HeroStatTile(stat: HeroStat, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun HeroRevenueChart(modifier: Modifier = Modifier) {
-    val pts = listOf(0.92f, 0.82f, 0.76f, 0.78f, 0.65f, 0.58f, 0.52f, 0.46f, 0.38f, 0.30f, 0.20f, 0.06f)
+private fun HeroRevenueChart(
+    points: List<Float>,
+    isPositive: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    // Pad sparse data so the curve still looks like a curve.
+    val pts = when {
+        points.isEmpty()       -> List(7) { 0f }
+        points.size == 1       -> List(7) { points.first() }
+        else                   -> points
+    }
+    val lineColor = if (isPositive) HeroLine else Color(0xFFFF8A8A)
+
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
         val vPad = h * 0.06f
         val chartH = h - vPad * 2
 
+        // Each point is normalised 0..1 where 1 = max bar height.
+        // We invert so a higher value sits HIGHER on the canvas.
         val offsets = pts.mapIndexed { i, v ->
-            Offset(w * i / (pts.size - 1).toFloat(), vPad + chartH * v)
+            val clamped = v.coerceIn(0f, 1f)
+            Offset(
+                x = if (pts.size > 1) w * i / (pts.size - 1).toFloat() else w / 2f,
+                y = vPad + chartH * (1f - clamped),
+            )
         }
 
         // Dashed grid lines
@@ -386,7 +440,7 @@ private fun HeroRevenueChart(modifier: Modifier = Modifier) {
             )
         }
 
-        // Build smooth bezier path
+        // Smooth bezier path through the points
         val line = Path().apply {
             moveTo(offsets[0].x, offsets[0].y)
             for (i in 1 until offsets.size) {
@@ -395,20 +449,26 @@ private fun HeroRevenueChart(modifier: Modifier = Modifier) {
             }
         }
 
-        // Area fill
+        // Translucent area fill below the line
         val fill = Path().apply {
             addPath(line)
             lineTo(w, h); lineTo(0f, h); close()
         }
-        drawPath(fill, Brush.verticalGradient(listOf(HeroLine.copy(alpha = 0.30f), Color.Transparent), startY = 0f, endY = h))
+        drawPath(
+            fill,
+            Brush.verticalGradient(
+                listOf(lineColor.copy(alpha = 0.30f), Color.Transparent),
+                startY = 0f, endY = h,
+            ),
+        )
 
-        // Line stroke
-        drawPath(line, color = HeroLine, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+        // Stroke the line
+        drawPath(line, color = lineColor, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
 
-        // End dot
+        // End-of-line dot
         val last = offsets.last()
         drawCircle(color = HeroBg1, radius = 5.dp.toPx(), center = last)
-        drawCircle(color = HeroLine, radius = 3.5.dp.toPx(), center = last)
+        drawCircle(color = lineColor, radius = 3.5.dp.toPx(), center = last)
     }
 }
 
@@ -440,6 +500,13 @@ private fun formatMrr(amount: Double): String = when {
     amount >= 1_00_000 -> "₹${(amount / 1_00_000 * 10).toLong() / 10.0}L"
     amount >= 1_000    -> "₹${amount.toLong()}"
     else               -> "₹${amount.toLong()}"
+}
+
+/** "+12.4%" / "-3.0%" — keeps one decimal, strips the trailing ".0" when zero. */
+internal fun formatPct(p: Double): String {
+    val rounded = (abs(p) * 10).toLong() / 10.0
+    val sign = if (p >= 0) "+" else "-"
+    return "$sign$rounded"
 }
 
 // ── KPI metric grid ───────────────────────────────────────────

@@ -30,6 +30,7 @@ import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.SaleEntry
+import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import kotlin.time.Clock
@@ -61,6 +62,7 @@ private fun currentMonthIndex(): Int {
 fun SalesSummaryScreen(
     saleEntries: List<SaleEntry> = emptyList(),
     productCategories: List<ProductCategory> = emptyList(),
+    stockMovements: List<StockMovement> = emptyList(),
     currentExpense: MonthlyExpense? = null,
     onExpenseSave: (MonthlyExpense) -> Unit = {},
     onBack: () -> Unit,
@@ -123,6 +125,16 @@ fun SalesSummaryScreen(
     val perDayExpense = expense.total / 30.0
     val netPerDay     = perDayMargin - perDayExpense
 
+    // ── Stock movement aggregate (inward + outward) for the selected month ───
+    // The admin sees movements logged by every employee — RLS already exposes
+    // the cross-employee view, we just bucket by month here.
+    val monthMovements = stockMovements.filter { it.createdAt?.startsWith(selectedMonthKey) == true }
+    val totalInwardQty   = monthMovements.filter { it.type == "inward" }.sumOf { it.qty }
+    val totalOutwardQty  = monthMovements.filter { it.type == "outward" }.sumOf { it.qty }
+    val inwardEntries    = monthMovements.count { it.type == "inward" }
+    val outwardEntries   = monthMovements.count { it.type == "outward" }
+    val netStockChange   = totalInwardQty - totalOutwardQty
+
     Scaffold(
         containerColor = NTColors.Background,
         topBar = { SummaryTopBar(onBack = onBack) },
@@ -147,6 +159,19 @@ fun SalesSummaryScreen(
                     totalMargin  = totalMargin,
                     totalSelling = totalSelling,
                     modifier     = Modifier.padding(horizontal = NTDp.screenPad),
+                )
+                Spacer(Modifier.height(NTDp.md))
+            }
+
+            // ── Stock activity (inward + outward from all employees) ───
+            item {
+                StockActivityCard(
+                    inwardQty       = totalInwardQty,
+                    outwardQty      = totalOutwardQty,
+                    inwardEntries   = inwardEntries,
+                    outwardEntries  = outwardEntries,
+                    netChange       = netStockChange,
+                    modifier        = Modifier.padding(horizontal = NTDp.screenPad),
                 )
                 Spacer(Modifier.height(NTDp.md))
             }
@@ -570,3 +595,148 @@ private fun PerDayCard(label: String, value: String, bg: Color, fg: Color, modif
         Text(value, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = fg, textAlign = TextAlign.Center)
     }
 }
+
+// ── Stock activity card ────────────────────────────────────────────────────────
+//   Aggregates inward & outward stock movements logged by every employee under
+//   this admin (RLS already exposes the cross-employee view), bucketed for the
+//   currently-selected month.
+
+@Composable
+private fun StockActivityCard(
+    inwardQty: Int,
+    outwardQty: Int,
+    inwardEntries: Int,
+    outwardEntries: Int,
+    netChange: Int,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
+            .padding(NTDp.md),
+    ) {
+        // Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "STOCK ACTIVITY",
+                    fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp, color = NTColors.Primary,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Movements logged by your team this month",
+                    fontSize = 12.sp, color = NTColors.TextTertiary,
+                )
+            }
+            // Net delta pill
+            val netLabel = when {
+                netChange > 0 -> "+$netChange net"
+                netChange < 0 -> "$netChange net"
+                else          -> "0 net"
+            }
+            val (netBg, netFg) = when {
+                netChange > 0 -> NTColors.SuccessLight to NTColors.Success
+                netChange < 0 -> NTColors.ErrorLight   to NTColors.Error
+                else          -> NTColors.SurfaceVar   to NTColors.TextTertiary
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(NTDp.radFull))
+                    .background(netBg)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) {
+                Text(netLabel, color = netFg, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(Modifier.height(NTDp.md))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
+        ) {
+            StockActivityTile(
+                title    = "INWARD",
+                subtitle = "Came in",
+                qty      = inwardQty,
+                entries  = inwardEntries,
+                icon     = Icons.Rounded.ArrowDownward,
+                bg       = NTColors.SuccessLight,
+                fg       = NTColors.Success,
+                modifier = Modifier.weight(1f),
+            )
+            StockActivityTile(
+                title    = "OUTWARD",
+                subtitle = "Went out",
+                qty      = outwardQty,
+                entries  = outwardEntries,
+                icon     = Icons.Rounded.ArrowUpward,
+                bg       = NTColors.ErrorLight,
+                fg       = NTColors.Error,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        if (inwardEntries == 0 && outwardEntries == 0) {
+            Spacer(Modifier.height(NTDp.sm))
+            Text(
+                "No stock movements logged for this month yet.",
+                fontSize = 11.sp,
+                color = NTColors.TextTertiary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun StockActivityTile(
+    title: String,
+    subtitle: String,
+    qty: Int,
+    entries: Int,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    bg: Color,
+    fg: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .background(bg, RoundedCornerShape(14.dp))
+            .padding(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(fg.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(15.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text(title, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.6.sp, color = fg)
+                Text(subtitle, fontSize = 10.sp, color = fg.copy(alpha = 0.70f))
+            }
+        }
+        Spacer(Modifier.height(NTDp.sm))
+        Text("$qty cans", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = fg)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            if (entries == 1) "1 entry" else "$entries entries",
+            fontSize = 11.sp, color = fg.copy(alpha = 0.70f),
+        )
+    }
+}
+

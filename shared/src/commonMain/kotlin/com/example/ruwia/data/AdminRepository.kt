@@ -60,7 +60,10 @@ class AdminRepository {
         return try {
             supabase.from("product_categories")
                 .select { filter { eq("is_active", true) } }
-                .decodeList()
+                .decodeList<ProductCategory>()
+                // Deduplicate by name (case-insensitive) — keeps the first occurrence.
+                // This guards against accidental duplicate rows that may already exist in the DB.
+                .distinctBy { it.name.trim().lowercase() }
         } catch (e: Exception) { emptyList() }
     }
 
@@ -81,10 +84,23 @@ class AdminRepository {
     }
 
     suspend fun addProductCategory(cat: ProductCategory) {
+        // Guard: reject if a product with the same name already exists (active or inactive).
+        val existing = try {
+            supabase.from("product_categories")
+                .select { filter { ilike("name", cat.name.trim()) } }
+                .decodeList<ProductCategory>()
+        } catch (_: Exception) { emptyList() }
+
+        if (existing.isNotEmpty()) {
+            throw IllegalStateException(
+                "A product named \"${cat.name.trim()}\" already exists. Please use a different SKU name."
+            )
+        }
+
         supabase.from("product_categories").insert(
             buildJsonObject {
-                put("name", cat.name)
-                put("display_name", cat.displayName)
+                put("name", cat.name.trim())
+                put("display_name", cat.displayName.trim())
                 put("supplier_group", cat.supplierGroup)
                 put("purchase_price_gc", cat.purchasePriceGC)
                 put("purchase_price_mb", cat.purchasePriceMB)
@@ -165,8 +181,50 @@ class AdminRepository {
         } catch (e: Exception) { null }
     }
 
+    /**
+     * Persist this admin's monthly expense breakdown.
+     *
+     * The `monthly_expenses` table has a `UNIQUE (month, shop_id)` constraint
+     * but `upsert(expense)` defaults to conflict-on-PRIMARY-KEY (`id`). Since
+     * the in-memory [MonthlyExpense] always carries `id = null`, the first
+     * save inserts cleanly but every subsequent save also tries to INSERT and
+     * trips the UNIQUE constraint — which is why edits stopped persisting on
+     * the second tap. We work around this by fetching the existing row's id
+     * first, then explicitly UPDATEing (or INSERTing if no row exists yet).
+     */
     suspend fun saveMonthlyExpense(expense: MonthlyExpense) {
-        supabase.from("monthly_expenses").upsert(expense)
+        val month  = expense.month
+        val shopId = expense.shopId.ifBlank { "shop1" }
+
+        val existing = try {
+            supabase.from("monthly_expenses")
+                .select {
+                    filter {
+                        eq("month", month)
+                        eq("shop_id", shopId)
+                    }
+                    limit(1)
+                }
+                .decodeSingleOrNull<MonthlyExpense>()
+        } catch (_: Exception) { null }
+
+        val payload = buildJsonObject {
+            put("month",          month)
+            put("shop_id",        shopId)
+            put("shop_rent",      expense.shopRent)
+            put("admin_salary",   expense.adminSalary)
+            put("delivery_staff", expense.deliveryStaff)
+            put("miscellaneous",  expense.miscellaneous)
+            put("bike_expense",   expense.bikeExpense)
+        }
+
+        if (existing?.id != null) {
+            supabase.from("monthly_expenses").update(payload) {
+                filter { eq("id", existing.id) }
+            }
+        } else {
+            supabase.from("monthly_expenses").insert(payload)
+        }
     }
 
     // ── Revenue chart ─────────────────────────────────────────────────────────
@@ -213,18 +271,20 @@ class AdminRepository {
     }
 
     suspend fun addCustomer(customer: Customer): Customer {
-        return try {
-            supabase.from("customers").insert(
-                buildJsonObject {
-                    put("name", customer.name)
-                    if (customer.phone != null) put("phone", customer.phone)
-                    if (customer.address != null) put("address", customer.address)
-                    if (customer.otherDetails != null) put("other_details", customer.otherDetails)
-                }
-            ) { select() }.decodeSingle()
-        } catch (e: Exception) {
-            customer.copy(id = "local_${customer.name.hashCode()}")
-        }
+        // We deliberately do NOT swallow exceptions here. Earlier we returned
+        // a fake local copy with `id = "local_..."` on failure, which made the
+        // ViewModel believe the insert succeeded and add the customer to its
+        // in-memory list. The customer would appear briefly in the picker,
+        // never make it to the DB, and silently vanish on the next refresh —
+        // the exact "customers don't show up across apps" bug.
+        return supabase.from("customers").insert(
+            buildJsonObject {
+                put("name", customer.name)
+                if (customer.phone != null) put("phone", customer.phone)
+                if (customer.address != null) put("address", customer.address)
+                if (customer.otherDetails != null) put("other_details", customer.otherDetails)
+            }
+        ) { select() }.decodeSingle()
     }
 
     // ── Orders ────────────────────────────────────────────────────────────────
@@ -294,14 +354,22 @@ class AdminRepository {
 
     suspend fun getShopStocks(): List<ShopStockInfo> {
         return try {
-            supabase.from("shop_stocks").select().decodeList()
+            supabase.from("shop_stocks").select()
+                .decodeList<ShopStockInfo>()
+                // Deduplicate by name (case-insensitive) — keeps the first occurrence.
+                // Guards against accidental duplicate rows already in the DB.
+                .distinctBy { it.name.trim().lowercase() }
         } catch (e: Exception) { emptyList() }
     }
 
     suspend fun getRecentMovements(): List<StockMovement> {
         return try {
+            // 1000 rows so we have at least the last ~3 months for dashboard
+            // aggregations (inward / outward totals, month-over-month deltas).
+            // RLS on `stock_movements` exposes every employee's record to the
+            // admin, so this is the cross-team view they expect.
             supabase.from("stock_movements")
-                .select { order("created_at", SortOrder.DESCENDING); limit(20) }
+                .select { order("created_at", SortOrder.DESCENDING); limit(1000) }
                 .decodeList()
         } catch (e: Exception) { emptyList() }
     }
@@ -313,6 +381,7 @@ class AdminRepository {
         shopName: String,
         productId: String? = null,
     ) {
+        // 1. Persist the movement row itself.
         supabase.from("stock_movements").insert(
             buildJsonObject {
                 put("source", source)
@@ -322,6 +391,29 @@ class AdminRepository {
                 if (productId != null) put("product_id", productId)
             }
         )
+
+        // 2. Reflect the movement in the product's running stock count so the
+        //    Products / Stock dashboards update in real time. Without this, the
+        //    `stock_movements` table grows but `product_categories.stock_available`
+        //    never changes — and every UI that reads stock_available stays stuck
+        //    at the original number.
+        if (productId != null && productId.isNotBlank()) {
+            runCatching {
+                val current = supabase.from("product_categories")
+                    .select { filter { eq("id", productId) } }
+                    .decodeSingleOrNull<ProductCategory>() ?: return@runCatching
+                val delta = when (type) {
+                    "inward"     ->  qty
+                    "outward"    -> -qty
+                    "adjustment" ->  qty
+                    else         ->  0
+                }
+                val newStock = (current.stockAvailable + delta).coerceAtLeast(0)
+                supabase.from("product_categories").update(
+                    buildJsonObject { put("stock_available", newStock) },
+                ) { filter { eq("id", productId) } }
+            }
+        }
     }
 
     // ── Suppliers ─────────────────────────────────────────────────────────────
@@ -332,11 +424,73 @@ class AdminRepository {
                 .select { filter { eq("is_active", true) } }
                 .decodeList<Supplier>()
                 .map { s -> if (s.location != null) "${s.name}  ·  ${s.location}" else s.name }
+                // De-duplicate by formatted display string — historical inserts
+                // before the unique-constraint was added can leave duplicate
+                // rows that would otherwise show up twice in the picker.
+                .distinct()
         } catch (e: Exception) {
             listOf(
                 "Global Creators  ·  Tiru",
                 "Multi Brands  ·  Coimbatore",
                 "Aqua Pure Plant  ·  Tiru",
+            )
+        }
+    }
+
+    /** Returns the full supplier rows (including IDs) for management screens. */
+    suspend fun getSuppliersFull(): List<Supplier> {
+        return try {
+            supabase.from("suppliers")
+                .select { filter { eq("is_active", true) } }
+                .decodeList<Supplier>()
+                // De-duplicate by (name, location) so legacy duplicate rows
+                // collapse into a single entry in the management UI.
+                .distinctBy { "${it.name.trim().lowercase()}|${it.location?.trim()?.lowercase() ?: ""}" }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    suspend fun addSupplier(name: String, location: String?) {
+        if (name.isBlank()) return
+        // Check whether a row with the same (name, location) already exists.
+        // We do this client-side because the suppliers table may not have a
+        // unique constraint yet, and silently inserting a duplicate is exactly
+        // the bug that caused supplier names to appear twice in pickers.
+        val existing = runCatching { getSuppliersFull() }.getOrDefault(emptyList())
+        val matches = existing.any {
+            it.name.trim().equals(name.trim(), ignoreCase = true) &&
+            (it.location?.trim() ?: "").equals((location?.trim() ?: ""), ignoreCase = true)
+        }
+        if (matches) return
+
+        supabase.from("suppliers").insert(
+            buildJsonObject {
+                put("name", name.trim())
+                if (!location.isNullOrBlank()) put("location", location.trim())
+                put("is_active", true)
+            }
+        )
+    }
+
+    suspend fun deleteSupplier(id: String) {
+        if (id.isBlank()) {
+            throw IllegalArgumentException("Supplier id is blank — cannot delete.")
+        }
+        // Soft-delete so historical references in stock_movements still resolve.
+        // Use `select()` so the response carries back whatever rows were
+        // actually updated. If RLS blocks the update or the id doesn't match
+        // any row, the response is empty and we surface that as an error
+        // instead of silently succeeding (which is what hid the original bug).
+        val updated = supabase.from("suppliers").update(
+            buildJsonObject { put("is_active", false) }
+        ) {
+            filter { eq("id", id) }
+            select()
+        }.decodeList<Supplier>()
+
+        if (updated.isEmpty()) {
+            throw IllegalStateException(
+                "Supplier could not be deleted. The row may not exist, or your " +
+                "account does not have permission to update suppliers."
             )
         }
     }

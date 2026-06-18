@@ -11,9 +11,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ShopStockInfo
+import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.*
@@ -70,6 +73,7 @@ fun StockDashboardScreen(
             )
             else -> StockDashboardContent(
                 shopStocks     = state.shopStocks,
+                stockItems     = state.stockItems,
                 movements      = state.recentMovements,
                 onBack         = onBack,
                 onRefresh      = onRefresh,
@@ -84,6 +88,7 @@ fun StockDashboardScreen(
 @Composable
 private fun StockDashboardContent(
     shopStocks: List<ShopStockInfo>,
+    stockItems: List<StockItem>,
     movements: List<StockMovement>,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
@@ -91,10 +96,39 @@ private fun StockDashboardContent(
     onAdjust: () -> Unit,
     contentPadding: PaddingValues,
 ) {
-    val totalCans  = shopStocks.sumOf { it.totalCans }
-    val totalFull  = shopStocks.sumOf { it.fullCans }
-    val totalEmpty = shopStocks.sumOf { it.emptyCans }
-    val totalCust  = shopStocks.sumOf { it.cansWithCustomers }
+    // ── Derive live shop totals from stock movements ─────────────────────────
+    //
+    // The `shop_stocks` table only stores the static `(name, location, is_live)`
+    // metadata in this codebase — nothing currently maintains the
+    // `total_cans / full_cans / empty_cans / cans_with_customers` columns when
+    // movements happen. So instead of trusting those (always-zero) columns,
+    // we recompute them client-side from the latest movement log.
+    //
+    //   • Inward + product (e.g. "Aqua Pure Plant" supplier)  → full cans IN
+    //   • Inward + "Empty cans · …"                            → empty cans IN
+    //   • Outward                                              → cans went to
+    //                                                            customer
+    //
+    // `full_cans` = full_in − outward, `empty_cans` = empty_in,
+    // `cans_with_customers` = outward, `total_cans` = sum of the three.
+    val derivedShops = remember(shopStocks, movements) {
+        deriveShopStockTotals(shopStocks, movements)
+    }
+
+    val totalCans  = derivedShops.sumOf { it.totalCans }
+    val totalFull  = derivedShops.sumOf { it.fullCans }
+    val totalEmpty = derivedShops.sumOf { it.emptyCans }
+    val totalCust  = derivedShops.sumOf { it.cansWithCustomers }
+
+    val inwardByShop = movements
+        .filter { it.type == "inward" }
+        .groupBy { shopMatchKey(it.shopName) }
+        .mapValues { (_, v) -> v.sumOf { it.qty } }
+
+    val outwardByShop = movements
+        .filter { it.type == "outward" }
+        .groupBy { shopMatchKey(it.shopName) }
+        .mapValues { (_, v) -> v.sumOf { it.qty } }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(NTColors.Background),
@@ -130,18 +164,39 @@ private fun StockDashboardContent(
 
         item { Spacer(modifier = Modifier.height(NTDp.md)) }
 
-        if (shopStocks.isEmpty()) {
-            item {
-                NTEmptyState(
-                    icon     = Icons.Rounded.Inventory2,
-                    title    = "No Shops Configured",
-                    subtitle = "Add shops in settings to see stock breakdown.",
-                    modifier = Modifier.padding(NTDp.lg),
-                )
+        if (derivedShops.isEmpty()) {
+            // No shop rows configured — fall back to a single combined card
+            // showing the per-product stock so the admin still sees the
+            // catalogue-level breakdown immediately.
+            if (stockItems.isNotEmpty()) {
+                item {
+                    AllProductsStockCard(
+                        items    = stockItems,
+                        modifier = Modifier.padding(horizontal = NTDp.screenPad),
+                    )
+                    Spacer(modifier = Modifier.height(NTDp.md))
+                }
+            } else {
+                item {
+                    NTEmptyState(
+                        icon     = Icons.Rounded.Inventory2,
+                        title    = "No Shops Configured",
+                        subtitle = "Add shops in settings to see stock breakdown.",
+                        modifier = Modifier.padding(NTDp.lg),
+                    )
+                }
             }
         } else {
-            items(items = shopStocks, key = { it.id }) { shop ->
-                ShopStockCard(shop = shop)
+            items(items = derivedShops, key = { it.id }) { shop ->
+                val shopKey = shopMatchKey(shop.name)
+                val liveIn = inwardByShop[shopKey] ?: 0
+                val liveOut = outwardByShop[shopKey] ?: 0
+                ShopStockCard(
+                    shop        = shop,
+                    liveInward  = liveIn,
+                    liveOutward = liveOut,
+                    productItems = stockItems,
+                )
                 Spacer(modifier = Modifier.height(NTDp.md))
             }
         }
@@ -453,7 +508,12 @@ private fun ActionTile(
 // ── Per-shop card ─────────────────────────────────────────────
 
 @Composable
-private fun ShopStockCard(shop: ShopStockInfo) {
+private fun ShopStockCard(
+    shop: ShopStockInfo,
+    liveInward: Int,
+    liveOutward: Int,
+    productItems: List<StockItem> = emptyList(),
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -512,6 +572,16 @@ private fun ShopStockCard(shop: ShopStockInfo) {
             CanStatChip(shop.cansWithCustomers, "WITH\nCUST.",   Icons.Rounded.Groups, CustNumColor,  CustChipBg,  Modifier.weight(1f))
         }
 
+        Spacer(modifier = Modifier.height(NTDp.sm))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
+        ) {
+            CanStatChip(liveInward, "LIVE INWARD", Icons.Rounded.ArrowDownward, InwardFg, InwardBg, Modifier.weight(1f))
+            CanStatChip(liveOutward, "LIVE OUTWARD", Icons.Rounded.ArrowUpward, OutwardFg, OutwardBg, Modifier.weight(1f))
+        }
+
         Spacer(modifier = Modifier.height(NTDp.md))
 
         Row(
@@ -526,6 +596,126 @@ private fun ShopStockCard(shop: ShopStockInfo) {
                 color         = NTColors.TextTertiary,
                 letterSpacing = 0.4.sp,
             )
+        }
+
+        // ── Per-product breakdown ─────────────────────────────
+        // Shows the product catalogue with their current stock counts so the
+        // admin sees what's in stock by SKU/litre, not just aggregate totals.
+        // The product table is global (not yet shop-scoped), so we surface
+        // the same list under each shop card with a clear caption.
+        if (productItems.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(NTDp.md))
+            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
+            Spacer(modifier = Modifier.height(NTDp.sm))
+            Text(
+                "PRODUCTS · BY LITRE",
+                fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp, color = NTColors.TextTertiary,
+            )
+            Spacer(modifier = Modifier.height(NTDp.sm))
+            productItems.forEach { item ->
+                ProductStockRow(item = item)
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+        }
+    }
+}
+
+// ── Per-product stock row ──────────────────────────────────────
+//   Used both inside per-shop cards and the all-products fallback card so the
+//   look stays consistent across both presentations.
+
+@Composable
+private fun ProductStockRow(item: StockItem) {
+    val (badgeBg, badgeFg) = when {
+        item.stockAvailable <= 0  -> NTColors.ErrorLight   to NTColors.Error
+        item.stockAvailable <= 20 -> Color(0xFFFFF1E6)     to Color(0xFFF97316)
+        else                       -> NTColors.SuccessLight to NTColors.Success
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
+                .background(NTColors.PrimaryLight),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Rounded.Water, null, tint = NTColors.Primary, modifier = Modifier.size(15.dp))
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                item.name,
+                fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                color = NTColors.TextPrimary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            val capacityLabel = if (item.capacityLiters > 0) "${item.capacityLiters}L" else "—"
+            Text(
+                "$capacityLabel · ₹${item.pricePerCan.toInt()}/can",
+                fontSize = 11.sp, color = NTColors.TextTertiary,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(NTDp.radFull))
+                .background(badgeBg)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        ) {
+            Text(
+                "${item.stockAvailable} cans",
+                fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                color = badgeFg,
+            )
+        }
+    }
+}
+
+// ── All-products card (no shops configured) ───────────────────
+//   Fallback when `shop_stocks` is empty so the admin still sees the SKU-level
+//   breakdown immediately after launching the app.
+
+@Composable
+private fun AllProductsStockCard(
+    items: List<StockItem>,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(NTColors.Surface, RoundedCornerShape(NTDp.radXxl))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radXxl))
+            .padding(NTDp.cardPad),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp))
+                    .background(NTColors.PrimaryLight),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Inventory2, null, tint = NTColors.Primary, modifier = Modifier.size(20.dp))
+            }
+            Spacer(modifier = Modifier.width(NTDp.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "ALL PRODUCTS",
+                    fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp, color = NTColors.Primary,
+                )
+                Text(
+                    "${items.size} SKUs · ${items.sumOf { it.stockAvailable }} cans on hand",
+                    fontSize = 12.sp, color = NTColors.TextTertiary,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(NTDp.md))
+        items.forEach { item ->
+            ProductStockRow(item = item)
+            Spacer(modifier = Modifier.height(6.dp))
         }
     }
 }
@@ -627,3 +817,61 @@ private fun MovementRow(movement: StockMovement) {
         }
     }
 }
+
+// ── Shop-stock derivation helpers ─────────────────────────────────────────────
+//
+// The DB's `shop_stocks` columns aren't kept in sync with `stock_movements`
+// (no triggers, and the repos only write the movement itself). Instead of
+// teaching every write site to also bump those columns — which is fragile and
+// race-prone — we derive the live numbers from the movement log every time
+// the dashboard renders. This guarantees the screen always shows the truth
+// even if `shop_stocks` is stale or freshly-seeded with zeros.
+
+/**
+ * Returns each shop with its [ShopStockInfo] columns recomputed from the
+ * movement log. The original metadata fields (`id`, `name`, `location`,
+ * `isLive`) are preserved.
+ */
+internal fun deriveShopStockTotals(
+    rawShops: List<ShopStockInfo>,
+    movements: List<StockMovement>,
+): List<ShopStockInfo> {
+    if (rawShops.isEmpty()) return emptyList()
+    return rawShops.map { shop ->
+        val key = shopMatchKey(shop.name)
+        val rows = movements.filter { shopMatchKey(it.shopName) == key }
+        val fullIn  = rows.filter { it.type == "inward"  && !it.source.isEmptyCansSource() }.sumOf { it.qty }
+        val emptyIn = rows.filter { it.type == "inward"  &&  it.source.isEmptyCansSource() }.sumOf { it.qty }
+        val sentOut = rows.filter { it.type == "outward" }.sumOf { it.qty }
+
+        // full_cans  = full inward minus what went to customers (clamped at 0)
+        // empty_cans = empties picked up from customers
+        // with_cust  = total cans currently at customers (= outward count)
+        val fullCans  = (fullIn - sentOut).coerceAtLeast(0)
+        val emptyCans = emptyIn
+        val withCust  = sentOut
+        val totalCans = fullCans + emptyCans + withCust
+
+        shop.copy(
+            fullCans          = fullCans,
+            emptyCans         = emptyCans,
+            cansWithCustomers = withCust,
+            totalCans         = totalCans,
+        )
+    }
+}
+
+/**
+ * Normalises a shop name like "Shop 1 · Main" / "Shop 1" / " shop 1 " into
+ * the same lowercase comparison key. Shop names entered in the employee app
+ * (`shopInfo.split("·")[0].trim()`) only carry the first segment, so we
+ * strip everything after the bullet so they match the seeded names.
+ */
+internal fun shopMatchKey(name: String): String =
+    name.split("·", limit = 2).firstOrNull()?.trim()?.lowercase() ?: name.trim().lowercase()
+
+/** True if a movement source string represents returned empty cans. */
+private fun String.isEmptyCansSource(): Boolean =
+    trim().startsWith("Empty cans", ignoreCase = true)
+
+

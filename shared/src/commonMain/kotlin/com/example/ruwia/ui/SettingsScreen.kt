@@ -30,9 +30,13 @@ import com.example.ruwia.ui.dashboard.*
 @Composable
 fun SettingsScreen(
     state: AdminState,
+    adminName: String = "Admin",
+    adminEmail: String = "",
     onBack: () -> Unit,
     onNavigateToEmployees: () -> Unit,
     onNavigateToPricing: () -> Unit,
+    onNavigateToSuppliers: () -> Unit = {},
+    onNavigateToCustomers: () -> Unit = {},
     onLogout: () -> Unit
 ) {
     // Toggle states
@@ -100,6 +104,12 @@ fun SettingsScreen(
 
             // ── Profile hero ──────────────────────────────────
             item {
+                // Derive initials from the real admin name
+                val initials = adminName
+                    .split(" ").filter { it.isNotEmpty() }
+                    .take(2).joinToString("") { it.first().uppercaseChar().toString() }
+                    .ifEmpty { "AD" }
+
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = NTDp.screenPad),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -113,7 +123,7 @@ fun SettingsScreen(
                                 .border(1.5.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(NTDp.radXxl)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("MK", color = Color.White, fontSize = 28.sp,
+                            Text(initials, color = Color.White, fontSize = 28.sp,
                                 fontWeight = FontWeight.ExtraBold)
                         }
                         // Orange dot
@@ -124,11 +134,24 @@ fun SettingsScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(NTDp.md))
-                    Text("Mr. Karthik", color = Color.White, fontSize = 22.sp,
-                        fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        text       = adminName.ifEmpty { "Admin" },
+                        color      = Color.White,
+                        fontSize   = 22.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("OWNER · karthik@neerthuli.in", color = Color.White.copy(alpha = 0.75f),
-                        fontSize = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.3.sp)
+                    val roleEmailLine = buildString {
+                        append("OWNER")
+                        if (adminEmail.isNotEmpty()) append(" · $adminEmail")
+                    }
+                    Text(
+                        text       = roleEmailLine,
+                        color      = Color.White.copy(alpha = 0.75f),
+                        fontSize   = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 0.3.sp,
+                    )
                     Spacer(modifier = Modifier.height(NTDp.md))
                     // Business Pro badge
                     Box(
@@ -194,6 +217,29 @@ fun SettingsScreen(
                         title = "Pricing & products",
                         subtitle = "5L · 10L · 20L · BULK",
                         onClick = onNavigateToPricing
+                    )
+                    SettingsDivider()
+                    // Suppliers — admin maintains the list, employees see it
+                    // immediately in their Add Inward picker on next refresh.
+                    SettingsNavItem(
+                        icon = Icons.Rounded.Store,
+                        iconBg = Color(0xFFFFF3E8),
+                        iconFg = Color(0xFFF97316),
+                        title = "Suppliers",
+                        subtitle = "${state.suppliersFull.size} ACTIVE · MANAGE",
+                        onClick = onNavigateToSuppliers
+                    )
+                    SettingsDivider()
+                    // Customers — admin directory of every customer in the
+                    // system. Adding here propagates to every employee's
+                    // Add Sale picker thanks to RLS on the customers table.
+                    SettingsNavItem(
+                        icon = Icons.Rounded.Group,
+                        iconBg = Color(0xFFE0EEFF),
+                        iconFg = Color(0xFF3B7BE0),
+                        title = "Customers",
+                        subtitle = "${state.customers.size} TOTAL · MANAGE",
+                        onClick = onNavigateToCustomers
                     )
                 }
                 Spacer(modifier = Modifier.height(NTDp.md))

@@ -58,12 +58,20 @@ private fun StockMovement.toEntryDisplay(): EntryDisplay = EntryDisplay(
 )
 
 // ── Screen navigation ─────────────────────────────────────────────────────────
+//
+// Three of these are full-screen overlays (no bottom nav):
+//   • [EmpScreen.AddInward] — record a stock purchase from a supplier
+//   • [EmpScreen.AddSale]   — record an outward sale to a customer
+//   • [EmpScreen.Profile]   — the employee's profile + logout dialog
+//
+// The home / entries / stock tabs all stay inside the scaffold and are
+// switched by the bottom-nav `selectedTab` index instead so the bottom bar
+// never disappears between them.
 
 private sealed class EmpScreen {
     object Home      : EmpScreen()
     object AddInward : EmpScreen()
-    object Entries   : EmpScreen()
-    object Stock     : EmpScreen()
+    object AddSale   : EmpScreen()
     object Profile   : EmpScreen()
 }
 
@@ -73,263 +81,377 @@ private sealed class EmpScreen {
 fun EmployeeDashboardScreen(
     vm: EmployeeViewModel,
     onLogout: () -> Unit,
-    employeeName: String = "Ravi Velu",
+    employeeName: String = "Employee",
     shopInfo: String = "Shop 1  ·  Saibaba",
+    userEmail: String = "",
 ) {
     val state by vm.state.collectAsState()
     var screen by remember { mutableStateOf<EmpScreen>(EmpScreen.Home) }
     var selectedTab by remember { mutableStateOf(0) }
 
+    // Push the parsed shop name down to the VM so its periodic refresh can
+    // pull shop-scoped stock movements without re-asking the UI on every tick.
+    val parsedShopName = remember(shopInfo) { shopInfo.split("·").getOrNull(0)?.trim().orEmpty() }
+    LaunchedEffect(parsedShopName) { vm.setAssignedShop(parsedShopName) }
+
     LaunchedEffect(Unit) { vm.loadDashboard() }
 
+    // ── Full-screen overlays (no bottom nav) ──────────────────────────────────
     when (screen) {
-        EmpScreen.AddInward -> AddStockPurchaseScreen(
-            stockItems = emptyList(),
-            products   = state.productCategories,
-            suppliers  = state.suppliers,
-            onBack     = { screen = EmpScreen.Home },
-            onClose    = { screen = EmpScreen.Home },
-            isEmployee = true,
-            onSave     = { supplier, _, _, quantities, _ ->
-                val shopPart = shopInfo.split("·").getOrNull(0)?.trim() ?: ""
-                vm.addInwardStock(supplier, quantities, shopPart)
-                screen = EmpScreen.Home
-            },
-        )
-
-        EmpScreen.Entries -> AddSaleScreen(
-            products      = state.productCategories,
-            customers     = state.customers,
-            onNewCustomer = { vm.addCustomer(it) },
-            onBack        = { screen = EmpScreen.Home },
-            onSave        = { _, _ -> screen = EmpScreen.Home },
-        )
-
-        EmpScreen.Profile -> EmployeeProfileScreen(
-            employeeName = employeeName,
-            shopInfo     = shopInfo,
-            onBack       = { screen = EmpScreen.Home },
-            onLogout     = onLogout,
-        )
-
-        else -> {
-            val entries = when {
-                state.tasks.isNotEmpty()         -> state.tasks.map { it.toEntryDisplay() }
-                state.recentEntries.isNotEmpty() -> state.recentEntries.map { it.toEntryDisplay() }
-                else                             -> emptyList()
-            }
-
-            val totalEntries  = entries.size
-            val inwardCount   = entries.count { it.isInward }
-            val outwardCount  = entries.count { !it.isInward }
-            val salesTotal    = state.dailyEarnings
-            val unitsInward   = state.emptyReturned
-            val unitsOutward  = state.filledDelivered
-
-            Scaffold(
-                containerColor = RuwiaColor.Background,
-                bottomBar = {
-                    NTBottomNavigation(
-                        selectedTab   = selectedTab,
-                        onTabSelected = { tab ->
-                            selectedTab = tab
-                            if (tab == 3) screen = EmpScreen.Profile
-                        },
-                        tabs = listOf(
-                            NTNavTab(0, "Home",    Icons.Rounded.Home),
-                            NTNavTab(1, "Entries", Icons.Rounded.History),
-                            NTNavTab(2, "Stock",   Icons.Rounded.Inventory2),
-                            NTNavTab(3, "Profile", Icons.Rounded.Person),
-                        ),
-                    )
+        EmpScreen.AddInward -> {
+            AddStockPurchaseScreen(
+                stockItems = emptyList(),
+                products   = state.productCategories,
+                suppliers  = state.suppliers,
+                onBack     = { screen = EmpScreen.Home },
+                onClose    = { screen = EmpScreen.Home },
+                isEmployee = true,
+                onSave     = { supplier, _, _, quantities, _ ->
+                    val shopPart = shopInfo.split("·").getOrNull(0)?.trim() ?: ""
+                    vm.addInwardStock(supplier, quantities, shopPart)
+                    screen = EmpScreen.Home
                 },
-            ) { padding ->
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentPadding = PaddingValues(bottom = 8.dp),
-                ) {
-                    // ── Header ──────────────────────────────────
-                    item {
-                        Column(Modifier.padding(horizontal = 20.dp)) {
-                            Spacer(Modifier.height(16.dp))
-                            EmpHeader(
-                                name      = employeeName,
-                                shopInfo  = shopInfo,
-                                onLogout  = onLogout,
-                            )
-                            Spacer(Modifier.height(20.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text       = "Today's stock",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize   = 26.sp,
-                                    color      = RuwiaColor.TextPrimary,
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .size(30.dp)
-                                        .background(RuwiaColor.Orange, RoundedCornerShape(8.dp)),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.Inventory2, null,
-                                        tint = Color.White, modifier = Modifier.size(16.dp),
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            val shopParts = shopInfo.split("·").map { it.trim() }
-                            val shopName  = shopParts.getOrNull(0) ?: shopInfo
-                            val location  = shopParts.getOrNull(1) ?: ""
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Icon(Icons.Rounded.Event, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(12.dp))
-                                Text(state.currentDate, fontSize = 12.sp, color = RuwiaColor.TextMuted)
-                                if (shopName.isNotEmpty()) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(Icons.Rounded.Store, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(12.dp))
-                                    Text(shopName, fontSize = 12.sp, color = RuwiaColor.TextMuted)
-                                }
-                                if (location.isNotEmpty()) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(Icons.Rounded.LocationOn, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(12.dp))
-                                    Text(location, fontSize = 12.sp, color = RuwiaColor.TextMuted)
-                                }
-                            }
-                            Spacer(Modifier.height(20.dp))
-                        }
-                    }
+            )
+            return
+        }
 
-                    // ── Activity card ────────────────────────────
-                    item {
-                        EmpActivityCard(
-                            totalEntries = totalEntries,
-                            inwardCount  = inwardCount,
-                            outwardCount = outwardCount,
-                            salesTotal   = salesTotal,
-                            unitsInward  = unitsInward,
-                            unitsOutward = unitsOutward,
-                            dateLabel    = state.currentDate,
-                            modifier     = Modifier.padding(horizontal = 20.dp),
+        EmpScreen.AddSale -> {
+            AddSaleScreen(
+                products      = state.productCategories,
+                customers     = state.customers,
+                onNewCustomer = { vm.addCustomer(it) },
+                onBack        = { screen = EmpScreen.Home },
+                onSave        = { customerName, items, emptyCans ->
+                    // Persist the sale: each line item creates one sale_entries
+                    // row and one outward stock movement; any empties picked up
+                    // from the customer become an inward movement (visible to
+                    // the admin on the stock dashboard).
+                    val shopPart = shopInfo.split("·").getOrNull(0)?.trim() ?: ""
+                    val lines = items.mapNotNull { item ->
+                        val product = state.productCategories.getOrNull(item.productIdx) ?: return@mapNotNull null
+                        val sellPrice = item.sellPriceText.toDoubleOrNull() ?: product.defaultSellPrice
+                        com.example.ruwia.data.EmployeeRepository.SaleLine(
+                            productId            = product.id,
+                            productName          = product.displayName.ifBlank { product.name },
+                            qty                  = item.qty,
+                            sellingPricePerUnit  = sellPrice,
+                            purchasePricePerUnit = product.purchasePriceGC,
                         )
-                        Spacer(Modifier.height(14.dp))
                     }
-
-                    // ── Action buttons ────────────────────────────
-                    item {
-                        Row(Modifier.padding(horizontal = 20.dp)) {
-                            EmpActionCard(
-                                label    = "FROM SUPPLIER",
-                                title    = "Add Inward",
-                                subtitle = "Record new stock\nfrom supplier",
-                                isInward = true,
-                                onClick  = { screen = EmpScreen.AddInward },
-                                modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            EmpActionCard(
-                                label    = "TO CUSTOMER",
-                                title    = "Add Outward",
-                                subtitle = "Record new stock\nto customer",
-                                isInward = false,
-                                onClick  = { screen = EmpScreen.Entries },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        Spacer(Modifier.height(26.dp))
+                    if (lines.isNotEmpty()) {
+                        vm.addOutwardSale(
+                            customerName       = customerName,
+                            shopName           = shopPart,
+                            lines              = lines,
+                            emptyCansCollected = emptyCans,
+                        )
                     }
+                    screen = EmpScreen.Home
+                },
+            )
+            return
+        }
 
-                    // ── Recent entries header ─────────────────────
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .padding(horizontal = 20.dp)
-                                .fillMaxWidth(),
-                            verticalAlignment    = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(
-                                text       = "Recent entries",
-                                fontSize   = 20.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color      = RuwiaColor.TextPrimary,
-                            )
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            ) {
-                                Text(
-                                    text       = "View all",
-                                    fontSize   = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color      = RuwiaColor.TealPrimary,
-                                )
-                                Icon(
-                                    Icons.Rounded.ArrowForward, null,
-                                    tint = RuwiaColor.TealPrimary, modifier = Modifier.size(14.dp),
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(12.dp))
+        EmpScreen.Profile -> {
+            EmployeeProfileScreen(
+                employeeName = employeeName,
+                email        = userEmail,
+                shopInfo     = shopInfo,
+                // Real-time stats from the loaded dashboard state — these are the
+                // employee's own movements for today, filtered server-side by
+                // employee_id (see EmployeeRepository.getDailyCansSummary).
+                todayInward  = state.todayInward,
+                todayOutward = state.todayOutward,
+                todaySales   = state.dailyEarnings,
+                customerCount = state.customers.size,
+                supplierCount = state.suppliers.size,
+                onAddCustomer = { vm.addCustomer(it) },
+                onAddSupplier = { name, loc -> vm.addSupplier(name, loc) },
+                onBack       = {
+                    // Return to whichever tab the user was on before opening Profile.
+                    screen = EmpScreen.Home
+                },
+                onLogout     = onLogout,
+            )
+            return
+        }
+
+        EmpScreen.Home -> { /* Fall through to scaffold below. */ }
+    }
+
+    // ── Tabbed home (Home / Entries / Stock) ──────────────────────────────────
+    Scaffold(
+        containerColor = RuwiaColor.Background,
+        bottomBar = {
+            NTBottomNavigation(
+                selectedTab   = selectedTab,
+                onTabSelected = { tab ->
+                    when (tab) {
+                        3    -> screen = EmpScreen.Profile
+                        else -> selectedTab = tab
                     }
+                },
+                tabs = listOf(
+                    NTNavTab(0, "Home",    Icons.Rounded.Home),
+                    NTNavTab(1, "Entries", Icons.Rounded.History),
+                    NTNavTab(2, "Stock",   Icons.Rounded.Inventory2),
+                    NTNavTab(3, "Profile", Icons.Rounded.Person),
+                ),
+            )
+        },
+    ) { padding ->
+        when (selectedTab) {
+            1 -> EmployeeEntriesScreen(
+                movements      = state.recentEntries,
+                todayInward    = state.todayInward,
+                todayOutward   = state.todayOutward,
+                dailyEarnings  = state.dailyEarnings,
+                currentDate    = state.currentDate,
+                isLoading      = state.loading,
+                onRefresh      = { vm.loadDashboard() },
+                contentPadding = padding,
+            )
 
-                    // ── Entry list ────────────────────────────────
-                    if (state.loading) {
-                        item {
-                            Box(
-                                Modifier.fillMaxWidth().padding(24.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularProgressIndicator(
-                                    color    = RuwiaColor.TealPrimary,
-                                    modifier = Modifier.size(28.dp),
-                                )
-                            }
-                        }
-                    } else {
-                        items(entries) { entry ->
-                            EmpEntryItem(
-                                entry    = entry,
-                                modifier = Modifier.padding(horizontal = 20.dp),
-                            )
-                            Spacer(Modifier.height(8.dp))
-                        }
-                    }
+            2 -> EmployeeStockScreen(
+                shopStocks     = state.shopStocks,
+                products       = state.productCategories,
+                // Shop-wide movements (not just this employee's) so the live
+                // can balances reflect every colleague's activity at the shop.
+                movements      = state.shopMovements,
+                isLoading      = state.loading,
+                onRefresh      = { vm.loadDashboard() },
+                // Restrict the view to the employee's assigned shop. The
+                // shopInfo string carries "{shopName} · {location}" — strip
+                // the location segment so it matches the keys in shop_stocks.
+                shopName       = parsedShopName,
+                contentPadding = padding,
+            )
 
-                    // ── EMP stock chip ────────────────────────────
-                    item {
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        RuwiaColor.TextPrimary.copy(alpha = 0.06f),
-                                        RoundedCornerShape(20.dp),
-                                    )
-                                    .padding(horizontal = 14.dp, vertical = 5.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text         = "EMP  ·  ${unitsInward + unitsOutward}",
-                                    fontSize     = 11.sp,
-                                    fontWeight   = FontWeight.SemiBold,
-                                    letterSpacing = 1.sp,
-                                    color        = RuwiaColor.TextSecondary,
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
+            // Tab 0 (Home) — and the fallback. Tab 3 (Profile) is handled above
+            // via the `screen` overlay state.
+            else -> EmployeeHomeContent(
+                state          = state,
+                shopInfo       = shopInfo,
+                employeeName   = employeeName,
+                onLogout       = onLogout,
+                onAddInward    = { screen = EmpScreen.AddInward },
+                onAddSale      = { screen = EmpScreen.AddSale },
+                contentPadding = padding,
+            )
+        }
+    }
+}
+
+// ── Home tab content ─────────────────────────────────────────────────────────
+//   Pulled out of the main composable so each bottom-nav tab can render its
+//   own LazyColumn without duplicating the scaffold/bottom-bar boilerplate.
+
+@Composable
+private fun EmployeeHomeContent(
+    state: com.example.ruwia.presentation.EmployeeState,
+    shopInfo: String,
+    employeeName: String,
+    onLogout: () -> Unit,
+    onAddInward: () -> Unit,
+    onAddSale: () -> Unit,
+    contentPadding: PaddingValues,
+) {
+    val entries = when {
+        state.tasks.isNotEmpty()         -> state.tasks.map { it.toEntryDisplay() }
+        state.recentEntries.isNotEmpty() -> state.recentEntries.map { it.toEntryDisplay() }
+        else                             -> emptyList()
+    }
+
+    val totalEntries  = entries.size
+    val inwardCount   = entries.count { it.isInward }
+    val outwardCount  = entries.count { !it.isInward }
+    val salesTotal    = state.dailyEarnings
+    val unitsInward   = state.todayInward
+    val unitsOutward  = state.todayOutward
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(contentPadding),
+        contentPadding = PaddingValues(bottom = 8.dp),
+    ) {
+        // ── Header ──────────────────────────────────
+        item {
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                Spacer(Modifier.height(16.dp))
+                EmpHeader(
+                    name      = employeeName,
+                    shopInfo  = shopInfo,
+                    onLogout  = onLogout,
+                )
+                Spacer(Modifier.height(20.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text       = "Today's stock",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize   = 26.sp,
+                        color      = RuwiaColor.TextPrimary,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .background(RuwiaColor.Orange, RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Inventory2, null,
+                            tint = Color.White, modifier = Modifier.size(16.dp),
+                        )
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                val shopParts = shopInfo.split("·").map { it.trim() }
+                val shopName  = shopParts.getOrNull(0) ?: shopInfo
+                val location  = shopParts.getOrNull(1) ?: ""
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(Icons.Rounded.Event, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(12.dp))
+                    Text(state.currentDate, fontSize = 12.sp, color = RuwiaColor.TextMuted)
+                    if (shopName.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Rounded.Store, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(12.dp))
+                        Text(shopName, fontSize = 12.sp, color = RuwiaColor.TextMuted)
+                    }
+                    if (location.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Rounded.LocationOn, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(12.dp))
+                        Text(location, fontSize = 12.sp, color = RuwiaColor.TextMuted)
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
             }
+        }
+
+        // ── Activity card ────────────────────────────
+        item {
+            EmpActivityCard(
+                totalEntries = totalEntries,
+                inwardCount  = inwardCount,
+                outwardCount = outwardCount,
+                salesTotal   = salesTotal,
+                unitsInward  = unitsInward,
+                unitsOutward = unitsOutward,
+                dateLabel    = state.currentDate,
+                modifier     = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(14.dp))
+        }
+
+        // ── Action buttons ────────────────────────────
+        item {
+            Row(Modifier.padding(horizontal = 20.dp)) {
+                EmpActionCard(
+                    label    = "FROM SUPPLIER",
+                    title    = "Add Inward",
+                    subtitle = "Record new stock\nfrom supplier",
+                    isInward = true,
+                    onClick  = onAddInward,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(12.dp))
+                EmpActionCard(
+                    label    = "TO CUSTOMER",
+                    title    = "Add Outward",
+                    subtitle = "Record new stock\nto customer",
+                    isInward = false,
+                    onClick  = onAddSale,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(26.dp))
+        }
+
+        // ── Recent entries header ─────────────────────
+        item {
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .fillMaxWidth(),
+                verticalAlignment    = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text       = "Recent entries",
+                    fontSize   = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color      = RuwiaColor.TextPrimary,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text       = "View all",
+                        fontSize   = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color      = RuwiaColor.TealPrimary,
+                    )
+                    Icon(
+                        Icons.Rounded.ArrowForward, null,
+                        tint = RuwiaColor.TealPrimary, modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        // ── Entry list ────────────────────────────────
+        if (state.loading) {
+            item {
+                Box(
+                    Modifier.fillMaxWidth().padding(24.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        color    = RuwiaColor.TealPrimary,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+            }
+        } else {
+            items(entries) { entry ->
+                EmpEntryItem(
+                    entry    = entry,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+
+        // ── EMP stock chip ────────────────────────────
+        item {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(
+                            RuwiaColor.TextPrimary.copy(alpha = 0.06f),
+                            RoundedCornerShape(20.dp),
+                        )
+                        .padding(horizontal = 14.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text         = "EMP  ·  ${unitsInward + unitsOutward}",
+                        fontSize     = 11.sp,
+                        fontWeight   = FontWeight.SemiBold,
+                        letterSpacing = 1.sp,
+                        color        = RuwiaColor.TextSecondary,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

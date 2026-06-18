@@ -26,7 +26,10 @@ import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.Order
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.presentation.AdminViewModel
+import com.example.ruwia.presentation.DashboardMetrics
+import com.example.ruwia.presentation.DashboardRange
 import com.example.ruwia.presentation.EmployeeCreationState
+import com.example.ruwia.presentation.toDashboardMetrics
 import com.example.ruwia.SystemBackHandler
 import com.example.ruwia.ui.admin.ProductDetailScreen
 import com.example.ruwia.ui.admin.ProductManagementScreen
@@ -41,7 +44,9 @@ import com.example.ruwia.ui.dashboard.*
 @Composable
 fun AdminDashboardScreen(
     vm: AdminViewModel,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    adminName: String = "Admin",
+    adminEmail: String = "",
 ) {
     val state by vm.state.collectAsState()
     var selectedTab       by remember { mutableStateOf(0) }
@@ -50,6 +55,8 @@ fun AdminDashboardScreen(
     var showEmployees     by remember { mutableStateOf(false) }
     var showAddEmployee   by remember { mutableStateOf(false) }
     var showPricing       by remember { mutableStateOf(false) }
+    var showSuppliers     by remember { mutableStateOf(false) }
+    var showCustomers     by remember { mutableStateOf(false) }
     var productDetailName by remember { mutableStateOf<String?>(null) }
 
     // ── Full-screen overlays ──────────────────────────────────
@@ -64,6 +71,25 @@ fun AdminDashboardScreen(
     }
 
     // ── Deepest level ─────────────────────────────────────────
+    if (showCustomers) {
+        SystemBackHandler { showCustomers = false }
+        com.example.ruwia.ui.admin.CustomerManagementScreen(
+            customers     = state.customers,
+            onAddCustomer = vm::addCustomer,
+            onBack        = { showCustomers = false },
+        )
+        return
+    }
+    if (showSuppliers) {
+        SystemBackHandler { showSuppliers = false }
+        com.example.ruwia.ui.admin.SupplierManagementScreen(
+            suppliers        = state.suppliersFull,
+            onAddSupplier    = vm::addSupplier,
+            onDeleteSupplier = vm::deleteSupplier,
+            onBack           = { showSuppliers = false },
+        )
+        return
+    }
     if (showPricing) {
         SystemBackHandler { showPricing = false }
         ProductPricingScreen(
@@ -119,9 +145,13 @@ fun AdminDashboardScreen(
         SystemBackHandler { showSettings = false }
         SettingsScreen(
             state                  = state,
+            adminName              = adminName,
+            adminEmail             = adminEmail,
             onBack                 = { showSettings = false },
             onNavigateToEmployees  = { showEmployees = true },
             onNavigateToPricing    = { showPricing = true },
+            onNavigateToSuppliers  = { showSuppliers = true },
+            onNavigateToCustomers  = { showCustomers = true },
             onLogout               = onLogout
         )
         return
@@ -137,8 +167,17 @@ fun AdminDashboardScreen(
             onBack     = { showAddStock = false },
             onClose    = { showAddStock = false },
             onSave     = { supplier, _, _, quantities, _ ->
-                quantities.filter { it.value > 0 }.forEach { (_, qty) ->
-                    vm.addStockMovement(supplier, qty, "inward", "Admin", null)
+                // Pass the productId through so the repo can also bump
+                // product_categories.stock_available — otherwise the count
+                // stays stuck on the Products screen.
+                quantities.filter { it.value > 0 }.forEach { (productId, qty) ->
+                    vm.addStockMovement(
+                        source    = supplier,
+                        qty       = qty,
+                        type      = "inward",
+                        shopName  = "Admin",
+                        productId = productId,
+                    )
                 }
                 showAddStock = false
                 vm.loadData()
@@ -161,6 +200,7 @@ fun AdminDashboardScreen(
                      state          = state,
                      vm             = vm,
                      contentPadding = contentPadding,
+                     adminName      = adminName,
                      onLogout       = onLogout,
                      onOpenSettings = { showSettings = true },
                  )
@@ -182,6 +222,7 @@ fun AdminDashboardScreen(
             3 -> SalesSummaryScreen(
                      saleEntries       = state.saleEntries,
                      productCategories = state.productCategories,
+                     stockMovements    = state.recentMovements,
                      currentExpense    = state.currentMonthExpense,
                      onExpenseSave     = vm::saveMonthlyExpense,
                      onBack            = {},
@@ -199,6 +240,7 @@ private fun AdminHomeTab(
     state: AdminState,
     vm: AdminViewModel,
     contentPadding: PaddingValues,
+    adminName: String,
     onLogout: () -> Unit,
     onOpenSettings: () -> Unit = {},
 ) {
@@ -209,7 +251,7 @@ private fun AdminHomeTab(
             onRetry  = vm::loadData,
             contentPadding = contentPadding
         )
-        else -> AdminDashboardContent(state, contentPadding, onLogout, onOpenSettings)
+        else -> AdminDashboardContent(state, contentPadding, adminName, onLogout, onOpenSettings)
     }
 }
 
@@ -217,29 +259,58 @@ private fun AdminHomeTab(
 private fun AdminDashboardContent(
     state: AdminState,
     contentPadding: PaddingValues,
+    adminName: String,
     @Suppress("UNUSED_PARAMETER") onLogout: () -> Unit,
     onOpenSettings: () -> Unit = {},
 ) {
-    // ── Derive dashboard metrics from real AdminState ────────
+    // ── Range picker state — drives BOTH the hero chart and the
+    // analytics chart below it. Defaults to MONTH so the home screen
+    // opens on the most useful "current month" view.
+    var selectedRange by remember { mutableStateOf(NTDateRange.MONTHLY) }
+
+    // Recompute metrics whenever state OR the selected range changes.
+    val metrics = remember(state, selectedRange) {
+        state.toDashboardMetrics(selectedRange.toDashboardRange())
+    }
+
     val totalStock     = state.stockItems.sumOf { it.stockAvailable }
     val pendingOrders  = state.orders.count { it.status == "pending" }
     val deliveredToday = state.orders.count { it.status == "delivered" }
     val activeStaff    = state.employees.count { it.status != "inactive" }
-    val emptyCans      = state.customers.sumOf { it.cansHeld }
 
     val (greeting, subtext) = buildGreeting(
-        mrr       = state.mrr,
+        profit    = metrics.thisMonthProfit,
         pending   = pendingOrders,
         delivered = deliveredToday,
+        revGrowth = metrics.revenueGrowthPercent,
     )
 
-    val kpiItems = buildKpis(
-        totalStock = totalStock,
-        mrr        = state.mrr,
-        emptyCans  = emptyCans,
-        customers  = state.customers.size,
-    )
+    val kpiItems = buildKpis(state = state, metrics = metrics)
 
+    // Decide which figure drives the hero card.
+    // If we have any expense data for either month, show NET PROFIT (the
+    // primary owner concern). Otherwise fall back to the range total so
+    // brand-new tenants without expenses configured still see a meaningful
+    // number — and showing ₹0 is FINE when there are no sales yet, that's
+    // the correct truth for the day.
+    val hasExpenseData = state.currentMonthExpense != null || state.lastMonthExpense != null
+    val isMonthRange   = selectedRange == NTDateRange.MONTHLY
+    val headlineLabel  = when {
+        hasExpenseData && isMonthRange -> "NET PROFIT"
+        isMonthRange                   -> "TOTAL REVENUE"
+        else                           -> "RANGE REVENUE"
+    }
+    val headlineValue  = when {
+        hasExpenseData && isMonthRange -> metrics.thisMonthProfit
+        isMonthRange                   -> metrics.thisMonthRevenue
+        else                           -> metrics.rangeRevenue
+    }
+    val lastValue      = if (hasExpenseData && isMonthRange) metrics.lastMonthProfit else metrics.lastMonthRevenue
+    val growth         = when {
+        hasExpenseData && isMonthRange -> metrics.profitGrowthPercent
+        isMonthRange                   -> metrics.revenueGrowthPercent
+        else                           -> metrics.weeklyGrowthPercent  // best non-month proxy
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -254,7 +325,7 @@ private fun AdminDashboardContent(
         item {
             NTDashboardHeader(
                 shopName            = "Neer Thuli",
-                adminName           = "Admin",
+                adminName           = adminName.ifBlank { "Admin" },
                 notificationCount   = pendingOrders,
                 onAvatarClick       = onOpenSettings, // tap avatar → Settings
                 onSearchClick       = {},
@@ -267,17 +338,23 @@ private fun AdminDashboardContent(
             NTGreetingSection(greeting = greeting, subtext = subtext)
         }
 
-        // Revenue hero card
+        // Revenue / Profit hero card — fully dynamic; chart, axes & headline
+        // all swap when the range picker below the KPI grid changes.
         item {
             NTRevenueHeroCard(
                 shopName       = "Neer Thuli",
-                mrr            = state.mrr,
+                headlineLabel  = headlineLabel,
+                headlineValue  = headlineValue,
+                lastMonthValue = lastValue,
+                growthPercent  = growth,
                 totalOrders    = state.orders.size,
                 totalCustomers = state.customers.size,
                 activeStaff    = activeStaff,
                 fleetActive    = state.fleetActiveCount,
-                growthPercent  = 8.2,
-                dateLabel      = "This Month"
+                chartPoints    = metrics.chartPoints,
+                yAxisLabels    = metrics.yAxisLabels,
+                xAxisLabels    = metrics.xAxisLabels,
+                dateLabel      = metrics.rangeLabel,
             )
         }
 
@@ -290,30 +367,30 @@ private fun AdminDashboardContent(
 
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
-        // Analytics section — line chart
-        if (state.weeklyRevenuePoints.isNotEmpty()) {
-            item {
-                Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
-                    NTSectionHeader(label = "ANALYTICS", title = "Revenue trend")
-                    Spacer(modifier = Modifier.height(NTDp.md))
-                    NTDateRangePicker(
-                        selected = NTDateRange.WEEKLY,
-                        onSelect = {}
-                    )
-                    Spacer(modifier = Modifier.height(NTDp.md))
-                    NTLineChartCard(
-                        title         = "WEEKLY REVENUE",
-                        valueLabel    = state.weeklyRevenueLabel,
-                        growthPercent = 18.0,
-                        points        = state.weeklyRevenuePoints,
-                        labels        = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
-                    )
-                }
+        // Analytics — chart that REACTS to the range picker (week / month /
+        // quarter / year). Both the data series and the X-axis labels
+        // recompute on every selection change.
+        item {
+            Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
+                NTSectionHeader(label = "ANALYTICS", title = "Revenue trend")
+                Spacer(modifier = Modifier.height(NTDp.md))
+                NTDateRangePicker(
+                    selected = selectedRange,
+                    onSelect = { selectedRange = it },
+                )
+                Spacer(modifier = Modifier.height(NTDp.md))
+                NTLineChartCard(
+                    title         = rangeAnalyticsTitle(selectedRange),
+                    valueLabel    = formatAmount(metrics.rangeRevenue),
+                    growthPercent = metrics.weeklyGrowthPercent ?: 0.0,
+                    points        = metrics.chartPoints,
+                    labels        = analyticsAxisLabels(metrics.xAxisLabels, metrics.chartPoints.size),
+                )
             }
-            item { Spacer(modifier = Modifier.height(NTDp.lg)) }
         }
+        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
-        // Stock performance chart
+        // Stock performance chart — REAL stock growth %
         if (state.stockItems.isNotEmpty()) {
             item {
                 Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
@@ -321,12 +398,12 @@ private fun AdminDashboardContent(
                         .map { it.stockAvailable.toFloat() }
                         .let { pts ->
                             val max = pts.maxOrNull() ?: 1f
-                            pts.map { it / max }
+                            if (max <= 0f) pts else pts.map { it / max }
                         }
                     NTLineChartCard(
                         title         = "STOCK LEVELS",
                         valueLabel    = "$totalStock cans on hand",
-                        growthPercent = -3.0,
+                        growthPercent = metrics.stockGrowthPercent ?: 0.0,
                         points        = if (stockPoints.size >= 2) stockPoints else List(7) { 0.5f },
                         labels        = state.stockItems.map { it.name.take(3).uppercase() }
                             .let { l -> if (l.size < 2) listOf("5L", "10L", "20L", "Bulk") else l }
@@ -362,6 +439,32 @@ private fun AdminDashboardContent(
             item { Spacer(modifier = Modifier.height(NTDp.sm)) }
         }
     }
+}
+
+/** Maps the visible date-range tab to the metrics-layer enum. */
+private fun NTDateRange.toDashboardRange(): DashboardRange = when (this) {
+    NTDateRange.WEEKLY    -> DashboardRange.WEEK
+    NTDateRange.MONTHLY   -> DashboardRange.MONTH
+    NTDateRange.QUARTERLY -> DashboardRange.QUARTER
+    NTDateRange.YEARLY    -> DashboardRange.YEAR
+}
+
+private fun rangeAnalyticsTitle(range: NTDateRange): String = when (range) {
+    NTDateRange.WEEKLY    -> "WEEKLY REVENUE"
+    NTDateRange.MONTHLY   -> "MONTHLY REVENUE"
+    NTDateRange.QUARTERLY -> "QUARTERLY REVENUE"
+    NTDateRange.YEARLY    -> "YEARLY REVENUE"
+}
+
+/**
+ * The line-chart card paints labels evenly across the bottom — too many tick
+ * marks turn into illegible mush, so we down-sample to ~7 markers maximum.
+ */
+private fun analyticsAxisLabels(source: List<String>, pointCount: Int): List<String> {
+    if (source.isEmpty()) return List(pointCount.coerceAtLeast(1)) { "" }
+    if (source.size <= 7) return source
+    val step = (source.size - 1) / 6.0
+    return (0..6).map { i -> source[(i * step).toInt().coerceAtMost(source.size - 1)] }
 }
 
 // ── Staff card ────────────────────────────────────────────────
@@ -605,80 +708,150 @@ fun AdminReportsTab(state: AdminState, contentPadding: PaddingValues) {
 
 // ── Helper functions ──────────────────────────────────────────
 
-private fun buildGreeting(mrr: Double, pending: Int, delivered: Int): Pair<String, String> {
+private fun buildGreeting(
+    profit: Double,
+    pending: Int,
+    delivered: Int,
+    revGrowth: Double?,
+): Pair<String, String> {
     val greeting = "Good morning"  // Platform time can override via ViewModel if needed
     val subtext = when {
-        pending > 5   -> "$pending orders are pending dispatch."
-        delivered > 0 -> "$delivered deliveries completed today."
-        mrr > 20_000  -> "Revenue is on track this month."
-        else          -> "Here's how your business is doing today."
+        pending > 5            -> "$pending orders are pending dispatch."
+        delivered > 0          -> "$delivered deliveries completed today."
+        profit < 0             -> "Heads up — this month is running at a loss so far."
+        revGrowth != null && revGrowth >= 10.0
+                               -> "Revenue is up ${formatPctShort(revGrowth)}% vs last month — nice work."
+        revGrowth != null && revGrowth <= -5.0
+                               -> "Revenue is down ${formatPctShort(-revGrowth)}% vs last month."
+        profit > 0             -> "You're in the green this month."
+        else                   -> "Here's how your business is doing today."
     }
     return greeting to subtext
 }
 
-private fun buildKpis(
-    totalStock: Int,
-    mrr: Double,
-    emptyCans: Int,
-    customers: Int,
-): List<NTKpiItem> = listOf(
-    NTKpiItem(
-        title        = "STOCK ON HAND",
-        value        = "$totalStock",
-        subtitle     = "${totalStock / 10 + 1} SKUs · Up to date",
-        subtitleColor = NTColors.SuccessText,
-        icon         = Icons.Rounded.Inventory2,
-        iconBg       = NTColors.SuccessLight,
-        iconFg       = NTColors.Success,
-        accentColor  = NTColors.Success,
-        footerText   = "+4.6% vs last month",
-        footerIcon   = Icons.Rounded.TrendingUp,
-        footerColor  = NTColors.SuccessText,
-        cardIndex    = 0,
-    ),
-    NTKpiItem(
-        title        = "MONTHLY REVENUE",
-        value        = formatAmount(mrr),
-        subtitle     = "+8.2% vs last month",
-        subtitleColor = NTColors.PrimaryDark,
-        icon         = Icons.Rounded.AccountBalanceWallet,
-        iconBg       = NTColors.PrimaryLight,
-        iconFg       = NTColors.Primary,
-        accentColor  = NTColors.Primary,
-        footerText   = "vs ${formatAmount(mrr * 0.92)} last month",
-        footerIcon   = Icons.Rounded.BarChart,
-        footerColor  = NTColors.PrimaryDark,
-        cardIndex    = 1,
-    ),
-    NTKpiItem(
-        title        = "EMPTY CANS",
-        value        = "$emptyCans",
-        subtitle     = "With customers",
+private fun formatPctShort(p: Double): String {
+    val rounded = (kotlin.math.abs(p) * 10).toLong() / 10.0
+    return rounded.toString()
+}
+
+/**
+ * Builds the four KPI cards entirely from real numbers — every "+/− X% vs last
+ * month" footer reflects actual data, every up/down icon flips according to
+ * the sign, and every accent colour matches the direction (green = up,
+ * red = down, neutral grey when there's no last-month baseline).
+ */
+private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiItem> {
+    val totalStock = state.stockItems.sumOf { it.stockAvailable }
+
+    // ── 1. Stock on hand ─────────────────────────────────────
+    val stockKpi = run {
+        val pct = metrics.stockGrowthPercent
+        val (footerText, footerIcon, accent) = trendCell(pct, "vs last month")
+        NTKpiItem(
+            title         = "STOCK ON HAND",
+            value         = "$totalStock",
+            subtitle      = "${metrics.activeSkus} SKUs · Up to date",
+            subtitleColor = accent.text,
+            icon          = Icons.Rounded.Inventory2,
+            iconBg        = accent.bgLight,
+            iconFg        = accent.iconFg,
+            accentColor   = accent.iconFg,
+            footerText    = footerText,
+            footerIcon    = footerIcon,
+            footerColor   = accent.text,
+            cardIndex     = 0,
+        )
+    }
+
+    // ── 2. Monthly revenue ───────────────────────────────────
+    val revenueKpi = run {
+        val pct = metrics.revenueGrowthPercent
+        val (footerText, footerIcon, accent) = trendCell(pct, "vs last month")
+        NTKpiItem(
+            title         = "MONTHLY REVENUE",
+            value         = formatAmount(metrics.thisMonthRevenue),
+            subtitle      = pctSubtitle(pct, "vs last month"),
+            subtitleColor = accent.text,
+            icon          = Icons.Rounded.AccountBalanceWallet,
+            iconBg        = NTColors.PrimaryLight,
+            iconFg        = NTColors.Primary,
+            accentColor   = NTColors.Primary,
+            footerText    = "vs ${formatAmount(metrics.lastMonthRevenue)} last month",
+            footerIcon    = footerIcon,
+            footerColor   = accent.text,
+            cardIndex     = 1,
+        )
+    }
+
+    // ── 3. Empty cans (no time-series available, show field count only) ──
+    val cansKpi = NTKpiItem(
+        title         = "EMPTY CANS",
+        value         = "${metrics.emptyCansOut}",
+        subtitle      = "With customers",
         subtitleColor = NTColors.TextSecondary,
-        icon         = Icons.Rounded.Water,
-        iconBg       = Color(0xFFFFF3E8),
-        iconFg       = Color(0xFFF97316),
-        accentColor  = Color(0xFFF97316),
-        footerText   = "No changes vs last month",
-        footerIcon   = Icons.Rounded.Schedule,
-        footerColor  = Color(0xFFF97316),
-        cardIndex    = 2,
-    ),
-    NTKpiItem(
-        title        = "TOTAL CUSTOMERS",
-        value        = "$customers",
-        subtitle     = "Active accounts",
-        subtitleColor = NTColors.SuccessText,
-        icon         = Icons.Rounded.Group,
-        iconBg       = NTColors.SuccessLight,
-        iconFg       = NTColors.Success,
-        accentColor  = NTColors.Success,
-        footerText   = "No changes vs last month",
-        footerIcon   = Icons.Rounded.PersonAdd,
-        footerColor  = NTColors.SuccessText,
-        cardIndex    = 3,
-    ),
-)
+        icon          = Icons.Rounded.Water,
+        iconBg        = Color(0xFFFFF3E8),
+        iconFg        = Color(0xFFF97316),
+        accentColor   = Color(0xFFF97316),
+        footerText    = "${state.customers.count { it.cansHeld > 0 }} customers holding cans",
+        footerIcon    = Icons.Rounded.Schedule,
+        footerColor   = Color(0xFFF97316),
+        cardIndex     = 2,
+    )
+
+    // ── 4. Customers ─────────────────────────────────────────
+    val customersKpi = run {
+        val pct = metrics.customerGrowthPercent
+        val (footerText, footerIcon, accent) = trendCell(pct, "active this month")
+        NTKpiItem(
+            title         = "TOTAL CUSTOMERS",
+            value         = "${state.customers.size}",
+            subtitle      = "${metrics.newCustomersThisMonth} active this month",
+            subtitleColor = accent.text,
+            icon          = Icons.Rounded.Group,
+            iconBg        = NTColors.SuccessLight,
+            iconFg        = NTColors.Success,
+            accentColor   = NTColors.Success,
+            footerText    = footerText,
+            footerIcon    = footerIcon,
+            footerColor   = accent.text,
+            cardIndex     = 3,
+        )
+    }
+
+    return listOf(stockKpi, revenueKpi, cansKpi, customersKpi)
+}
+
+/** Picks footer text + icon + colour palette for a percent change. */
+private fun trendCell(
+    pct: Double?,
+    suffix: String,
+): Triple<String, ImageVector, TrendAccent> = when {
+    pct == null  -> Triple("No baseline yet", Icons.Rounded.Remove, TrendAccent.Neutral)
+    pct >= 0.5   -> Triple("+${formatPctShort(pct)}% $suffix",   Icons.Rounded.TrendingUp,   TrendAccent.Up)
+    pct <= -0.5  -> Triple("-${formatPctShort(-pct)}% $suffix",  Icons.Rounded.TrendingDown, TrendAccent.Down)
+    else         -> Triple("Flat $suffix",                       Icons.Rounded.Remove,       TrendAccent.Neutral)
+}
+
+private fun pctSubtitle(pct: Double?, suffix: String): String = when {
+    pct == null -> "No baseline yet"
+    pct >= 0.5  -> "+${formatPctShort(pct)}% $suffix"
+    pct <= -0.5 -> "-${formatPctShort(-pct)}% $suffix"
+    else        -> "Flat $suffix"
+}
+
+/** Coloured accent palette per trend direction. */
+private data class TrendAccent(
+    val text: Color,
+    val iconFg: Color,
+    val bgLight: Color,
+) {
+    companion object {
+        val Up      = TrendAccent(NTColors.SuccessText, NTColors.Success,      NTColors.SuccessLight)
+        val Down    = TrendAccent(NTColors.ErrorText,   NTColors.Error,        NTColors.ErrorLight)
+        val Neutral = TrendAccent(NTColors.TextSecondary, NTColors.TextTertiary, NTColors.SurfaceVar)
+    }
+}
 
 private fun formatAmount(amount: Double): String = when {
     amount >= 1_00_000 -> "₹${(amount / 1_00_000 * 10).toLong() / 10.0}L"

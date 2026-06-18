@@ -55,6 +55,8 @@ private val fallbackShops = listOf(
 // ── Internal inward product wrapper ──────────────────────────────────────────
 
 private data class InwardProduct(
+    /** Product UUID — empty when this is a synthetic/fallback row. */
+    val id: String,
     val name: String,
     val displayName: String,
     val purchasePriceGC: Double,
@@ -81,7 +83,7 @@ fun AddStockPurchaseScreen(
     ) -> Unit,
 ) {
     val effectiveProducts  = if (products.isNotEmpty())
-        products.map { InwardProduct(it.name, it.displayName, it.purchasePriceGC) }
+        products.map { InwardProduct(it.id, it.name, it.displayName, it.purchasePriceGC) }
     else emptyList<InwardProduct>()
 
     val effectiveSuppliers = suppliers.ifEmpty { fallbackSuppliers }
@@ -179,9 +181,12 @@ fun AddStockPurchaseScreen(
                 AddInwardBottomBar(
                     onCancel = onBack,
                     onSave   = {
+                        // Keyed by product UUID (not name) so the repository
+                        // can update product_categories.stock_available for
+                        // the right row.
                         val quantities = lineItems.associate { item ->
-                            (effectiveProducts.getOrNull(item.productIdx)?.name ?: "") to item.qty
-                        }
+                            (effectiveProducts.getOrNull(item.productIdx)?.id ?: "") to item.qty
+                        }.filterKeys { it.isNotBlank() }
                         onSave(selectedSupplier, "", "", quantities, 0)
                     },
                 )
@@ -517,7 +522,7 @@ private fun InwardMultiProductSection(
             }
             InwardLineCard(
                 lineNumber   = idx + 1,
-                product      = products.getOrNull(item.productIdx) ?: products.lastOrNull() ?: InwardProduct("","",0.0),
+                product      = products.getOrNull(item.productIdx) ?: products.lastOrNull() ?: InwardProduct(id = "", name = "", displayName = "", purchasePriceGC = 0.0),
                 qty          = item.qty,
                 isEmployee   = isEmployee,
                 showRemove   = lineItems.size > 1,

@@ -47,6 +47,8 @@ class AuthRepository {
 
     fun currentUserId(): String? = supabase.auth.currentUserOrNull()?.id
 
+    fun currentUserEmail(): String = supabase.auth.currentUserOrNull()?.email ?: ""
+
     suspend fun myProfile(): Profile? {
         val uid = currentUserId() ?: return null
         return supabase.from("profiles")

@@ -113,16 +113,24 @@ fun CustomerPickerOverlay(
                     onOtherChange  = { newOther = it },
                     onBack         = { mode = SheetMode.Pick },
                     onSave         = {
-                        val c = Customer(
-                            id           = "local_${newName.trim().hashCode()}",
+                        // The server-side row will carry the real UUID; we
+                        // build a draft (id = null) and let the repo round-trip
+                        // it. The selected customer in this picker only needs
+                        // a stable name — actual outward sales reference the
+                        // name string, not the local id.
+                        val draft = Customer(
+                            id           = null,
                             name         = newName.trim(),
                             phone        = newPhone.trim().ifEmpty { null },
                             address      = newLocation.trim().ifEmpty { null },
                             otherDetails = newOther.trim().ifEmpty { null },
                         )
-                        allCustomers = allCustomers + c
-                        onNewCustomer(c)
-                        onSelect(c)
+                        // Optimistically add to the picker so the next render
+                        // already shows them; the real DB row arrives via the
+                        // periodic refresh and replaces this entry by name.
+                        allCustomers = allCustomers + draft
+                        onNewCustomer(draft)
+                        onSelect(draft)
                         onDismiss()
                     },
                 )

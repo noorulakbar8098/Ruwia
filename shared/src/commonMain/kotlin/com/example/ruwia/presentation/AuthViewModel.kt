@@ -21,6 +21,8 @@ data class AuthState(
     val error: String? = null,
     val loggedIn: Boolean = false,
     val role: UserRole? = null,
+    val displayName: String = "",
+    val email: String = "",
 )
 
 class AuthViewModel(
@@ -68,24 +70,40 @@ class AuthViewModel(
 
         if (cachedRole != null) {
             // Navigate to the correct dashboard immediately using the cache…
-            _state.value = AuthState(loggedIn = true, role = cachedRole)
-            // …then refresh from the server in the background.
+            val cachedEmail = repo.currentUserEmail()
+            _state.value = AuthState(
+                loggedIn    = true,
+                role        = cachedRole,
+                email       = cachedEmail,
+            )
+            // …then refresh name + role from the server in the background.
             launch { refreshRoleFromServer() }
         } else {
             // No cached role — must fetch from network. Retry a few times to
             // ride out transient failures right after app launch.
             val role = fetchRoleWithRetry()
             if (role != null) rolePrefs.saveRole(role)
-            _state.value = AuthState(loggedIn = true, role = role)
+            val profile = runCatching { repo.myProfile() }.getOrNull()
+            _state.value = AuthState(
+                loggedIn    = true,
+                role        = role,
+                displayName = profile?.fullName ?: "",
+                email       = repo.currentUserEmail(),
+            )
         }
     }
 
     /** Best-effort role refresh that updates state + cache if the role changed. */
     private suspend fun refreshRoleFromServer() {
-        val freshRole = runCatching { repo.myProfile()?.role }.getOrNull() ?: return
-        if (freshRole != _state.value.role) {
-            rolePrefs.saveRole(freshRole)
-            _state.value = _state.value.copy(role = freshRole)
+        val profile   = runCatching { repo.myProfile() }.getOrNull() ?: return
+        val freshRole = profile.role
+        if (freshRole != _state.value.role || _state.value.displayName.isEmpty()) {
+            if (freshRole != _state.value.role) rolePrefs.saveRole(freshRole)
+            _state.value = _state.value.copy(
+                role        = freshRole,
+                displayName = profile.fullName ?: _state.value.displayName,
+                email       = repo.currentUserEmail().ifEmpty { _state.value.email },
+            )
         }
     }
 
@@ -137,12 +155,18 @@ class AuthViewModel(
             repo.login(email, password)
             // Use the role stored in the profiles table; if the row is missing or
             // the fetch fails, fall back to whatever the user selected on the login screen.
-            repo.myProfile()?.role ?: roleHint
-        }.onSuccess { role ->
+            Pair(repo.myProfile(), roleHint)
+        }.onSuccess { (profile, hint) ->
+            val resolvedRole = profile?.role ?: hint
             // Cache the resolved role so the next cold-start is instant and
             // independent of network availability.
-            rolePrefs.saveRole(role)
-            _state.value = AuthState(loggedIn = true, role = role)
+            rolePrefs.saveRole(resolvedRole)
+            _state.value = AuthState(
+                loggedIn    = true,
+                role        = resolvedRole,
+                displayName = profile?.fullName ?: "",
+                email       = repo.currentUserEmail(),
+            )
         }.onFailure {
             _state.value = AuthState(error = it.message ?: "Login failed")
         }

@@ -84,6 +84,7 @@ fun ProductManagementScreen(
 ) {
     var showForm       by remember { mutableStateOf(false) }
     var editingProduct by remember { mutableStateOf<ProductCategory?>(null) }
+    var deletingProduct by remember { mutableStateOf<ProductCategory?>(null) }
 
     Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
         Scaffold(
@@ -113,7 +114,7 @@ fun ProductManagementScreen(
                         Icon(Icons.Rounded.Info, null, tint = NTColors.Primary, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            "Tap a card to edit prices. Toggle the switch to activate or deactivate a product.",
+                            "Tap a card to edit prices. Toggle the switch to activate or deactivate a product. Use the trash icon to delete.",
                             fontSize = 12.sp, color = NTColors.Primary, lineHeight = 16.sp,
                         )
                     }
@@ -124,6 +125,7 @@ fun ProductManagementScreen(
                         product  = product,
                         onEdit   = { editingProduct = product; showForm = true },
                         onToggle = { onUpdateProduct(product.copy(isActive = !product.isActive)) },
+                        onDelete = { deletingProduct = product },
                     )
                 }
 
@@ -162,6 +164,34 @@ fun ProductManagementScreen(
                 },
                 bottomInset = contentPadding.calculateBottomPadding(),
                 modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+
+        // Delete confirmation dialog — soft-deletes (sets is_active=false on the
+        // server) so any historical sale_entries still resolve their product_id.
+        deletingProduct?.let { p ->
+            AlertDialog(
+                onDismissRequest = { deletingProduct = null },
+                icon  = { Icon(Icons.Rounded.Delete, null, tint = NTColors.Error) },
+                title = { Text("Delete ${p.displayName}?", fontWeight = FontWeight.Bold) },
+                text  = {
+                    Text(
+                        "This product will be hidden from all screens. " +
+                        "Existing sales records keep working — only the product " +
+                        "is removed from your catalogue.",
+                        fontSize = 13.sp,
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { onDeleteProduct(p.id); deletingProduct = null },
+                        colors  = ButtonDefaults.buttonColors(containerColor = NTColors.Error),
+                    ) { Text("Delete", fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { deletingProduct = null }) { Text("Cancel") }
+                },
+                containerColor = NTColors.Surface,
             )
         }
     }
@@ -224,6 +254,7 @@ private fun ProductGridCard(
     product: ProductCategory,
     onEdit: () -> Unit,
     onToggle: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val color  = productColors[product.name] ?: NTColors.Primary
     val dimmed = !product.isActive
@@ -356,15 +387,27 @@ private fun ProductGridCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment     = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(NTColors.PrimaryLight)
-                        .clickable(onClick = onEdit),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Rounded.Edit, "Edit", tint = NTColors.Primary, modifier = Modifier.size(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(NTColors.PrimaryLight)
+                            .clickable(onClick = onEdit),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Edit, "Edit", tint = NTColors.Primary, modifier = Modifier.size(14.dp))
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(NTColors.ErrorLight)
+                            .clickable(onClick = onDelete),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Delete, "Delete", tint = NTColors.Error, modifier = Modifier.size(14.dp))
+                    }
                 }
                 Switch(
                     checked  = product.isActive,

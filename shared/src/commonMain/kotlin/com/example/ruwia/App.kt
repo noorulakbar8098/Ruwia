@@ -111,24 +111,30 @@ fun App() {
                 // employee dashboard until a dedicated customer UI is built.
                 val vm = koinInject<EmployeeViewModel>()
                 EmployeeDashboardScreen(
-                    vm = vm,
-                    onLogout = { authVm.logout(); screen = Screen.Login }
+                    vm           = vm,
+                    onLogout     = { authVm.logout(); screen = Screen.Login },
+                    employeeName = authState.displayName.ifEmpty { "User" },
+                    userEmail    = authState.email,
                 )
             }
 
             Screen.AdminHome -> {
                 val vm = koinInject<AdminViewModel>()
                 AdminDashboardScreen(
-                    vm = vm,
-                    onLogout = { authVm.logout(); screen = Screen.Login }
+                    vm           = vm,
+                    onLogout     = { authVm.logout(); screen = Screen.Login },
+                    adminName    = authState.displayName.ifEmpty { "Admin" },
+                    adminEmail   = authState.email,
                 )
             }
 
             Screen.EmployeeHome -> {
                 val vm = koinInject<EmployeeViewModel>()
                 EmployeeDashboardScreen(
-                    vm = vm,
-                    onLogout = { authVm.logout(); screen = Screen.Login }
+                    vm           = vm,
+                    onLogout     = { authVm.logout(); screen = Screen.Login },
+                    employeeName = authState.displayName.ifEmpty { "Employee" },
+                    userEmail    = authState.email,
                 )
             }
         }

@@ -78,7 +78,9 @@ fun AddSaleScreen(
     customers: List<Customer> = emptyList(),
     onNewCustomer: (Customer) -> Unit = {},
     onBack: () -> Unit,
-    onSave: (customerName: String, items: List<OutwardLineItem>) -> Unit = { _, _ -> },
+    /** Called when the employee taps "Save sale". The third arg is the number
+     *  of empty cans the employee collected from this customer at delivery. */
+    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int) -> Unit = { _, _, _ -> },
 ) {
     val defaultProductIdx = if (products.isNotEmpty()) products.indices.last else 0
     var lineItems by remember(products) {
@@ -102,6 +104,10 @@ fun AddSaleScreen(
     var showCustomerPicker by remember { mutableStateOf(false) }
     var editingLineIdx     by remember { mutableStateOf<Int?>(null) }
     var showProductPicker  by remember { mutableStateOf(false) }
+    /** Number of empty cans the employee collected from the customer at the
+     *  same time as delivering the new ones. Persists as an `inward` stock
+     *  movement so the admin can see returned empties immediately. */
+    var emptyCansText      by remember { mutableStateOf("") }
 
     // Date / time — use current date/time via kotlinx-datetime
     var displayDate by remember {
@@ -195,7 +201,10 @@ fun AddSaleScreen(
                 SaleBottomBar(
                     isSaveEnabled = isSaveEnabled,
                     onCancel = onBack,
-                    onSave   = { onSave(selectedCustomer!!.name, lineItems) },
+                    onSave   = {
+                        val empties = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                        onSave(selectedCustomer!!.name, lineItems, empties)
+                    },
                 )
             },
         ) { padding ->
@@ -275,6 +284,19 @@ fun AddSaleScreen(
                         )
                     }
                 }
+                Spacer(Modifier.height(20.dp))
+
+                // ── Section 4: Empty cans collected ────────────
+                // Captures how many empty cans the employee picked up from the
+                // customer at delivery time. Saved as an inward stock movement
+                // so the admin's stock dashboard reflects the returned empties.
+                EmptyCansSection(
+                    sectionNumber = 4,
+                    value = emptyCansText,
+                    onValueChange = { newVal ->
+                        if (newVal.all { it.isDigit() }) emptyCansText = newVal
+                    },
+                )
                 Spacer(Modifier.height(20.dp))
 
                 // ── Sale summary (no margin shown to employee) ─
@@ -805,4 +827,62 @@ private fun SaleStepBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, e
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, tint = if (enabled) RuwiaColor.TextSecondary else RuwiaColor.TextMuted, modifier = Modifier.size(16.dp)) }
+}
+
+// ── Empty cans section ────────────────────────────────────────────────────────
+//   Asks the employee how many empty cans they picked up from this customer at
+//   delivery time. Stored as an `inward` stock movement so the admin's stock
+//   dashboard reflects returned empties immediately.
+
+@Composable
+private fun EmptyCansSection(
+    sectionNumber: Int,
+    value: String,
+    onValueChange: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(RuwiaColor.Surface, RoundedCornerShape(16.dp))
+            .padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(
+                modifier = Modifier.size(26.dp).background(RuwiaColor.TealPrimary, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Text("$sectionNumber", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Empty cans collected", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
+                Text("Returned by this customer at delivery", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(RuwiaColor.Background, RoundedCornerShape(12.dp))
+                .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Rounded.Recycling, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Box(modifier = Modifier.weight(1f)) {
+                if (value.isEmpty()) {
+                    Text("0", fontSize = 16.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Bold)
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RuwiaColor.TealPrimary),
+                    cursorBrush = SolidColor(RuwiaColor.TealPrimary),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Text("cans", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+        }
+    }
 }
