@@ -1,7 +1,7 @@
 package com.example.ruwia
 
 import android.app.Application
-import com.example.ruwia.data.initKoin
+import com.example.ruwia.data.initKoinAndroid
 
 class RuwiaApp : Application() {
     override fun onCreate() {
@@ -10,7 +10,7 @@ class RuwiaApp : Application() {
         // are created AFTER the Application context is available.
         // AndroidX Startup (SupabaseInitializer) runs before this — via ContentProviders —
         // so appContext is guaranteed to be set when Supabase initializes.
-        initKoin()
+        initKoinAndroid(this)
     }
 }
 

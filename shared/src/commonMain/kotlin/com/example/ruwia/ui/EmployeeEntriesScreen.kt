@@ -38,31 +38,20 @@ import com.example.ruwia.theme.RuwiaColor
 //  employee_id, with client-side filter chips on top.
 // ─────────────────────────────────────────────────────────────────────────────
 
-private enum class EntryFilter(val label: String) {
-    ALL("All"),
-    INWARD("Inward"),
-    OUTWARD("Outward"),
-}
-
 @Composable
 fun EmployeeEntriesScreen(
     movements: List<StockMovement>,
     todayInward: Int,
     todayOutward: Int,
+    todayEmptyCans: Int,
     dailyEarnings: Double,
     currentDate: String,
     isLoading: Boolean,
     onRefresh: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    var filter by remember { mutableStateOf(EntryFilter.ALL) }
-
-    val filtered = remember(movements, filter) {
-        when (filter) {
-            EntryFilter.ALL     -> movements
-            EntryFilter.INWARD  -> movements.filter { it.type == "inward" }
-            EntryFilter.OUTWARD -> movements.filter { it.type == "outward" }
-        }
+    val filtered = remember(movements) {
+        movements
     }
 
     LazyColumn(
@@ -80,25 +69,11 @@ fun EmployeeEntriesScreen(
         // ── Today's totals card ─────────────────────────────────────────────
         item {
             EntriesTotalsCard(
-                inward   = todayInward,
-                outward  = todayOutward,
-                earnings = dailyEarnings,
-                modifier = Modifier.padding(horizontal = 20.dp),
+                outward   = todayOutward,
+                emptyCans = todayEmptyCans,
+                modifier  = Modifier.padding(horizontal = 20.dp),
             )
             Spacer(Modifier.height(18.dp))
-        }
-
-        // ── Filter chips ────────────────────────────────────────────────────
-        item {
-            EntriesFilterRow(
-                selected = filter,
-                onSelect = { filter = it },
-                allCount     = movements.size,
-                inwardCount  = movements.count { it.type == "inward" },
-                outwardCount = movements.count { it.type == "outward" },
-                modifier = Modifier.padding(horizontal = 20.dp),
-            )
-            Spacer(Modifier.height(14.dp))
         }
 
         // ── List body ───────────────────────────────────────────────────────
@@ -116,7 +91,6 @@ fun EmployeeEntriesScreen(
             filtered.isEmpty() -> {
                 item {
                     EntriesEmptyState(
-                        filter = filter,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 40.dp),
                     )
                 }
@@ -177,9 +151,8 @@ private fun EntriesTopBar(currentDate: String, onRefresh: () -> Unit) {
 
 @Composable
 private fun EntriesTotalsCard(
-    inward: Int,
     outward: Int,
-    earnings: Double,
+    emptyCans: Int,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -191,24 +164,22 @@ private fun EntriesTotalsCard(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TotalsCell(
-            value    = "$inward",
-            label    = "Inward",
-            tint     = Color.White,
-            modifier = Modifier.weight(1f),
-        )
-        VerticalDivider()
-        TotalsCell(
             value    = "$outward",
-            label    = "Outward",
+            label    = "Outward Units",
             tint     = Color.White,
             modifier = Modifier.weight(1f),
         )
-        VerticalDivider()
+        Box(
+            modifier = Modifier
+                .height(28.dp)
+                .width(1.dp)
+                .background(Color.White.copy(alpha = 0.25f))
+        )
         TotalsCell(
-            value    = "₹${earnings.toInt()}",
-            label    = "Sales",
+            value    = "$emptyCans",
+            label    = "Empty Returned",
             tint     = Color.White,
-            modifier = Modifier.weight(1.2f),
+            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -246,72 +217,6 @@ private fun VerticalDivider() {
     )
 }
 
-// ── Filter chips ──────────────────────────────────────────────────────────────
-
-@Composable
-private fun EntriesFilterRow(
-    selected: EntryFilter,
-    onSelect: (EntryFilter) -> Unit,
-    allCount: Int,
-    inwardCount: Int,
-    outwardCount: Int,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        FilterChip(
-            text     = "${EntryFilter.ALL.label} ($allCount)",
-            selected = selected == EntryFilter.ALL,
-            onClick  = { onSelect(EntryFilter.ALL) },
-            modifier = Modifier.weight(1f),
-        )
-        FilterChip(
-            text     = "${EntryFilter.INWARD.label} ($inwardCount)",
-            selected = selected == EntryFilter.INWARD,
-            onClick  = { onSelect(EntryFilter.INWARD) },
-            modifier = Modifier.weight(1f),
-        )
-        FilterChip(
-            text     = "${EntryFilter.OUTWARD.label} ($outwardCount)",
-            selected = selected == EntryFilter.OUTWARD,
-            onClick  = { onSelect(EntryFilter.OUTWARD) },
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
-private fun FilterChip(
-    text: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val bg     = if (selected) RuwiaColor.TealPrimary    else RuwiaColor.Surface
-    val border = if (selected) RuwiaColor.TealPrimary    else RuwiaColor.Divider
-    val fg     = if (selected) Color.White               else RuwiaColor.TextSecondary
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(bg)
-            .border(1.dp, border, RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 9.dp, horizontal = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text,
-            fontSize   = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color      = fg,
-            maxLines   = 1,
-            overflow   = TextOverflow.Ellipsis,
-            textAlign  = TextAlign.Center,
-        )
-    }
-}
 
 // ── Entry row ─────────────────────────────────────────────────────────────────
 
@@ -413,17 +318,9 @@ private fun formatDateLabel(createdAt: String?): String {
 // ── Empty state ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun EntriesEmptyState(filter: EntryFilter, modifier: Modifier = Modifier) {
-    val title = when (filter) {
-        EntryFilter.ALL     -> "No entries yet"
-        EntryFilter.INWARD  -> "No inward entries"
-        EntryFilter.OUTWARD -> "No outward entries"
-    }
-    val subtitle = when (filter) {
-        EntryFilter.ALL     -> "Your stock movements will show up here once you start logging them."
-        EntryFilter.INWARD  -> "Tap \"Add Inward\" on the home screen to record stock you received."
-        EntryFilter.OUTWARD -> "Tap \"Add Outward\" on the home screen to log a customer sale."
-    }
+private fun EntriesEmptyState(modifier: Modifier = Modifier) {
+    val title = "No outward entries"
+    val subtitle = "Tap \"Add Sale\" on the home screen to record stock you sold."
     Column(
         modifier            = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,

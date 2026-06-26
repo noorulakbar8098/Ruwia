@@ -2,6 +2,7 @@ package com.example.ruwia.domain
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 enum class UserRole { admin, user, employee }
 
@@ -50,6 +51,8 @@ data class Outward(
     @SerialName("qty_delivered") val qtyDelivered: Int,
     @SerialName("qty_empty_returned") val qtyEmptyReturned: Int = 0,
     val rate: Double = 0.0,
+    @SerialName("employee_id") val employeeId: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
 )
 
 @Serializable
@@ -111,10 +114,10 @@ data class ShopStockInfo(
     val id: String,
     val name: String,
     val location: String = "",
-    @SerialName("total_cans") val totalCans: Int = 0,
-    @SerialName("full_cans") val fullCans: Int = 0,
-    @SerialName("empty_cans") val emptyCans: Int = 0,
-    @SerialName("cans_with_customers") val cansWithCustomers: Int = 0,
+    @SerialName("total_cans") val totalCans: Double = 0.0,
+    @SerialName("full_cans") val fullCans: Double = 0.0,
+    @SerialName("empty_cans") val emptyCans: Double = 0.0,
+    @SerialName("cans_with_customers") val cansWithCustomers: Double = 0.0,
     @SerialName("is_live") val isLive: Boolean = true,
 )
 
@@ -125,6 +128,7 @@ data class StockMovement(
     val qty: Int,
     val type: String,
     @SerialName("shop_name") val shopName: String = "",
+    @SerialName("product_id") val productId: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
 )
 
@@ -135,6 +139,23 @@ data class Supplier(
     val location: String? = null,
     @SerialName("is_active") val isActive: Boolean = true,
 )
+
+fun getUnitsPerCase(productName: String): Int {
+    val name = productName.lowercase()
+    return when {
+        name.contains("300") -> 30
+        name.contains("500") -> 24
+        name.contains("20")  -> 1
+        name.contains("10")  -> 1
+        name.contains("5")   -> 1
+        name.contains("2")   -> 9
+        name.contains("1")   -> 12
+        else                 -> 1
+    }
+}
+
+
+val StockItem.unitsPerCase: Int get() = getUnitsPerCase(name)
 
 @Serializable
 data class ProductCategory(
@@ -148,6 +169,8 @@ data class ProductCategory(
     @SerialName("stock_available") val stockAvailable: Int = 0,
     @SerialName("is_active") val isActive: Boolean = true,
 )
+
+val ProductCategory.unitsPerCase: Int get() = getUnitsPerCase(displayName)
 
 @Serializable
 data class SaleEntry(
@@ -168,6 +191,12 @@ data class SaleEntry(
 )
 
 @Serializable
+data class CustomExpense(
+    val name: String,
+    val amount: Double
+)
+
+@Serializable
 data class MonthlyExpense(
     val id: String? = null,
     val month: String,
@@ -177,6 +206,18 @@ data class MonthlyExpense(
     @SerialName("delivery_staff") val deliveryStaff: Double = 0.0,
     val miscellaneous: Double = 0.0,
     @SerialName("bike_expense") val bikeExpense: Double = 0.0,
+    @SerialName("custom_expenses") val customExpenses: String? = null,
 ) {
-    val total: Double get() = shopRent + adminSalary + deliveryStaff + miscellaneous + bikeExpense
+    val customExpensesList: List<CustomExpense> get() = try {
+        if (!customExpenses.isNullOrBlank()) {
+            Json.decodeFromString<List<CustomExpense>>(customExpenses)
+        } else {
+            emptyList()
+        }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    val total: Double get() = shopRent + adminSalary + deliveryStaff + miscellaneous + bikeExpense + customExpensesList.sumOf { it.amount }
 }
+

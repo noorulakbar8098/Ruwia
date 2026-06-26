@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,23 +19,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.theme.RuwiaColor
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Employee Stock Tab
-//  Read-only view of the live can balances for the shop this employee is
-//  assigned to + the product catalog with running stock counts. Filters
-//  shop_stocks by the employee's [shopName] so they only see their own shop.
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 fun EmployeeStockScreen(
@@ -45,23 +36,14 @@ fun EmployeeStockScreen(
     movements: List<StockMovement> = emptyList(),
     isLoading: Boolean,
     onRefresh: () -> Unit,
-    /** The shop the employee is assigned to (e.g. "Shop 1"). When non-blank
-     *  the stock view is restricted to just that shop. Empty/blank → fall
-     *  back to showing every shop (admin-style overview). */
     shopName: String = "",
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    // Restrict shop list to the employee's assigned shop. We compare with the
-    // same key normaliser the admin dashboard uses so "Shop 1", " shop 1 "
-    // and "Shop 1 · Saibaba" all resolve to the same shop row.
     val visibleShops = remember(shopStocks, shopName) {
         if (shopName.isBlank()) shopStocks
         else {
             val key = shopMatchKey(shopName)
-            shopStocks.filter { shopMatchKey(it.name) == key }
-                // Defensive: if no match (e.g. typo in employees.shop_name)
-                // fall back to the full list so the screen isn't empty.
-                .ifEmpty { shopStocks }
+            shopStocks.filter { shopMatchKey(it.name) == key }.ifEmpty { shopStocks }
         }
     }
     val visibleMovements = remember(movements, shopName) {
@@ -72,23 +54,36 @@ fun EmployeeStockScreen(
         }
     }
 
-    // Live-derived shop totals — see [deriveShopStockTotals] in
-    // StockDashboardScreen.kt for the rationale. The DB columns are stale
-    // because nothing writes to them; we recompute from movements every
-    // render so the employee sees the same numbers the admin does.
-    val derivedShops = remember(visibleShops, visibleMovements) {
-        deriveShopStockTotals(visibleShops, visibleMovements)
+    val stockItems = remember(products) {
+        products.map { com.example.ruwia.domain.StockItem(it.id, it.name, it.stockAvailable, 0) }
+    }
+    val derivedShops = remember(visibleShops, visibleMovements, stockItems) {
+        deriveShopStockTotals(visibleShops, visibleMovements, stockItems)
     }
 
-    val totalCans  = derivedShops.sumOf { it.totalCans }
+    val cleanShop = shopName.trim().lowercase().substringBefore("·").trim()
+    val isMainShop = cleanShop.startsWith("shop 1") ||
+                     cleanShop.contains("main") ||
+                     cleanShop.contains("warehouse") ||
+                     cleanShop.contains("primary") ||
+                     cleanShop.isBlank()
+
+    val availableUnitsMap = remember(visibleMovements, products, shopName) {
+        products.associate { product ->
+            if (isMainShop) {
+                product.id to product.stockAvailable
+            } else {
+                val rows = visibleMovements.filter { it.productId == product.id }
+                val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
+                val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+                product.id to (inward - outward).coerceAtLeast(0)
+            }
+        }
+    }
+
     val totalFull  = derivedShops.sumOf { it.fullCans }
     val totalEmpty = derivedShops.sumOf { it.emptyCans }
     val totalCust  = derivedShops.sumOf { it.cansWithCustomers }
-
-    val heroTitle = if (shopName.isNotBlank() && derivedShops.size == 1)
-        derivedShops.first().name.uppercase()
-    else "ALL SHOPS · COMBINED"
-    val heroSubtitle = if (shopName.isNotBlank()) "Your shop · live total" else "Live total"
 
     LazyColumn(
         modifier = Modifier
@@ -98,25 +93,22 @@ fun EmployeeStockScreen(
             top    = contentPadding.calculateTopPadding(),
             bottom = contentPadding.calculateBottomPadding() + 16.dp,
         ),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item { StockTabTopBar(onRefresh = onRefresh, shopName = shopName) }
 
-        // ── Combined totals card ──────────────────────────────────────────
+        // ── Top Summary Card ──────────────────────────
         item {
-            CombinedStockHero(
-                totalCans = totalCans,
-                fullCans  = totalFull,
-                emptyCans = totalEmpty,
-                withCust  = totalCust,
-                title     = heroTitle,
-                subtitle  = heroSubtitle,
-                modifier  = Modifier.padding(horizontal = 20.dp),
+            TodayStockCard(
+                available    = totalFull,
+                empty        = totalEmpty,
+                withCustomer = totalCust,
+                modifier     = Modifier.padding(horizontal = 20.dp)
             )
-            Spacer(Modifier.height(18.dp))
         }
 
-        // ── Loading state ─────────────────────────────────────────────────
-        if (isLoading && derivedShops.isEmpty() && products.isEmpty()) {
+        // ── Loading state ─────────────────────────────
+        if (isLoading && products.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier.fillMaxWidth().padding(40.dp),
@@ -125,52 +117,32 @@ fun EmployeeStockScreen(
                     CircularProgressIndicator(color = RuwiaColor.TealPrimary, modifier = Modifier.size(28.dp))
                 }
             }
-            return@LazyColumn
         }
 
-        // ── Per-shop section ──────────────────────────────────────────────
-        if (derivedShops.isNotEmpty()) {
-            val sectionLabel = if (shopName.isNotBlank() && derivedShops.size == 1)
-                "YOUR SHOP" else "PER SHOP"
-            item { StockSectionHeader(sectionLabel, modifier = Modifier.padding(horizontal = 20.dp)) }
-            item { Spacer(Modifier.height(10.dp)) }
-
-            items(items = derivedShops, key = { it.id }) { shop ->
-                EmpShopStockCard(shop = shop, modifier = Modifier.padding(horizontal = 20.dp))
-                Spacer(Modifier.height(10.dp))
-            }
-
-            item { Spacer(Modifier.height(8.dp)) }
-        }
-
-        // ── Per-product section ───────────────────────────────────────────
+        // ── Product List ──────────────────────────────
         if (products.isNotEmpty()) {
-            item { StockSectionHeader("PRODUCTS · BY LITRE", modifier = Modifier.padding(horizontal = 20.dp)) }
-            item { Spacer(Modifier.height(10.dp)) }
-
             item {
-                Column(
-                    modifier = Modifier
-                        .padding(horizontal = 20.dp)
-                        .fillMaxWidth()
-                        .background(RuwiaColor.Surface, RoundedCornerShape(16.dp))
-                        .padding(vertical = 4.dp),
-                ) {
-                    products.forEachIndexed { idx, product ->
-                        ProductStockListRow(product = product)
-                        if (idx < products.lastIndex) {
-                            HorizontalDivider(
-                                modifier  = Modifier.padding(horizontal = 14.dp),
-                                color     = RuwiaColor.Divider.copy(alpha = 0.5f),
-                                thickness = 0.6.dp,
-                            )
-                        }
-                    }
-                }
+                Text(
+                    text = "PRODUCT CATALOG",
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp,
+                    color = RuwiaColor.TealPrimary
+                )
+            }
+
+            items(products) { product ->
+                val availUnits = availableUnitsMap[product.id] ?: product.stockAvailable
+                ProductStockCard(
+                    product = product,
+                    availableUnits = availUnits,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
             }
         }
 
-        // ── Empty state if nothing loaded at all ──────────────────────────
+        // ── Empty state if nothing loaded at all ────────
         if (derivedShops.isEmpty() && products.isEmpty() && !isLoading) {
             item {
                 StockEmptyState(modifier = Modifier.padding(horizontal = 20.dp, vertical = 40.dp))
@@ -198,9 +170,9 @@ private fun StockTabTopBar(onRefresh: () -> Unit, shopName: String = "") {
             )
             Text(
                 if (shopName.isNotBlank())
-                    "Live can balances for $shopName"
+                    "Live inventory for $shopName"
                 else
-                    "Live can balances across all shops",
+                    "Live inventory across all shops",
                 fontSize = 12.sp,
                 color    = RuwiaColor.TextMuted,
             )
@@ -222,367 +194,148 @@ private fun StockTabTopBar(onRefresh: () -> Unit, shopName: String = "") {
     }
 }
 
-// ── Section header ────────────────────────────────────────────────────────────
+// ── Product Card ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun StockSectionHeader(label: String, modifier: Modifier = Modifier) {
-    Text(
-        label,
-        modifier      = modifier,
-        fontSize      = 11.sp,
-        fontWeight    = FontWeight.Bold,
-        letterSpacing = 1.2.sp,
-        color         = RuwiaColor.TealPrimary,
-    )
-}
-
-// ── Combined hero card ────────────────────────────────────────────────────────
-
-@Composable
-private fun CombinedStockHero(
-    totalCans: Int,
-    fullCans: Int,
-    emptyCans: Int,
-    withCust: Int,
-    title: String = "ALL SHOPS · COMBINED",
-    subtitle: String = "Live total",
-    modifier: Modifier = Modifier,
+private fun ProductStockCard(
+    product: ProductCategory,
+    availableUnits: Int,
+    modifier: Modifier = Modifier
 ) {
-    Column(
+    val upc = product.unitsPerCase.coerceAtLeast(1)
+    val isCan = upc == 1
+    val displayStock = if (isCan) availableUnits else availableUnits / upc
+    
+    // Status Badge colors and labels
+    val (statusLabel, badgeBg, badgeFg) = when {
+        availableUnits <= 0 -> Triple("Out Of Stock", Color(0xFFFFE8E8), Color(0xFFCC3333))
+        availableUnits <= (2 * upc) -> Triple("Low Stock", Color(0xFFFFF3E0), Color(0xFFE65100))
+        else -> Triple("In Stock", RuwiaColor.TealExtraLight, RuwiaColor.TealPrimary)
+    }
+
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(RuwiaColor.TealDark)
-            .padding(20.dp),
+            .background(RuwiaColor.Surface)
+            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(20.dp))
+            .padding(16.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = product.displayName.ifBlank { product.name },
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = RuwiaColor.TextPrimary
+                )
+                Spacer(Modifier.height(4.dp))
+                val unitLabel = if (isCan) "Can" else "Case"
+                Text(
+                    text = "₹${product.defaultSellPrice.toInt()} / $unitLabel  ·  $displayStock $unitLabel${if (displayStock != 1) "s" else ""} Available",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = RuwiaColor.TextSecondary
+                )
+            }
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .background(Color.White.copy(alpha = 0.18f), RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center,
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(badgeBg)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Rounded.Inventory2,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column {
                 Text(
-                    title,
-                    fontSize = 10.sp,
+                    text = statusLabel,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp,
-                    color = Color.White.copy(alpha = 0.78f),
-                )
-                Text(
-                    subtitle,
-                    fontSize = 13.sp,
-                    color = Color.White.copy(alpha = 0.65f),
+                    color = badgeFg
                 )
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(14.dp))
+// ── Today's Stock Card ────────────────────────────────────────────────────────
 
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                "$totalCans",
-                fontSize = 44.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color.White,
-                letterSpacing = (-1.5).sp,
+@Composable
+private fun TodayStockCard(
+    available: Double,
+    empty: Double,
+    withCustomer: Double,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(RuwiaColor.TealExtraLight)
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StockItemCol(
+                value = "${formatCases(available)} Cans",
+                label = "Available Stock",
+                modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                "cans",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.padding(bottom = 8.dp),
+            StockItemDivider()
+            StockItemCol(
+                value = formatCases(empty),
+                label = "Empty Cans",
+                modifier = Modifier.weight(1f)
             )
-        }
-
-        Spacer(Modifier.height(12.dp))
-        HorizontalDivider(color = Color.White.copy(alpha = 0.18f), thickness = 0.8.dp)
-        Spacer(Modifier.height(12.dp))
-
-        Row(modifier = Modifier.fillMaxWidth()) {
-            HeroStatCell("$fullCans",  "FULL",          Modifier.weight(1f))
-            HeroStatDivider()
-            HeroStatCell("$emptyCans", "EMPTY",         Modifier.weight(1f))
-            HeroStatDivider()
-            HeroStatCell("$withCust",  "WITH CUST.",    Modifier.weight(1f))
+            StockItemDivider()
+            StockItemCol(
+                value = formatCases(withCustomer),
+                label = "With Customer",
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
 
 @Composable
-private fun HeroStatCell(value: String, label: String, modifier: Modifier = Modifier) {
+private fun StockItemCol(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier
+) {
     Column(
         modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            value,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = Color.White,
+            text = value,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            color = RuwiaColor.TealPrimary
         )
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(4.dp))
         Text(
-            label,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.6.sp,
-            color = Color.White.copy(alpha = 0.65f),
+            text = label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = RuwiaColor.TextSecondary
         )
     }
 }
 
 @Composable
-private fun HeroStatDivider() {
+private fun StockItemDivider() {
     Box(
         modifier = Modifier
             .width(1.dp)
-            .height(28.dp)
-            .background(Color.White.copy(alpha = 0.15f)),
+            .height(24.dp)
+            .background(RuwiaColor.Divider)
     )
-}
-
-// ── Per-shop card ─────────────────────────────────────────────────────────────
-
-@Composable
-private fun EmpShopStockCard(shop: ShopStockInfo, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(RuwiaColor.Surface, RoundedCornerShape(16.dp))
-            .padding(16.dp),
-    ) {
-        // Header row
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(RuwiaColor.TealExtraLight),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.Store,
-                    contentDescription = null,
-                    tint = RuwiaColor.TealPrimary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    shop.name,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = RuwiaColor.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (shop.location.isNotBlank()) {
-                    Text(
-                        shop.location,
-                        fontSize = 12.sp,
-                        color = RuwiaColor.TextMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            if (shop.isLive) {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(RuwiaColor.TealExtraLight)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(RuwiaColor.TealPrimary),
-                    )
-                    Text(
-                        "LIVE",
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = RuwiaColor.TealPrimary,
-                        letterSpacing = 0.5.sp,
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        // Stat row — full / empty / with-cust
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            ShopStatChip(
-                value    = shop.fullCans,
-                label    = "FULL",
-                icon     = Icons.Rounded.Water,
-                bg       = RuwiaColor.TealExtraLight,
-                fg       = RuwiaColor.TealPrimary,
-                modifier = Modifier.weight(1f),
-            )
-            ShopStatChip(
-                value    = shop.emptyCans,
-                label    = "EMPTY",
-                icon     = Icons.Rounded.Water,
-                bg       = RuwiaColor.OrangeSurface,
-                fg       = RuwiaColor.Orange,
-                modifier = Modifier.weight(1f),
-            )
-            ShopStatChip(
-                value    = shop.cansWithCustomers,
-                label    = "WITH CUST.",
-                icon     = Icons.Rounded.Groups,
-                bg       = Color(0xFFFFE8E8),
-                fg       = Color(0xFFEF4444),
-                modifier = Modifier.weight(1f),
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // Total chip
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Icon(
-                Icons.Rounded.Bookmark,
-                contentDescription = null,
-                tint = RuwiaColor.TextMuted,
-                modifier = Modifier.size(13.dp),
-            )
-            Text(
-                "${shop.totalCans} TOTAL CANS",
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = RuwiaColor.TextMuted,
-                letterSpacing = 0.4.sp,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ShopStatChip(
-    value: Int,
-    label: String,
-    icon: ImageVector,
-    bg: Color,
-    fg: Color,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(bg)
-            .padding(vertical = 10.dp, horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = fg,
-            modifier = Modifier.size(14.dp),
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            "$value",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = fg,
-            letterSpacing = (-0.3).sp,
-        )
-        Text(
-            label,
-            fontSize = 8.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = fg.copy(alpha = 0.75f),
-            letterSpacing = 0.3.sp,
-            textAlign = TextAlign.Center,
-            lineHeight = 11.sp,
-        )
-    }
-}
-
-// ── Per-product row ──────────────────────────────────────────────────────────
-
-@Composable
-private fun ProductStockListRow(product: ProductCategory) {
-    val (badgeBg, badgeFg) = when {
-        product.stockAvailable <= 0  -> Color(0xFFFFE8E8)        to Color(0xFFCC3333)
-        product.stockAvailable <= 20 -> RuwiaColor.OrangeSurface to RuwiaColor.Orange
-        else                          -> RuwiaColor.TealExtraLight to RuwiaColor.TealPrimary
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(RuwiaColor.TealExtraLight),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Rounded.WaterDrop,
-                contentDescription = null,
-                tint = RuwiaColor.TealPrimary,
-                modifier = Modifier.size(15.dp),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                product.displayName.ifBlank { product.name },
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = RuwiaColor.TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                "${product.supplierGroup} · ₹${product.defaultSellPrice.toInt()}/can",
-                fontSize = 11.sp,
-                color = RuwiaColor.TextMuted,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .background(badgeBg)
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-        ) {
-            Text(
-                "${product.stockAvailable} cans",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = badgeFg,
-            )
-        }
-    }
 }
 
 // ── Empty state ──────────────────────────────────────────────────────────────
@@ -616,7 +369,7 @@ private fun StockEmptyState(modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            "Ask the admin to add shops and products. Once they do, live can balances will show up here.",
+            "Ask the admin to add shops and products. Once they do, live stock balances will show up here.",
             fontSize  = 13.sp,
             color     = RuwiaColor.TextMuted,
             textAlign = TextAlign.Center,
@@ -626,3 +379,13 @@ private fun StockEmptyState(modifier: Modifier = Modifier) {
     }
 }
 
+/** Format a Double case count: whole numbers as "5", fractions as "5.5". */
+private fun formatCases(value: Double): String {
+    val floored = kotlin.math.floor(value)
+    return if (value == floored && !value.isInfinite()) {
+        floored.toInt().toString()
+    } else {
+        val tenths = kotlin.math.round(value * 10).toInt()
+        "${tenths / 10}.${tenths % 10}"
+    }
+}

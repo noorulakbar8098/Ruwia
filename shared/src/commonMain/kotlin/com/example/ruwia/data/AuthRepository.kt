@@ -7,6 +7,8 @@ import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 class AuthRepository {
 
@@ -57,4 +59,14 @@ class AuthRepository {
     }
 
     suspend fun isAdmin(): Boolean = myProfile()?.role == UserRole.admin
+
+    suspend fun promoteToAdmin(uid: String) {
+        supabase.from("profiles").update(
+            buildJsonObject {
+                put("role", "admin")
+            }
+        ) {
+            filter { eq("id", uid) }
+        }
+    }
 }

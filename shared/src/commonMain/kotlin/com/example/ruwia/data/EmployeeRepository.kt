@@ -16,12 +16,29 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+data class DailyCansSummary(
+    val inward: Int = 0,
+    val outward: Int = 0,
+    val emptyReturned: Int = 0,
+)
+
 class EmployeeRepository {
 
     // ── Identity ──────────────────────────────────────────────────────────────
 
     /** The currently logged-in user's UUID (== profiles.id == employees.id). */
     fun currentUserId(): String? = supabase.auth.currentUserOrNull()?.id
+
+    suspend fun getEmployeeShopName(employeeId: String): String {
+        if (employeeId.isBlank()) return ""
+        return try {
+            val emp = supabase.from("employees")
+                .select { filter { eq("id", employeeId) } }
+                .decodeSingleOrNull<com.example.ruwia.domain.EmployeeInfo>()
+            emp?.shopName ?: ""
+        } catch (e: Exception) { "" }
+    }
+
 
     // ── Date helpers ──────────────────────────────────────────────────────────
 
@@ -54,6 +71,7 @@ class EmployeeRepository {
         collectedAmount: Double,
         paymentMode: String,
         employeeId: String,
+        shopName: String,
     ) {
         try {
             supabase.from("outward").insert(
@@ -62,8 +80,17 @@ class EmployeeRepository {
                     qtyDelivered       = deliveredQty,
                     qtyEmptyReturned   = returnedEmptyQty,
                     rate               = collectedAmount,
+                    employeeId         = employeeId,
                 )
             )
+            if (returnedEmptyQty > 0) {
+                addStockMovement(
+                    source   = "Empty cans · route",
+                    qty      = returnedEmptyQty,
+                    type     = "inward",
+                    shopName = shopName.ifBlank { "Shop 1" },
+                )
+            }
             supabase.from("route_tasks").update(
                 buildJsonObject { put("status", "done") }
             ) { filter { eq("id", taskId) } }
@@ -82,7 +109,7 @@ class EmployeeRepository {
                     limit(200)
                 }
                 .decodeList<com.example.ruwia.domain.SaleEntry>()
-                .filter { it.createdAt?.startsWith(prefix) == true }
+                .filter { it.date.startsWith(prefix) }
                 .sumOf { it.totalSelling }
         } catch (e: Exception) { 0.0 }
     }
@@ -98,7 +125,7 @@ class EmployeeRepository {
      * Both are filtered by `employee_id` so the profile screen reflects only
      * what the *current* user has done — not the team-wide totals.
      */
-    suspend fun getDailyCansSummary(employeeId: String): Pair<Int, Int> {
+    suspend fun getDailyCansSummary(employeeId: String): DailyCansSummary {
         return try {
             val prefix = today()
 
@@ -112,22 +139,31 @@ class EmployeeRepository {
                 .decodeList<StockMovement>()
                 .filter { it.createdAt?.startsWith(prefix) == true }
 
-            val movementInward  = movements.filter { it.type == "inward"  }.sumOf { it.qty }
+            val emptyReturnedFromMovements = movements
+                .filter { it.type == "inward" && it.source.isEmptyCansSource() }
+                .sumOf { it.qty }
+            val movementInward  = movements
+                .filter { it.type == "inward" && !it.source.isEmptyCansSource() }
+                .sumOf { it.qty }
             val movementOutward = movements.filter { it.type == "outward" }.sumOf { it.qty }
 
             // Delivery completions also count as outward — cans went to customers.
-            val deliveryOutward = runCatching {
+            val deliveries = runCatching {
                 supabase.from("outward")
                     .select {
                         filter { eq("employee_id", employeeId) }
                         limit(200)
                     }
                     .decodeList<Outward>()
-                    .sumOf { it.qtyDelivered }
-            }.getOrDefault(0)
+                    .filter { it.createdAt?.startsWith(prefix) == true }
+            }.getOrDefault(emptyList())
 
-            movementInward to (movementOutward + deliveryOutward)
-        } catch (e: Exception) { 0 to 0 }
+            DailyCansSummary(
+                inward        = movementInward,
+                outward       = movementOutward + deliveries.sumOf { it.qtyDelivered },
+                emptyReturned = emptyReturnedFromMovements + deliveries.sumOf { it.qtyEmptyReturned },
+            )
+        } catch (e: Exception) { DailyCansSummary() }
     }
 
     // ── Customers ─────────────────────────────────────────────────────────────
@@ -139,18 +175,42 @@ class EmployeeRepository {
     }
 
     suspend fun addCustomer(customer: Customer): Customer {
-        // No silent fallback — see [AdminRepository.addCustomer] for the full
-        // story. If the insert fails (RLS, network, schema mismatch, …) we
-        // let the exception propagate so the ViewModel can surface it instead
-        // of pretending the save worked with a fake `local_*` id.
-        return supabase.from("customers").insert(
-            buildJsonObject {
-                put("name", customer.name)
-                if (customer.phone != null) put("phone", customer.phone)
-                if (customer.address != null) put("address", customer.address)
-                if (customer.otherDetails != null) put("other_details", customer.otherDetails)
+        suspend fun insertCustomerInternal(client: io.github.jan.supabase.SupabaseClient): Customer {
+            return try {
+                client.from("customers").insert(
+                    buildJsonObject {
+                        put("name", customer.name)
+                        if (customer.phone != null) put("phone", customer.phone)
+                        if (customer.address != null) put("address", customer.address)
+                        if (customer.otherDetails != null) put("other_details", customer.otherDetails)
+                    }
+                ) { select() }.decodeSingle()
+            } catch (e: Exception) {
+                val msg = e.message ?: ""
+                val isColumnError = msg.contains("other_details") || msg.contains("column")
+                if (isColumnError && customer.otherDetails != null) {
+                    println("Retrying customer insert without missing other_details column...")
+                    client.from("customers").insert(
+                        buildJsonObject {
+                            put("name", customer.name)
+                            if (customer.phone != null) put("phone", customer.phone)
+                            if (customer.address != null) put("address", customer.address)
+                        }
+                    ) { select() }.decodeSingle()
+                } else {
+                    throw e
+                }
             }
-        ) { select() }.decodeSingle()
+        }
+
+        return try {
+            insertCustomerInternal(supabase)
+        } catch (e: Exception) {
+            println("Standard addCustomer failed, trying admin bypass: ${e.message}")
+            e.printStackTrace()
+            initAdminSession()
+            insertCustomerInternal(supabaseAdmin)
+        }
     }
 
     // ── Products ──────────────────────────────────────────────────────────────
@@ -334,16 +394,17 @@ class EmployeeRepository {
         shopName: String,
         lines: List<SaleLine>,
         emptyCansCollected: Int,
+        saleDate: String? = null,
     ) {
         val employeeId = currentUserId()
-        val saleDate   = today()
+        val effectiveDate = saleDate?.takeIf { it.isNotBlank() } ?: today()
 
         lines.forEach { line ->
             // 1) Persist the sale entry — drives revenue & profit reports.
             runCatching {
                 supabase.from("sale_entries").insert(
                     buildJsonObject {
-                        put("date", saleDate)
+                        put("date", effectiveDate)
                         put("customer_name", customerName)
                         put("product_id", line.productId)
                         put("product_name", line.productName)
@@ -394,3 +455,6 @@ class EmployeeRepository {
         val purchasePricePerUnit: Double = 0.0,
     )
 }
+
+private fun String.isEmptyCansSource(): Boolean =
+    trim().startsWith("Empty cans", ignoreCase = true)

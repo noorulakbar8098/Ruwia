@@ -51,7 +51,7 @@ fun CustomerPickerOverlay(
     var newPhone    by remember { mutableStateOf("") }
     var newLocation by remember { mutableStateOf("") }
     var newOther    by remember { mutableStateOf("") }
-    var allCustomers by remember { mutableStateOf(initialCustomers) }
+    var allCustomers by remember(initialCustomers) { mutableStateOf(initialCustomers) }
 
     val filtered = remember(search, allCustomers) {
         if (search.isBlank()) allCustomers

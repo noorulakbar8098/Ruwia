@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.UserRole
 import com.example.ruwia.presentation.AuthViewModel
+import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
 import ruwia.shared.generated.resources.app_logo
@@ -271,7 +272,7 @@ fun LoginScreen(
                                         modifier = Modifier.size(18.dp)
                                     )
                                     Text(
-                                        text = "Owner",
+                                        text = "Admin",
                                         color = if (isOwnerSelected) Color.White else TextSecondary,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp
@@ -551,22 +552,24 @@ fun LoginScreen(
                     }
 
                     // ── Toggle Sign In / Sign Up ──────────────────────────
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = if (isSignUp) "Already have an account? " else "Don't have an account? ",
-                            fontSize = 13.sp,
-                            color = TextSecondary
-                        )
-                        Text(
-                            text = if (isSignUp) "Sign In" else "Sign Up",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = EmeraldGreen,
-                            modifier = Modifier.clickable { isSignUp = !isSignUp }
-                        )
+                    if (isSignUp || selectedRole != UserRole.employee) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = if (isSignUp) "Already have an account? " else "Don't have an account? ",
+                                fontSize = 13.sp,
+                                color = TextSecondary
+                            )
+                            Text(
+                                text = if (isSignUp) "Sign In" else "Sign Up",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldGreen,
+                                modifier = Modifier.clickable { isSignUp = !isSignUp }
+                            )
+                        }
                     }
                 }
             }
@@ -593,6 +596,10 @@ fun LoginScreen(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        if (state.loading) {
+            SaaSLoadingOverlay(message = "Signing In")
         }
     }
 }

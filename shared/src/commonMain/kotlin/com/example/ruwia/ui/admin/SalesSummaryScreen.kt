@@ -31,6 +31,7 @@ import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import kotlin.time.Clock
@@ -39,14 +40,7 @@ import kotlinx.datetime.toLocalDateTime
 
 // ── Summary model ─────────────────────────────────────────────────────────────
 
-private data class ProductSummaryRow(
-    val product: String,
-    val supplier: String,     // "GC" | "MB"
-    val qty: Int,
-    val purchase: Double,
-    val selling: Double,
-    val margin: Double,
-)
+
 
 private val months = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -64,6 +58,8 @@ fun SalesSummaryScreen(
     productCategories: List<ProductCategory> = emptyList(),
     stockMovements: List<StockMovement> = emptyList(),
     currentExpense: MonthlyExpense? = null,
+    monthlyExpenses: Map<String, MonthlyExpense> = emptyMap(),
+    onExpenseMonthSelected: (String) -> Unit = {},
     onExpenseSave: (MonthlyExpense) -> Unit = {},
     onBack: () -> Unit,
     onProductClick: (String) -> Unit = {},
@@ -74,53 +70,48 @@ fun SalesSummaryScreen(
     val selectedMonthKey = "${Clock.System.now().toLocalDateTime(
         TimeZone.currentSystemDefault()).year}-${(selectedMonth + 1).toString().padStart(2, '0')}"
 
-    var expense by remember(currentExpense) {
-        mutableStateOf(currentExpense ?: MonthlyExpense(month = selectedMonthKey))
+    LaunchedEffect(selectedMonthKey) {
+        onExpenseMonthSelected(selectedMonthKey)
+    }
+
+    val selectedExpense = monthlyExpenses[selectedMonthKey]
+        ?: currentExpense?.takeIf { it.month == selectedMonthKey }
+
+    var expense by remember(selectedExpense, selectedMonthKey) {
+        mutableStateOf(selectedExpense ?: MonthlyExpense(month = selectedMonthKey))
     }
     var editingField   by remember { mutableStateOf<String?>(null) }
     var editValue      by remember { mutableStateOf("") }
+    var customName     by remember { mutableStateOf("") }
+    var customAmount   by remember { mutableStateOf("") }
 
-    // ── Build summary rows from real sale entries ──────────────────────────────
-    val filteredEntries = saleEntries.filter { entry ->
-        entry.createdAt?.startsWith(selectedMonthKey) == true
-        || entry.date.contains(months.getOrNull(selectedMonth) ?: "")
-    }
-
-    val summaryMap = mutableMapOf<Pair<String,String>, ProductSummaryRow>()
-    filteredEntries.forEach { entry ->
-        val cat = productCategories.firstOrNull { it.id == entry.productId || it.name == entry.productName }
-        val supplier = cat?.supplierGroup ?: "GC"
-        val key = entry.productName to supplier
-        val cur = summaryMap[key]
-        if (cur == null) {
-            summaryMap[key] = ProductSummaryRow(
-                product  = entry.productName,
-                supplier = supplier,
-                qty      = entry.qty,
-                purchase = entry.purchasePricePerUnit * entry.qty,
-                selling  = entry.totalSelling,
-                margin   = entry.totalMargin,
-            )
+    LaunchedEffect(editingField) {
+        val field = editingField ?: return@LaunchedEffect
+        if (field == "new") {
+            customName = ""
+            customAmount = ""
+        } else if (field.startsWith("custom_")) {
+            val idx = field.substringAfter("custom_").toIntOrNull() ?: return@LaunchedEffect
+            val custom = expense.customExpensesList.getOrNull(idx)
+            customName = custom?.name ?: ""
+            customAmount = custom?.amount?.toInt()?.toString() ?: ""
         } else {
-            summaryMap[key] = cur.copy(
-                qty      = cur.qty + entry.qty,
-                purchase = cur.purchase + entry.purchasePricePerUnit * entry.qty,
-                selling  = cur.selling + entry.totalSelling,
-                margin   = cur.margin + entry.totalMargin,
-            )
+            customName = ""
+            customAmount = ""
         }
     }
 
-    val allRows   = summaryMap.values.toList()
-    val gcRows    = allRows.filter { it.supplier == "GC" }
-    val mbRows    = allRows.filter { it.supplier == "MB" }
+    // ── Build summary rows from real sale entries ──────────────────────────────
+    val filteredEntries = saleEntries.filter { entry ->
+        entry.date.startsWith(selectedMonthKey)
+    }
 
-    val totalQty      = allRows.sumOf { it.qty }
-    val totalPurchase = allRows.sumOf { it.purchase }
-    val totalSelling  = allRows.sumOf { it.selling }
-    val totalMargin   = allRows.sumOf { it.margin }
+    val totalQty      = filteredEntries.sumOf { it.qty }
+    val totalPurchase = filteredEntries.sumOf { it.purchasePricePerUnit * it.qty }
+    val totalSelling  = filteredEntries.sumOf { it.totalSelling }
+    val totalMargin   = filteredEntries.sumOf { it.totalMargin }
 
-    val daysInPeriod  = filteredEntries.mapNotNull { it.createdAt?.take(10) }.distinct().size.coerceAtLeast(1)
+    val daysInPeriod  = filteredEntries.map { it.date }.distinct().size.coerceAtLeast(1)
     val perDayMargin  = totalMargin / daysInPeriod
     val perDayExpense = expense.total / 30.0
     val netPerDay     = perDayMargin - perDayExpense
@@ -129,11 +120,17 @@ fun SalesSummaryScreen(
     // The admin sees movements logged by every employee — RLS already exposes
     // the cross-employee view, we just bucket by month here.
     val monthMovements = stockMovements.filter { it.createdAt?.startsWith(selectedMonthKey) == true }
-    val totalInwardQty   = monthMovements.filter { it.type == "inward" }.sumOf { it.qty }
-    val totalOutwardQty  = monthMovements.filter { it.type == "outward" }.sumOf { it.qty }
+    val totalInwardCases = monthMovements.filter { it.type == "inward" }.sumOf { mvt ->
+        val upc = productCategories.find { it.id == mvt.productId }?.unitsPerCase ?: 1
+        mvt.qty.toDouble() / upc
+    }
+    val totalOutwardCases = monthMovements.filter { it.type == "outward" }.sumOf { mvt ->
+        val upc = productCategories.find { it.id == mvt.productId }?.unitsPerCase ?: 1
+        mvt.qty.toDouble() / upc
+    }
     val inwardEntries    = monthMovements.count { it.type == "inward" }
     val outwardEntries   = monthMovements.count { it.type == "outward" }
-    val netStockChange   = totalInwardQty - totalOutwardQty
+    val netStockChangeCases = totalInwardCases - totalOutwardCases
 
     Scaffold(
         containerColor = NTColors.Background,
@@ -166,36 +163,22 @@ fun SalesSummaryScreen(
             // ── Stock activity (inward + outward from all employees) ───
             item {
                 StockActivityCard(
-                    inwardQty       = totalInwardQty,
-                    outwardQty      = totalOutwardQty,
+                    inwardCases     = totalInwardCases,
+                    outwardCases    = totalOutwardCases,
                     inwardEntries   = inwardEntries,
                     outwardEntries  = outwardEntries,
-                    netChange       = netStockChange,
+                    netChange       = netStockChangeCases,
                     modifier        = Modifier.padding(horizontal = NTDp.screenPad),
                 )
                 Spacer(Modifier.height(NTDp.md))
             }
 
-            // ── Global Creators block ──────────────────────────
+            // ── Report Summary block ───────────────────────────
             item {
-                SupplierBlock(
-                    supplierName = "Global Creators",
-                    supplierTag  = "GC",
-                    rows         = gcRows,
-                    color        = NTColors.Primary,
+                SaleEntriesBlock(
+                    entries = filteredEntries,
                     onProductClick = onProductClick,
-                )
-                Spacer(Modifier.height(NTDp.md))
-            }
-
-            // ── Multi Brands block ─────────────────────────────
-            item {
-                SupplierBlock(
-                    supplierName = "Multi Brands",
-                    supplierTag  = "MB",
-                    rows         = mbRows,
-                    color        = NTColors.Accent,
-                    onProductClick = onProductClick,
+                    modifier = Modifier.padding(horizontal = NTDp.screenPad),
                 )
                 Spacer(Modifier.height(NTDp.md))
             }
@@ -227,6 +210,9 @@ fun SalesSummaryScreen(
                             else -> ""
                         }
                     },
+                    onAddNewExpense = {
+                        editingField = "new"
+                    },
                     modifier = Modifier.padding(horizontal = NTDp.screenPad),
                 )
                 Spacer(Modifier.height(NTDp.lg))
@@ -246,11 +232,18 @@ fun SalesSummaryScreen(
 
     // ── Edit expense dialog ────────────────────────────────────
     if (editingField != null) {
-        val label = when (editingField) {
-            "shopRent" -> "Shop Rent"; "adminSalary" -> "Admin Salary"
-            "deliveryStaff" -> "Delivery Staff"; "misc" -> "Miscellaneous"
-            "bike" -> "Bike Expense"; else -> ""
+        val field = editingField!!
+        val isCustom = field == "new" || field.startsWith("custom_")
+        val label = if (isCustom) {
+            if (field == "new") "Add New Expense" else "Edit Expense"
+        } else {
+            when (field) {
+                "shopRent" -> "Shop Rent"; "adminSalary" -> "Admin Salary"
+                "deliveryStaff" -> "Delivery Staff"; "misc" -> "Miscellaneous"
+                "bike" -> "Bike Expense"; else -> ""
+            }
         }
+
         Dialog(onDismissRequest = { editingField = null }) {
             Column(
                 modifier = Modifier
@@ -258,8 +251,34 @@ fun SalesSummaryScreen(
                     .background(NTColors.Surface, RoundedCornerShape(20.dp))
                     .padding(24.dp),
             ) {
-                Text("Edit $label", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+                Text(label, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
                 Spacer(Modifier.height(16.dp))
+
+                if (isCustom) {
+                    Text("Expense Name", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextSecondary)
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.5.dp, NTColors.Border, RoundedCornerShape(12.dp))
+                            .background(NTColors.SurfaceVar, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        BasicTextField(
+                            value = customName,
+                            onValueChange = { customName = it },
+                            textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
+                            cursorBrush = SolidColor(NTColors.Primary),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+
+                Text("Amount", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextSecondary)
+                Spacer(Modifier.height(6.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -271,8 +290,8 @@ fun SalesSummaryScreen(
                     Text("₹", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NTColors.Primary)
                     Spacer(Modifier.width(6.dp))
                     BasicTextField(
-                        value = editValue,
-                        onValueChange = { editValue = it },
+                        value = if (isCustom) customAmount else editValue,
+                        onValueChange = { if (isCustom) customAmount = it else editValue = it },
                         textStyle = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary),
                         cursorBrush = SolidColor(NTColors.Primary),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -282,22 +301,66 @@ fun SalesSummaryScreen(
                 }
                 Spacer(Modifier.height(20.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = { editingField = null }, modifier = Modifier.weight(1f)) {
-                        Text("Cancel")
+                    if (field.startsWith("custom_")) {
+                        Button(
+                            onClick = {
+                                val idx = field.substringAfter("custom_").toIntOrNull()
+                                if (idx != null) {
+                                    val currentList = expense.customExpensesList.toMutableList()
+                                    if (idx in currentList.indices) {
+                                        currentList.removeAt(idx)
+                                        val updatedJson = if (currentList.isEmpty()) null else {
+                                            kotlinx.serialization.json.Json.encodeToString(currentList)
+                                        }
+                                        val updated = expense.copy(customExpenses = updatedJson)
+                                        expense = updated
+                                        onExpenseSave(updated)
+                                    }
+                                }
+                                editingField = null
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error),
+                        ) {
+                            Text("Delete")
+                        }
+                    } else {
+                        OutlinedButton(onClick = { editingField = null }, modifier = Modifier.weight(1f)) {
+                            Text("Cancel")
+                        }
                     }
                     Button(
                         onClick = {
-                            val v = editValue.toDoubleOrNull() ?: return@Button
-                            val updated = when (editingField) {
-                                "shopRent"      -> expense.copy(shopRent = v)
-                                "adminSalary"   -> expense.copy(adminSalary = v)
-                                "deliveryStaff" -> expense.copy(deliveryStaff = v)
-                                "misc"          -> expense.copy(miscellaneous = v)
-                                "bike"          -> expense.copy(bikeExpense = v)
-                                else -> expense
+                            if (isCustom) {
+                                val name = customName.trim()
+                                if (name.isEmpty()) return@Button
+                                val amount = customAmount.trim().ifEmpty { "0" }.toDoubleOrNull() ?: return@Button
+                                val currentList = expense.customExpensesList.toMutableList()
+                                if (field == "new") {
+                                    currentList.add(com.example.ruwia.domain.CustomExpense(name, amount))
+                                } else {
+                                    val idx = field.substringAfter("custom_").toIntOrNull() ?: return@Button
+                                    if (idx in currentList.indices) {
+                                        currentList[idx] = com.example.ruwia.domain.CustomExpense(name, amount)
+                                    }
+                                }
+                                val updatedJson = kotlinx.serialization.json.Json.encodeToString(currentList)
+                                val updated = expense.copy(customExpenses = updatedJson)
+                                expense = updated
+                                onExpenseSave(updated)
+                            } else {
+                                val v = editValue.trim().ifEmpty { "0" }.toDoubleOrNull() ?: return@Button
+                                val updated = when (field) {
+                                    "shopRent"      -> expense.copy(shopRent = v)
+                                    "adminSalary"   -> expense.copy(adminSalary = v)
+                                    "deliveryStaff" -> expense.copy(deliveryStaff = v)
+                                    "misc"          -> expense.copy(miscellaneous = v)
+                                    "bike"          -> expense.copy(bikeExpense = v)
+                                    else -> expense
+                                }
+                                expense = updated
+                                onExpenseSave(updated)
                             }
-                            expense = updated
-                            onExpenseSave(updated)
                             editingField = null
                         },
                         modifier = Modifier.weight(1f),
@@ -317,23 +380,23 @@ private fun SummaryTopBar(onBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(NTColors.Background)
-            .statusBarsPadding()
-            .height(56.dp)
-            .padding(horizontal = 16.dp),
+            .statusBarsPadding(),
     ) {
         Box(
-            modifier = Modifier.size(36.dp).background(NTColors.Surface, RoundedCornerShape(10.dp))
-                .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
-                .clickable(onClick = onBack).align(Alignment.CenterStart),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp)) }
-        Text("Sales & Profit", fontSize = 17.sp, fontWeight = FontWeight.Bold,
-            color = NTColors.TextPrimary, modifier = Modifier.align(Alignment.Center))
-        Box(
-            modifier = Modifier.size(36.dp).background(NTColors.PrimaryLight, CircleShape)
-                .align(Alignment.CenterEnd).clickable {},
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.FileDownload, null, tint = NTColors.Primary, modifier = Modifier.size(18.dp)) }
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 16.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(36.dp).background(NTColors.Surface, RoundedCornerShape(10.dp))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack).align(Alignment.CenterStart),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp)) }
+            Text("Sales & Profit", fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                color = NTColors.TextPrimary, modifier = Modifier.align(Alignment.Center))
+        }
     }
 }
 
@@ -393,93 +456,114 @@ private fun SummaryKpiCard(label: String, value: String, bg: Color, fg: Color, m
 // ── Supplier block ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun SupplierBlock(
-    supplierName: String,
-    supplierTag: String,
-    rows: List<ProductSummaryRow>,
-    color: Color,
+private fun SaleEntriesBlock(
+    entries: List<SaleEntry>,
     onProductClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val subTotal = rows.sumOf { it.margin }
+    var isExpanded by remember { mutableStateOf(false) }
+    val displayList = if (isExpanded) entries else entries.take(8)
 
     Column(
         modifier = modifier
-            .padding(horizontal = NTDp.screenPad)
+            .fillMaxWidth()
             .background(NTColors.Surface, RoundedCornerShape(16.dp)),
     ) {
-        // Supplier header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(color.copy(alpha = 0.08f), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                .background(NTColors.Primary.copy(alpha = 0.08f), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.background(color, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
-                ) { Text(supplierTag, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White) }
-                Spacer(Modifier.width(10.dp))
-                Text(supplierName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+                Icon(Icons.Rounded.Assessment, null, tint = NTColors.Primary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Report Summary", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
             }
-            Text("₹${subTotal.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = color)
+            Text(
+                text = "${entries.size} items",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = NTColors.Primary
+            )
         }
 
-        // Column headers
-        SummaryTableHeader()
+        // Table Header
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            Text("Name", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
+                letterSpacing = 0.5.sp, modifier = Modifier.weight(1.1f))
+            Text("Product", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
+                letterSpacing = 0.5.sp, modifier = Modifier.weight(1f))
+            Text("Qty", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
+                letterSpacing = 0.5.sp, textAlign = TextAlign.End, modifier = Modifier.weight(0.6f))
+            Text("Purchase", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
+                letterSpacing = 0.5.sp, textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
+            Text("Sell", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
+                letterSpacing = 0.5.sp, textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
+            Text("Margin", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
+                letterSpacing = 0.5.sp, textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
+        }
         HorizontalDivider(color = NTColors.Divider)
 
-        // Product rows
-        rows.forEachIndexed { idx, row ->
-            SummaryProductRow(row = row, onClick = { onProductClick(row.product) })
-            if (idx < rows.lastIndex) HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
-        }
-    }
-}
-
-@Composable
-private fun SummaryTableHeader() {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Text("Product", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
-            letterSpacing = 0.5.sp, modifier = Modifier.weight(1.6f))
-        listOf("Qty", "Purchase", "Selling", "Margin").forEach { h ->
-            Text(h, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
-                letterSpacing = 0.5.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun SummaryProductRow(row: ProductSummaryRow, onClick: () -> Unit) {
-    val dimmed = row.qty == 0
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !dimmed, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(modifier = Modifier.weight(1.6f), verticalAlignment = Alignment.CenterVertically) {
-            Text(row.product, fontSize = 13.sp, fontWeight = if (dimmed) FontWeight.Normal else FontWeight.SemiBold,
-                color = if (dimmed) NTColors.TextDisabled else NTColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!dimmed) {
-                Spacer(Modifier.width(4.dp))
-                Icon(Icons.Rounded.ChevronRight, null, tint = NTColors.TextTertiary, modifier = Modifier.size(14.dp))
+        // Sales rows
+        displayList.forEachIndexed { idx, entry ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onProductClick(entry.productId) }
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(entry.customerName, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    color = NTColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1.1f))
+                Text(entry.productName, fontSize = 12.sp, color = NTColors.TextSecondary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f))
+                Text("${entry.qty}", fontSize = 12.sp, color = NTColors.TextPrimary,
+                    textAlign = TextAlign.End, modifier = Modifier.weight(0.6f))
+                Text("₹${(entry.purchasePricePerUnit * entry.qty).toInt()}", fontSize = 12.sp, color = NTColors.TextSecondary,
+                    textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
+                Text("₹${entry.totalSelling.toInt()}", fontSize = 12.sp, color = NTColors.TextSecondary,
+                    textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
+                Text("₹${entry.totalMargin.toInt()}", fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    color = NTColors.Success, textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
+            }
+            if (idx < displayList.lastIndex) {
+                HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
             }
         }
-        Text("${row.qty}", fontSize = 13.sp, color = if (dimmed) NTColors.TextDisabled else NTColors.TextPrimary,
-            textAlign = TextAlign.End, modifier = Modifier.weight(1f))
-        Text("₹${row.purchase.toInt()}", fontSize = 12.sp, color = if (dimmed) NTColors.TextDisabled else NTColors.TextSecondary,
-            textAlign = TextAlign.End, modifier = Modifier.weight(1f))
-        Text("₹${row.selling.toInt()}", fontSize = 12.sp, color = if (dimmed) NTColors.TextDisabled else NTColors.TextSecondary,
-            textAlign = TextAlign.End, modifier = Modifier.weight(1f))
-        Text("₹${row.margin.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.Bold,
-            color = if (dimmed) NTColors.TextDisabled else NTColors.Success,
-            textAlign = TextAlign.End, modifier = Modifier.weight(1f))
+
+        if (entries.size > 8) {
+            HorizontalDivider(color = NTColors.Divider)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { isExpanded = !isExpanded }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (isExpanded) "Show Less" else "Show More (+${entries.size - 8})",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NTColors.Primary
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = NTColors.Primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -513,38 +597,93 @@ private fun GrandTotalCard(
 // ── Expense tracker ────────────────────────────────────────────────────────────
 
 @Composable
-private fun ExpenseTrackerSection(expense: MonthlyExpense, onEdit: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun ExpenseTrackerSection(
+    expense: MonthlyExpense,
+    onEdit: (String) -> Unit,
+    onAddNewExpense: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+
     Column(modifier = modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.AccountBalance, null, tint = NTColors.Primary, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Monthly Expenses", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
-        }
-        Spacer(Modifier.height(12.dp))
-
-        Column(modifier = Modifier.background(NTColors.Surface, RoundedCornerShape(16.dp)).padding(4.dp)) {
-            ExpenseRow("Shop Rent",      expense.shopRent,      Icons.Rounded.Home,          NTColors.Info)     { onEdit("shopRent") }
-            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
-            ExpenseRow("Admin Salary",   expense.adminSalary,   Icons.Rounded.ManageAccounts, NTColors.AvatarPurple) { onEdit("adminSalary") }
-            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
-            ExpenseRow("Delivery Staff", expense.deliveryStaff, Icons.Rounded.LocalShipping,  NTColors.Primary)  { onEdit("deliveryStaff") }
-            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
-            ExpenseRow("Miscellaneous",  expense.miscellaneous, Icons.Rounded.MoreHoriz,      NTColors.Warning)  { onEdit("misc") }
-            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
-            ExpenseRow("Bike Expense",   expense.bikeExpense,   Icons.Rounded.TwoWheeler,     NTColors.Accent)   { onEdit("bike") }
-        }
-
-        Spacer(Modifier.height(10.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(NTColors.ErrorLight, RoundedCornerShape(12.dp))
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .clickable { expanded = !expanded }
+                .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Total Expenses", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.ErrorText)
-            Text("₹${expense.total.toInt()}", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = NTColors.Error)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.AccountBalance, null, tint = NTColors.Primary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Monthly Expenses", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = NTColors.TextSecondary,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (expanded) {
+            Column(modifier = Modifier.background(NTColors.Surface, RoundedCornerShape(16.dp)).padding(4.dp)) {
+                ExpenseRow("Shop Rent",      expense.shopRent,      Icons.Rounded.Home,          NTColors.Info)     { onEdit("shopRent") }
+                HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
+                ExpenseRow("Admin Salary",   expense.adminSalary,   Icons.Rounded.ManageAccounts, NTColors.AvatarPurple) { onEdit("adminSalary") }
+                HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
+                ExpenseRow("Delivery Staff", expense.deliveryStaff, Icons.Rounded.LocalShipping,  NTColors.Primary)  { onEdit("deliveryStaff") }
+                HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
+                ExpenseRow("Miscellaneous",  expense.miscellaneous, Icons.Rounded.MoreHoriz,      NTColors.Warning)  { onEdit("misc") }
+                HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
+                ExpenseRow("Bike Expense",   expense.bikeExpense,   Icons.Rounded.TwoWheeler,     NTColors.Accent)   { onEdit("bike") }
+
+                // Dynamic custom expenses list
+                expense.customExpensesList.forEachIndexed { index, custom ->
+                    HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
+                    ExpenseRow(
+                        label = custom.name,
+                        amount = custom.amount,
+                        icon = Icons.Rounded.ReceiptLong,
+                        color = NTColors.Primary,
+                        onEdit = { onEdit("custom_$index") }
+                    )
+                }
+
+                // Add custom expense row button
+                HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onAddNewExpense)
+                        .padding(horizontal = 14.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier.size(32.dp).background(NTColors.Success.copy(alpha = 0.12f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.Add, null, tint = NTColors.Success, modifier = Modifier.size(16.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text("Add New Expense", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.Success)
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NTColors.ErrorLight, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Total Expenses", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.ErrorText)
+                Text("₹${expense.total.toInt()}", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = NTColors.Error)
+            }
         }
     }
 }
@@ -601,13 +740,26 @@ private fun PerDayCard(label: String, value: String, bg: Color, fg: Color, modif
 //   this admin (RLS already exposes the cross-employee view), bucketed for the
 //   currently-selected month.
 
+private fun formatCases(value: Double): String {
+    return if (value % 1.0 == 0.0) {
+        value.toInt().toString()
+    } else {
+        val rounded = (value * 10).toLong() / 10.0
+        if (rounded % 1.0 == 0.0) {
+            rounded.toInt().toString()
+        } else {
+            rounded.toString()
+        }
+    }
+}
+
 @Composable
 private fun StockActivityCard(
-    inwardQty: Int,
-    outwardQty: Int,
+    inwardCases: Double,
+    outwardCases: Double,
     inwardEntries: Int,
     outwardEntries: Int,
-    netChange: Int,
+    netChange: Double,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -637,14 +789,14 @@ private fun StockActivityCard(
             }
             // Net delta pill
             val netLabel = when {
-                netChange > 0 -> "+$netChange net"
-                netChange < 0 -> "$netChange net"
-                else          -> "0 net"
+                netChange > 0.0 -> "+${formatCases(netChange)} net"
+                netChange < 0.0 -> "${formatCases(netChange)} net"
+                else            -> "0 net"
             }
             val (netBg, netFg) = when {
-                netChange > 0 -> NTColors.SuccessLight to NTColors.Success
-                netChange < 0 -> NTColors.ErrorLight   to NTColors.Error
-                else          -> NTColors.SurfaceVar   to NTColors.TextTertiary
+                netChange > 0.0 -> NTColors.SuccessLight to NTColors.Success
+                netChange < 0.0 -> NTColors.ErrorLight   to NTColors.Error
+                else            -> NTColors.SurfaceVar   to NTColors.TextTertiary
             }
             Box(
                 modifier = Modifier
@@ -665,7 +817,7 @@ private fun StockActivityCard(
             StockActivityTile(
                 title    = "INWARD",
                 subtitle = "Came in",
-                qty      = inwardQty,
+                qty      = inwardCases,
                 entries  = inwardEntries,
                 icon     = Icons.Rounded.ArrowDownward,
                 bg       = NTColors.SuccessLight,
@@ -675,7 +827,7 @@ private fun StockActivityCard(
             StockActivityTile(
                 title    = "OUTWARD",
                 subtitle = "Went out",
-                qty      = outwardQty,
+                qty      = outwardCases,
                 entries  = outwardEntries,
                 icon     = Icons.Rounded.ArrowUpward,
                 bg       = NTColors.ErrorLight,
@@ -701,7 +853,7 @@ private fun StockActivityCard(
 private fun StockActivityTile(
     title: String,
     subtitle: String,
-    qty: Int,
+    qty: Double,
     entries: Int,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     bg: Color,
@@ -731,7 +883,7 @@ private fun StockActivityTile(
             }
         }
         Spacer(Modifier.height(NTDp.sm))
-        Text("$qty cans", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = fg)
+        Text("${formatCases(qty)} cases", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = fg)
         Spacer(Modifier.height(2.dp))
         Text(
             if (entries == 1) "1 entry" else "$entries entries",
@@ -739,4 +891,3 @@ private fun StockActivityTile(
         )
     }
 }
-

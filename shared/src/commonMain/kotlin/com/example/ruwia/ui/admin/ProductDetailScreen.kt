@@ -35,6 +35,12 @@ fun ProductDetailScreen(
     onBack: () -> Unit,
 ) {
 
+    var isDescending by remember { mutableStateOf(true) }
+    val sortedTransactions = remember(transactions, isDescending) {
+        if (isDescending) transactions.sortedByDescending { it.date }
+        else transactions.sortedBy { it.date }
+    }
+
     val totalQty      = transactions.sumOf { it.qty }
     val totalPurchase = transactions.sumOf { it.purchasePricePerUnit * it.qty }
     val totalSelling  = transactions.sumOf { it.totalSelling }
@@ -62,7 +68,7 @@ fun ProductDetailScreen(
             // ── Column header ──────────────────────────────────
             item {
                 Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
-                    TransactionTableHeader()
+                    TransactionTableHeader(isDescending = isDescending, onToggle = { isDescending = !isDescending })
                     HorizontalDivider(color = NTColors.Divider)
                 }
             }
@@ -79,7 +85,7 @@ fun ProductDetailScreen(
                     }
                 }
             } else {
-                items(transactions) { tx ->
+                items(sortedTransactions) { tx ->
                     Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
                         TransactionRow(tx = tx)
                         HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
@@ -111,36 +117,41 @@ private fun ProductDetailTopBar(productName: String, onBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(NTColors.Background)
-            .statusBarsPadding()
-            .height(56.dp)
-            .padding(horizontal = 16.dp),
+            .statusBarsPadding(),
     ) {
         Box(
-            modifier = Modifier.size(36.dp).background(NTColors.Surface, RoundedCornerShape(10.dp))
-                .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
-                .clickable(onClick = onBack).align(Alignment.CenterStart),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp)) }
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 16.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(36.dp).background(NTColors.Surface, RoundedCornerShape(10.dp))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack).align(Alignment.CenterStart),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp)) }
 
-        Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(productName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
-            val now = remember { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()) }
-            val monthLabel = remember(now) {
-                val m = when (now.monthNumber) {
-                    1 -> "Jan"; 2 -> "Feb"; 3 -> "Mar"; 4 -> "Apr"
-                    5 -> "May"; 6 -> "Jun"; 7 -> "Jul"; 8 -> "Aug"
-                    9 -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; else -> "Dec"
+            Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(productName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+                val now = remember { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()) }
+                val monthLabel = remember(now) {
+                    val m = when (now.monthNumber) {
+                        1 -> "Jan"; 2 -> "Feb"; 3 -> "Mar"; 4 -> "Apr"
+                        5 -> "May"; 6 -> "Jun"; 7 -> "Jul"; 8 -> "Aug"
+                        9 -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; else -> "Dec"
+                    }
+                    "$m ${now.year}"
                 }
-                "$m ${now.year}"
+                Text(monthLabel, fontSize = 11.sp, color = NTColors.TextTertiary)
             }
-            Text(monthLabel, fontSize = 11.sp, color = NTColors.TextTertiary)
-        }
 
-        Box(
-            modifier = Modifier.size(36.dp).background(NTColors.PrimaryLight, RoundedCornerShape(10.dp))
-                .align(Alignment.CenterEnd).clickable {},
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.Share, null, tint = NTColors.Primary, modifier = Modifier.size(16.dp)) }
+            Box(
+                modifier = Modifier.size(36.dp).background(NTColors.PrimaryLight, RoundedCornerShape(10.dp))
+                    .align(Alignment.CenterEnd).clickable {},
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Share, null, tint = NTColors.Primary, modifier = Modifier.size(16.dp)) }
+        }
     }
 }
 
@@ -172,15 +183,33 @@ private fun SummaryChip(label: String, value: String, bg: Color, fg: Color) {
 // ── Table ─────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun TransactionTableHeader() {
+private fun TransactionTableHeader(isDescending: Boolean, onToggle: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(NTColors.SurfaceVar, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        Row(
+            modifier = Modifier
+                .weight(1.1f)
+                .clickable(onClick = onToggle),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End
+        ) {
+            Text("Date", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary,
+                letterSpacing = 0.4.sp, textAlign = TextAlign.End)
+            Spacer(Modifier.width(2.dp))
+            Icon(
+                imageVector = if (isDescending) Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward,
+                contentDescription = null,
+                tint = NTColors.TextTertiary,
+                modifier = Modifier.size(10.dp)
+            )
+        }
+        
         listOf(
-            "Date"         to 1.1f,
             "Customer"     to 2.0f,
             "Qty"          to 0.6f,
             "Buy/u"        to 0.8f,
@@ -210,7 +239,7 @@ private fun TransactionRow(tx: SaleEntry) {
             .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(tx.date, fontSize = 11.sp, color = NTColors.TextTertiary, modifier = Modifier.weight(1.1f))
+        Text(formatDateString(tx.date), fontSize = 11.sp, color = NTColors.TextTertiary, modifier = Modifier.weight(1.1f))
         Text(tx.customerName, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary,
             maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(2.0f))
         Text("${tx.qty}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary,
@@ -255,4 +284,15 @@ private fun TransactionTotalRow(
         Text("₹${totalMargin.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF6EE7B7),
             textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
     }
+}
+
+private fun formatDateString(dateStr: String): String {
+    val parts = dateStr.split("-")
+    if (parts.size == 3) {
+        val y = parts[0].takeLast(2)
+        val m = parts[1]
+        val d = parts[2]
+        return "$d/$m/$y"
+    }
+    return dateStr
 }

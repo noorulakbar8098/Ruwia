@@ -170,32 +170,37 @@ private fun SupplierTopBar(onBack: () -> Unit, count: Int) {
         modifier = Modifier
             .fillMaxWidth()
             .background(NTColors.Background)
-            .statusBarsPadding()
-            .height(56.dp)
-            .padding(horizontal = 16.dp),
+            .statusBarsPadding(),
     ) {
         Box(
-            modifier = Modifier.size(36.dp)
-                .background(NTColors.Surface, RoundedCornerShape(10.dp))
-                .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
-                .clickable(onClick = onBack)
-                .align(Alignment.CenterStart),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp)) }
-
-        Text(
-            "Suppliers", fontSize = 17.sp, fontWeight = FontWeight.Bold,
-            color = NTColors.TextPrimary, modifier = Modifier.align(Alignment.Center),
-        )
-
-        Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(NTDp.radFull))
-                .background(NTColors.PrimaryLight)
-                .padding(horizontal = 10.dp, vertical = 4.dp)
-                .align(Alignment.CenterEnd),
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 16.dp)
         ) {
-            Text("$count", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.Primary)
+            Box(
+                modifier = Modifier.size(36.dp)
+                    .background(NTColors.Surface, RoundedCornerShape(10.dp))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack)
+                    .align(Alignment.CenterStart),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp)) }
+
+            Text(
+                "Suppliers", fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                color = NTColors.TextPrimary, modifier = Modifier.align(Alignment.Center),
+            )
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(NTDp.radFull))
+                    .background(NTColors.PrimaryLight)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .align(Alignment.CenterEnd),
+            ) {
+                Text("$count", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.Primary)
+            }
         }
     }
 }

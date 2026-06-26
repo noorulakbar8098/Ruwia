@@ -39,12 +39,39 @@ import com.example.ruwia.ui.dashboard.NTDp
 @Composable
 fun CustomerManagementScreen(
     customers: List<Customer>,
+    errorMessage: String? = null,
     onAddCustomer: (Customer) -> Unit,
+    onDeleteCustomer: (String) -> Unit = {},
+    onClearError: () -> Unit = {},
     onBack: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     var showAddSheet by remember { mutableStateOf(false) }
+    var deletingCustomer by remember { mutableStateOf<Customer?>(null) }
     var search by remember { mutableStateOf("") }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    var errorDialogText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            errorDialogText = it
+            snackbarHostState.showSnackbar(it)
+        }
+    }
+
+    if (errorDialogText != null) {
+        AlertDialog(
+            onDismissRequest = { errorDialogText = null; onClearError() },
+            title = { Text("Database Error", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+            text = { Text(errorDialogText ?: "") },
+            confirmButton = {
+                TextButton(onClick = { errorDialogText = null; onClearError() }) {
+                    Text("OK", fontWeight = FontWeight.Bold, color = NTColors.Primary)
+                }
+            },
+            shape = RoundedCornerShape(20.dp),
+        )
+    }
 
     val filtered = remember(search, customers) {
         if (search.isBlank()) customers
@@ -59,6 +86,7 @@ fun CustomerManagementScreen(
         Scaffold(
             containerColor = NTColors.Background,
             topBar = { CustomerTopBar(onBack = onBack, count = customers.size) },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { padding ->
             Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                 // Search
@@ -147,7 +175,7 @@ fun CustomerManagementScreen(
                             }
                         }
                         items(filtered, key = { it.id ?: it.name.hashCode().toString() }) { c ->
-                            CustomerRow(c)
+                            CustomerRow(c, onDelete = { deletingCustomer = c })
                         }
                         item {
                             Spacer(Modifier.height(contentPadding.calculateBottomPadding() + 80.dp))
@@ -186,6 +214,33 @@ fun CustomerManagementScreen(
                 },
             )
         }
+
+        deletingCustomer?.let { c ->
+            AlertDialog(
+                onDismissRequest = { deletingCustomer = null },
+                icon  = { Icon(Icons.Rounded.Delete, null, tint = NTColors.Error) },
+                title = { Text("Delete ${c.name}?", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+                text  = {
+                    Text(
+                        "This will permanently delete this customer. This action cannot be undone.",
+                        fontSize = 13.sp, color = NTColors.TextSecondary,
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            c.id?.let(onDeleteCustomer)
+                            deletingCustomer = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error),
+                    ) { Text("Delete", fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { deletingCustomer = null }) { Text("Cancel") }
+                },
+                shape = RoundedCornerShape(20.dp),
+            )
+        }
     }
 }
 
@@ -195,38 +250,43 @@ private fun CustomerTopBar(onBack: () -> Unit, count: Int) {
         modifier = Modifier
             .fillMaxWidth()
             .background(NTColors.Background)
-            .statusBarsPadding()
-            .height(56.dp)
-            .padding(horizontal = 16.dp),
+            .statusBarsPadding(),
     ) {
         Box(
-            modifier = Modifier.size(36.dp)
-                .background(NTColors.Surface, RoundedCornerShape(10.dp))
-                .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
-                .clickable(onClick = onBack)
-                .align(Alignment.CenterStart),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp)) }
-
-        Text(
-            "Customers", fontSize = 17.sp, fontWeight = FontWeight.Bold,
-            color = NTColors.TextPrimary, modifier = Modifier.align(Alignment.Center),
-        )
-
-        Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(NTDp.radFull))
-                .background(NTColors.PrimaryLight)
-                .padding(horizontal = 10.dp, vertical = 4.dp)
-                .align(Alignment.CenterEnd),
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 16.dp)
         ) {
-            Text("$count", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.Primary)
+            Box(
+                modifier = Modifier.size(36.dp)
+                    .background(NTColors.Surface, RoundedCornerShape(10.dp))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack)
+                    .align(Alignment.CenterStart),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp)) }
+
+            Text(
+                "Customers", fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                color = NTColors.TextPrimary, modifier = Modifier.align(Alignment.Center),
+            )
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(NTDp.radFull))
+                    .background(NTColors.PrimaryLight)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .align(Alignment.CenterEnd),
+            ) {
+                Text("$count", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.Primary)
+            }
         }
     }
 }
 
 @Composable
-private fun CustomerRow(customer: Customer) {
+private fun CustomerRow(customer: Customer, onDelete: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -281,6 +341,17 @@ private fun CustomerRow(customer: Customer) {
                     color = NTColors.Warning,
                 )
             }
+            Spacer(Modifier.width(8.dp))
+        }
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(NTColors.ErrorLight)
+                .clickable(onClick = onDelete),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Rounded.Delete, "Delete", tint = NTColors.Error, modifier = Modifier.size(16.dp))
         }
     }
 }

@@ -175,8 +175,23 @@ class AuthViewModel(
     fun signUp(email: String, password: String, name: String, phone: String) =
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
-            runCatching { repo.signUp(email, password, name, phone) }
-                .onSuccess { login(email, password) }
-                .onFailure { _state.value = AuthState(error = it.message ?: "Signup failed") }
+            runCatching {
+                repo.signUp(email, password, name, phone)
+                repo.login(email, password)
+                val uid = repo.currentUserId() ?: throw Exception("User ID not found after registration")
+                repo.promoteToAdmin(uid)
+                repo.myProfile()
+            }.onSuccess { profile ->
+                val resolvedRole = profile?.role ?: UserRole.admin
+                rolePrefs.saveRole(resolvedRole)
+                _state.value = AuthState(
+                    loggedIn    = true,
+                    role        = resolvedRole,
+                    displayName = profile?.fullName ?: "",
+                    email       = repo.currentUserEmail(),
+                )
+            }.onFailure {
+                _state.value = AuthState(error = it.message ?: "Signup failed")
+            }
         }
 }

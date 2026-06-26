@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.*
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.Order
+import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.presentation.AdminViewModel
 import com.example.ruwia.presentation.DashboardMetrics
@@ -33,8 +34,9 @@ import com.example.ruwia.presentation.toDashboardMetrics
 import com.example.ruwia.SystemBackHandler
 import com.example.ruwia.ui.admin.ProductDetailScreen
 import com.example.ruwia.ui.admin.ProductManagementScreen
-import com.example.ruwia.ui.admin.SalesSummaryScreen
+import com.example.ruwia.ui.admin.ProfitDashboardScreen
 import com.example.ruwia.ui.dashboard.*
+import com.example.ruwia.ui.components.SaaSLoadingOverlay
 
 // ─────────────────────────────────────────────────────────────
 //  Admin Dashboard Screen — Neer Thuli
@@ -49,6 +51,30 @@ fun AdminDashboardScreen(
     adminEmail: String = "",
 ) {
     val state by vm.state.collectAsState()
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AdminDashboardContentSwitcher(
+            state = state,
+            vm = vm,
+            onLogout = onLogout,
+            adminName = adminName,
+            adminEmail = adminEmail
+        )
+
+        if (state.loading) {
+            SaaSLoadingOverlay(message = "Syncing Database")
+        }
+    }
+}
+
+@Composable
+private fun AdminDashboardContentSwitcher(
+    state: AdminState,
+    vm: AdminViewModel,
+    onLogout: () -> Unit,
+    adminName: String,
+    adminEmail: String,
+) {
     var selectedTab       by remember { mutableStateOf(0) }
     var showAddStock      by remember { mutableStateOf(false) }
     var showSettings      by remember { mutableStateOf(false) }
@@ -57,6 +83,7 @@ fun AdminDashboardScreen(
     var showPricing       by remember { mutableStateOf(false) }
     var showSuppliers     by remember { mutableStateOf(false) }
     var showCustomers     by remember { mutableStateOf(false) }
+
     var productDetailName by remember { mutableStateOf<String?>(null) }
 
     // ── Full-screen overlays ──────────────────────────────────
@@ -74,9 +101,12 @@ fun AdminDashboardScreen(
     if (showCustomers) {
         SystemBackHandler { showCustomers = false }
         com.example.ruwia.ui.admin.CustomerManagementScreen(
-            customers     = state.customers,
-            onAddCustomer = vm::addCustomer,
-            onBack        = { showCustomers = false },
+            customers        = state.customers,
+            errorMessage     = state.error,
+            onAddCustomer    = vm::addCustomer,
+            onDeleteCustomer = vm::deleteCustomer,
+            onClearError     = vm::clearError,
+            onBack           = { showCustomers = false },
         )
         return
     }
@@ -140,22 +170,7 @@ fun AdminDashboardScreen(
         return
     }
 
-    // ── Settings ──────────────────────────────────────────────
-    if (showSettings) {
-        SystemBackHandler { showSettings = false }
-        SettingsScreen(
-            state                  = state,
-            adminName              = adminName,
-            adminEmail             = adminEmail,
-            onBack                 = { showSettings = false },
-            onNavigateToEmployees  = { showEmployees = true },
-            onNavigateToPricing    = { showPricing = true },
-            onNavigateToSuppliers  = { showSuppliers = true },
-            onNavigateToCustomers  = { showCustomers = true },
-            onLogout               = onLogout
-        )
-        return
-    }
+    // Settings overlay removed (moved to bottom navigation tab 4)
 
     // ── Add stock purchase ────────────────────────────────────
     if (showAddStock) {
@@ -166,28 +181,28 @@ fun AdminDashboardScreen(
             suppliers  = state.suppliers,
             onBack     = { showAddStock = false },
             onClose    = { showAddStock = false },
-            onSave     = { supplier, _, _, quantities, _ ->
-                // Pass the productId through so the repo can also bump
-                // product_categories.stock_available — otherwise the count
-                // stays stuck on the Products screen.
-                quantities.filter { it.value > 0 }.forEach { (productId, qty) ->
-                    vm.addStockMovement(
-                        source    = supplier,
-                        qty       = qty,
-                        type      = "inward",
-                        shopName  = "Admin",
-                        productId = productId,
-                    )
-                }
+            onSave     = { supplier, selectedShopName, quantities, _ ->
+                val actualShop = selectedShopName.ifBlank { "Shop 1" }
+                // addBulkStockMovements inserts all products sequentially in one
+                // coroutine and only refreshes state AFTER every insert is done.
+                // This fixes the race condition where loadData() ran before the
+                // DB inserts completed, showing stale counts on the dashboard.
+                vm.addBulkStockMovements(
+                    source    = supplier,
+                    shopName  = actualShop,
+                    quantities = quantities,
+                )
                 showAddStock = false
-                vm.loadData()
             }
         )
         return
     }
 
+
+
     Scaffold(
         containerColor = NTColors.Background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NTBottomNavigation(
                 selectedTab   = selectedTab,
@@ -195,6 +210,9 @@ fun AdminDashboardScreen(
             )
         }
     ) { contentPadding ->
+        if (selectedTab != 0) {
+            SystemBackHandler { selectedTab = 0 }
+        }
         when (selectedTab) {
             0 -> AdminHomeTab(
                      state          = state,
@@ -202,7 +220,7 @@ fun AdminDashboardScreen(
                      contentPadding = contentPadding,
                      adminName      = adminName,
                      onLogout       = onLogout,
-                     onOpenSettings = { showSettings = true },
+                     onOpenSettings = { selectedTab = 4 },
                  )
             1 -> ProductManagementScreen(
                      products        = state.productCategories,
@@ -212,22 +230,39 @@ fun AdminDashboardScreen(
                      onBack          = { selectedTab = 0 },
                      contentPadding  = contentPadding,
                  )
-            2 -> StockDashboardScreen(
+            2 -> StockInventoryScreen(
                      state          = state,
-                     onBack         = {},
-                     onRefresh      = vm::loadData,
+                     onBack         = { selectedTab = 0 },
+                     onAddMovement  = vm::addStockMovement,
                      onAddStock     = { showAddStock = true },
                      contentPadding = contentPadding,
                  )
-            3 -> SalesSummaryScreen(
-                     saleEntries       = state.saleEntries,
-                     productCategories = state.productCategories,
-                     stockMovements    = state.recentMovements,
-                     currentExpense    = state.currentMonthExpense,
+            3 -> ProfitDashboardScreen(
+                     state           = state,
+                     onBack          = {},
+                     onExpenseMonthSelected = vm::loadMonthlyExpense,
                      onExpenseSave     = vm::saveMonthlyExpense,
-                     onBack            = {},
                      onProductClick    = { pName -> productDetailName = pName },
+                     onAddStock        = { showAddStock = true },
+                     onAddProduct      = { selectedTab = 1 },
+                     onClearData       = vm::clearStockAndRevenue,
                      contentPadding    = contentPadding,
+                 )
+            4 -> SettingsScreen(
+                     state                  = state,
+                     adminName              = adminName,
+                     adminEmail             = adminEmail,
+                     onBack                 = { selectedTab = 0 },
+                     onNavigateToEmployees  = { showEmployees = true },
+                     onNavigateToPricing    = { showPricing = true },
+                     onNavigateToSuppliers  = { showSuppliers = true },
+                     onNavigateToCustomers  = { showCustomers = true },
+                     onLogout               = onLogout,
+                     onDeleteAllData        = {
+                         vm.deleteAllData()
+                         selectedTab = 0
+                     },
+                     contentPadding         = contentPadding
                  )
         }
     }
@@ -273,7 +308,7 @@ private fun AdminDashboardContent(
         state.toDashboardMetrics(selectedRange.toDashboardRange())
     }
 
-    val totalStock     = state.stockItems.sumOf { it.stockAvailable }
+    val totalStock     = state.stockItems.sumOf { it.stockAvailable.toDouble() / it.unitsPerCase.coerceAtLeast(1) }
     val pendingOrders  = state.orders.count { it.status == "pending" }
     val deliveredToday = state.orders.count { it.status == "delivered" }
     val activeStaff    = state.employees.count { it.status != "inactive" }
@@ -385,6 +420,8 @@ private fun AdminDashboardContent(
                     growthPercent = metrics.weeklyGrowthPercent ?: 0.0,
                     points        = metrics.chartPoints,
                     labels        = analyticsAxisLabels(metrics.xAxisLabels, metrics.chartPoints.size),
+                    rawValues     = metrics.chartRaw,
+                    xRawLabels    = metrics.xAxisLabels
                 )
             }
         }
@@ -400,44 +437,49 @@ private fun AdminDashboardContent(
                             val max = pts.maxOrNull() ?: 1f
                             if (max <= 0f) pts else pts.map { it / max }
                         }
+                    val stockRaw = state.stockItems.map { it.stockAvailable.toDouble() }
+                    val stockRawLabels = state.stockItems.map { it.name }
                     NTLineChartCard(
                         title         = "STOCK LEVELS",
-                        valueLabel    = "$totalStock cans on hand",
+                        valueLabel    = "${formatCases(totalStock)} cases on hand",
                         growthPercent = metrics.stockGrowthPercent ?: 0.0,
                         points        = if (stockPoints.size >= 2) stockPoints else List(7) { 0.5f },
                         labels        = state.stockItems.map { it.name.take(3).uppercase() }
-                            .let { l -> if (l.size < 2) listOf("5L", "10L", "20L", "Bulk") else l }
+                            .let { l -> if (l.size < 2) listOf("5L", "10L", "20L", "Bulk") else l },
+                        rawValues     = if (stockRaw.size >= 2) stockRaw else List(7) { 10.0 },
+                        xRawLabels    = if (stockRawLabels.size >= 2) stockRawLabels else listOf("5L", "10L", "20L", "Bulk"),
+                        valueFormatter = { "${it.toInt()} cans" }
                     )
                 }
             }
             item { Spacer(modifier = Modifier.height(NTDp.lg)) }
         }
 
-        // Activity feed
-        item {
-            NTActivityFeedSection(
-                orders    = state.orders,
-                customers = state.customers,
-                onViewAll = {}
-            )
-        }
+//        // Activity feed
+//        item {
+//            NTActivityFeedSection(
+//                orders    = state.orders,
+//                customers = state.customers,
+//                onViewAll = {}
+//            )
+//        }
 
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
-        // Staff overview row
-        if (state.employees.isNotEmpty()) {
-            item {
-                Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
-                    NTSectionHeader(label = "TEAM", title = "Staff overview")
-                    Spacer(modifier = Modifier.height(NTDp.md))
-                }
-            }
-            items(items = state.employees.take(3)) { emp ->
-                NTStaffCard(employee = emp, modifier = Modifier.padding(horizontal = NTDp.screenPad))
-                Spacer(modifier = Modifier.height(NTDp.sm))
-            }
-            item { Spacer(modifier = Modifier.height(NTDp.sm)) }
-        }
+//        // Staff overview row
+//        if (state.employees.isNotEmpty()) {
+//            item {
+//                Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
+//                    NTSectionHeader(label = "TEAM", title = "Staff overview")
+//                    Spacer(modifier = Modifier.height(NTDp.md))
+//                }
+//            }
+//            items(items = state.employees.take(3)) { emp ->
+//                NTStaffCard(employee = emp, modifier = Modifier.padding(horizontal = NTDp.screenPad))
+//                Spacer(modifier = Modifier.height(NTDp.sm))
+//            }
+//            item { Spacer(modifier = Modifier.height(NTDp.sm)) }
+//        }
     }
 }
 
@@ -644,7 +686,9 @@ fun AdminReportsTab(state: AdminState, contentPadding: PaddingValues) {
                 NTLineChartCard(
                     title = "WEEKLY REVENUE", valueLabel = state.weeklyRevenueLabel,
                     growthPercent = 18.0, points = state.weeklyRevenuePoints,
-                    labels = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+                    labels = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"),
+                    rawValues = state.weeklyRevenueRaw.map { it.toDouble() },
+                    xRawLabels = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
                 )
             }
         }
@@ -741,7 +785,7 @@ private fun formatPctShort(p: Double): String {
  * red = down, neutral grey when there's no last-month baseline).
  */
 private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiItem> {
-    val totalStock = state.stockItems.sumOf { it.stockAvailable }
+    val totalStock = state.stockItems.sumOf { it.stockAvailable.toDouble() / it.unitsPerCase.coerceAtLeast(1) }
 
     // ── 1. Stock on hand ─────────────────────────────────────
     val stockKpi = run {
@@ -749,14 +793,14 @@ private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiI
         val (footerText, footerIcon, accent) = trendCell(pct, "vs last month")
         NTKpiItem(
             title         = "STOCK ON HAND",
-            value         = "$totalStock",
-            subtitle      = "${metrics.activeSkus} SKUs · Up to date",
+            value         = formatCases(totalStock),
+            subtitle      = "${metrics.activeSkus} Products",
             subtitleColor = accent.text,
             icon          = Icons.Rounded.Inventory2,
             iconBg        = accent.bgLight,
             iconFg        = accent.iconFg,
             accentColor   = accent.iconFg,
-            footerText    = footerText,
+            footerText    = "",
             footerIcon    = footerIcon,
             footerColor   = accent.text,
             cardIndex     = 0,
@@ -776,7 +820,7 @@ private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiI
             iconBg        = NTColors.PrimaryLight,
             iconFg        = NTColors.Primary,
             accentColor   = NTColors.Primary,
-            footerText    = "vs ${formatAmount(metrics.lastMonthRevenue)} last month",
+            footerText    = "/*vs ${formatAmount(metrics.lastMonthRevenue)} last month*/",
             footerIcon    = footerIcon,
             footerColor   = accent.text,
             cardIndex     = 1,
@@ -793,7 +837,7 @@ private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiI
         iconBg        = Color(0xFFFFF3E8),
         iconFg        = Color(0xFFF97316),
         accentColor   = Color(0xFFF97316),
-        footerText    = "${state.customers.count { it.cansHeld > 0 }} customers holding cans",
+        footerText    = "/*${state.customers.count { it.cansHeld > 0 }} customers holding cans*/",
         footerIcon    = Icons.Rounded.Schedule,
         footerColor   = Color(0xFFF97316),
         cardIndex     = 2,
@@ -812,10 +856,30 @@ private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiI
             iconBg        = NTColors.SuccessLight,
             iconFg        = NTColors.Success,
             accentColor   = NTColors.Success,
-            footerText    = footerText,
+            footerText    = "",
             footerIcon    = footerIcon,
             footerColor   = accent.text,
             cardIndex     = 3,
+        )
+    }
+
+    // ── 5. Monthly profit ────────────────────────────────────
+    val profitKpi = run {
+        val pct = metrics.profitGrowthPercent
+        val (footerText, footerIcon, accent) = trendCell(pct, "vs last month")
+        NTKpiItem(
+            title         = "MONTHLY PROFIT",
+            value         = formatAmount(metrics.thisMonthProfit),
+            subtitle      = pctSubtitle(pct, "vs last month"),
+            subtitleColor = accent.text,
+            icon          = Icons.Rounded.TrendingUp,
+            iconBg        = NTColors.SuccessLight,
+            iconFg        = NTColors.Success,
+            accentColor   = NTColors.Success,
+            footerText    = "vs ${formatAmount(metrics.lastMonthProfit)} last month",
+            footerIcon    = footerIcon,
+            footerColor   = accent.text,
+            cardIndex     = 4,
         )
     }
 
@@ -960,5 +1024,18 @@ private fun EmpCredRow(label: String, value: String, icon: ImageVector) {
             modifier = Modifier.width(64.dp))
         Text(value, color = NTColors.TextPrimary, fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold)
+    }
+}
+
+private fun formatCases(value: Double): String {
+    return if (value % 1.0 == 0.0) {
+        value.toInt().toString()
+    } else {
+        val rounded = (value * 10).toLong() / 10.0
+        if (rounded % 1.0 == 0.0) {
+            rounded.toInt().toString()
+        } else {
+            rounded.toString()
+        }
     }
 }

@@ -1,5 +1,9 @@
 package com.example.ruwia.ui
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.interaction.*
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +35,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.ProductCategory
+import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.theme.RuwiaColor
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
@@ -76,12 +82,42 @@ private fun formatTime(hour: Int, minute: Int): String {
 fun AddSaleScreen(
     products: List<ProductCategory> = emptyList(),
     customers: List<Customer> = emptyList(),
+    /** Shop-scoped stock movements used to compute live per-product available
+     *  stock. Pass the employee's `shopMovements` from the ViewModel state. */
+    stockMovements: List<StockMovement> = emptyList(),
+    errorMessage: String? = null,
     onNewCustomer: (Customer) -> Unit = {},
+    onClearError: () -> Unit = {},
     onBack: () -> Unit,
     /** Called when the employee taps "Save sale". The third arg is the number
-     *  of empty cans the employee collected from this customer at delivery. */
-    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int) -> Unit = { _, _, _ -> },
+     *  of empty cans the employee collected from this customer at delivery.
+     *  The fourth arg is the selected sale date in display format (e.g. "25 Jun 2026"). */
+    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String) -> Unit = { _, _, _, _ -> },
+    shopName: String = "",
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    var errorDialogText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            errorDialogText = it
+            snackbarHostState.showSnackbar(it)
+        }
+    }
+
+    if (errorDialogText != null) {
+        AlertDialog(
+            onDismissRequest = { errorDialogText = null; onClearError() },
+            title = { Text("Database Error", fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary) },
+            text = { Text(errorDialogText ?: "") },
+            confirmButton = {
+                TextButton(onClick = { errorDialogText = null; onClearError() }) {
+                    Text("OK", fontWeight = FontWeight.Bold, color = RuwiaColor.TealDark)
+                }
+            },
+            shape = RoundedCornerShape(20.dp),
+        )
+    }
+
     val defaultProductIdx = if (products.isNotEmpty()) products.indices.last else 0
     var lineItems by remember(products) {
         // Only seed an initial line item if at least one product exists.
@@ -104,6 +140,7 @@ fun AddSaleScreen(
     var showCustomerPicker by remember { mutableStateOf(false) }
     var editingLineIdx     by remember { mutableStateOf<Int?>(null) }
     var showProductPicker  by remember { mutableStateOf(false) }
+    var productSearchQuery by remember { mutableStateOf("") }
     /** Number of empty cans the employee collected from the customer at the
      *  same time as delivering the new ones. Persists as an `inward` stock
      *  movement so the admin can see returned empties immediately. */
@@ -141,6 +178,28 @@ fun AddSaleScreen(
         (it.sellPriceText.toDoubleOrNull() ?: p.defaultSellPrice) * it.qty
     }
     val isSaveEnabled = selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
+
+    // ── Per-product available stock (derived from shop movements) ─────────────
+    // Maps product.id -> available units at this shop (inward - outward).
+    // Used to block the employee from selling more than what's in stock.
+    val cleanShop = shopName.trim().lowercase().substringBefore("·").trim()
+    val isMainShop = cleanShop.startsWith("shop 1") ||
+                     cleanShop.contains("main") ||
+                     cleanShop.contains("warehouse") ||
+                     cleanShop.contains("primary") ||
+                     cleanShop.isBlank()
+    val availableUnitsMap: Map<String, Int> = remember(stockMovements, products, shopName) {
+        products.associate { product ->
+            if (isMainShop) {
+                product.id to product.stockAvailable
+            } else {
+                val rows = stockMovements.filter { it.productId == product.id }
+                val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
+                val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+                product.id to (inward - outward).coerceAtLeast(0)
+            }
+        }
+    }
 
     // ── Dialogs ────────────────────────────────────────────────────────────────
     if (showDatePicker) {
@@ -197,13 +256,46 @@ fun AddSaleScreen(
         Scaffold(
             containerColor = RuwiaColor.Background,
             topBar    = { SaleTopBar(onBack = onBack) },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             bottomBar = {
                 SaleBottomBar(
                     isSaveEnabled = isSaveEnabled,
+                    lineCount = lineItems.size,
+                    totalQty = totalQty,
+                    totalAmount = totalValue,
                     onCancel = onBack,
                     onSave   = {
                         val empties = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
-                        onSave(selectedCustomer!!.name, lineItems, empties)
+                        // ── Stock validation ───────────────────────────────────
+                        // Check each line item against available stock. Block the
+                        // sale and show a clear error if any product is over-limit.
+                        // item.qty is in cases, so convert available units→cases.
+                        val overStockLine = lineItems.firstOrNull { item ->
+                            val product = products.getOrNull(item.productIdx) ?: return@firstOrNull false
+                            val availRaw = availableUnitsMap[product.id] ?: product.stockAvailable
+                            val upc = product.unitsPerCase.coerceAtLeast(1)
+                            item.qty > availRaw / upc
+                        }
+                        if (overStockLine != null) {
+                            val product = products.getOrNull(overStockLine.productIdx)
+                            val availRaw = product?.let { availableUnitsMap[it.id] ?: it.stockAvailable } ?: 0
+                            val upc = product?.unitsPerCase?.coerceAtLeast(1) ?: 1
+                            val availCases = availRaw / upc
+                            val availRem   = availRaw % upc
+                            val availLabel = if (upc > 1) {
+                                if (availRem > 0) "$availCases cases + $availRem units" else "$availCases cases"
+                            } else {
+                                "$availRaw cans"
+                            }
+                            val sellLabel = if (upc > 1) {
+                                "${overStockLine.qty} cases"
+                            } else {
+                                "${overStockLine.qty} cans"
+                            }
+                            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: $sellLabel\nAvailable: $availLabel\n\nPlease reduce the quantity and try again."
+                            return@SaleBottomBar
+                        }
+                        onSave(selectedCustomer!!.name, lineItems, empties, displayDate)
                     },
                 )
             },
@@ -233,6 +325,7 @@ fun AddSaleScreen(
                     sectionNumber = 2,
                     products      = products,
                     lineItems     = lineItems,
+                    availableUnitsMap = availableUnitsMap,
                     onChangeProduct = { lineIdx ->
                         editingLineIdx = lineIdx
                         showProductPicker  = true
@@ -299,14 +392,7 @@ fun AddSaleScreen(
                 )
                 Spacer(Modifier.height(20.dp))
 
-                // ── Sale summary (no margin shown to employee) ─
-                SaleSummaryCard(
-                    customer     = selectedCustomer,
-                    totalQty     = totalQty,
-                    lineCount    = lineItems.size,
-                    sellingTotal = totalValue,
-                )
-                Spacer(Modifier.height(20.dp))
+
             }
         }
 
@@ -323,11 +409,19 @@ fun AddSaleScreen(
 
         // ── Product picker overlay ─────────────────────────────
         if (showProductPicker) {
+            val filteredProducts = remember(products, productSearchQuery) {
+                if (productSearchQuery.isBlank()) products
+                else products.filter {
+                    it.displayName.contains(productSearchQuery, ignoreCase = true) ||
+                    it.name.contains(productSearchQuery, ignoreCase = true)
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.4f))
-                    .clickable { showProductPicker = false; editingLineIdx = null },
+                    .clickable { showProductPicker = false; editingLineIdx = null; productSearchQuery = "" },
             )
             Column(
                 modifier = Modifier
@@ -342,57 +436,88 @@ fun AddSaleScreen(
                     "Change product",
                     fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary,
                 )
+                Spacer(Modifier.height(12.dp))
+                // Search bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(RuwiaColor.Background, RoundedCornerShape(10.dp))
+                        .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    if (productSearchQuery.isEmpty()) {
+                        Text("Search product...", fontSize = 13.sp, color = RuwiaColor.TextMuted)
+                    }
+                    BasicTextField(
+                        value = productSearchQuery,
+                        onValueChange = { productSearchQuery = it },
+                        textStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Medium, color = RuwiaColor.TextPrimary),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
                 val currentIdx = editingLineIdx?.let { lineItems.getOrNull(it)?.productIdx } ?: -1
-                products.forEachIndexed { idx, p ->
-                    val selected = idx == currentIdx
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (selected) RuwiaColor.TealExtraLight else Color.Transparent)
-                            .clickable {
-                                editingLineIdx?.let { lineIdx ->
-                                    lineItems = lineItems.mapIndexed { i, item ->
-                                        if (i == lineIdx) item.copy(
-                                            productIdx    = idx,
-                                            sellPriceText = if (p.defaultSellPrice > 0)
-                                                p.defaultSellPrice.toInt().toString() else "",
-                                        ) else item
+                Column(
+                    modifier = Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    filteredProducts.forEachIndexed { fIdx, p ->
+                        val originalIdx = products.indexOf(p)
+                        val selected = originalIdx == currentIdx
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) RuwiaColor.TealExtraLight else Color.Transparent)
+                                .clickable {
+                                    editingLineIdx?.let { lineIdx ->
+                                        lineItems = lineItems.mapIndexed { i, item ->
+                                            if (i == lineIdx) item.copy(
+                                                productIdx    = originalIdx,
+                                                sellPriceText = if (p.defaultSellPrice > 0)
+                                                    p.defaultSellPrice.toInt().toString() else "",
+                                            ) else item
+                                        }
                                     }
+                                    showProductPicker = false
+                                    editingLineIdx    = null
+                                    productSearchQuery = ""
                                 }
-                                showProductPicker = false
-                                editingLineIdx    = null
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .background(
+                                            if (selected) RuwiaColor.TealPrimary else RuwiaColor.TealExtraLight,
+                                            RoundedCornerShape(8.dp),
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.WaterDrop, null,
+                                        tint = if (selected) Color.White else RuwiaColor.TealPrimary,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text(p.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
+                                    val upc = p.unitsPerCase
+                                    val limitText = availableUnitsMap[p.id]?.let {
+                                        if (upc > 1) "${it / upc} cases available" else "$it cans available"
+                                    } ?: "Available stock: ${p.stockAvailable}"
+                                    Text("₹${p.defaultSellPrice.toInt()}/unit  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                                }
                             }
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .background(
-                                        if (selected) RuwiaColor.TealPrimary else RuwiaColor.TealExtraLight,
-                                        RoundedCornerShape(8.dp),
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Rounded.WaterDrop, null,
-                                    tint = if (selected) Color.White else RuwiaColor.TealPrimary,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column {
-                                Text(p.displayName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
-                                Text("Default ₹${p.defaultSellPrice.toInt()}/unit", fontSize = 11.sp, color = RuwiaColor.TextMuted)
-                            }
+                            if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
                         }
-                        if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
+                        if (fIdx < filteredProducts.lastIndex) HorizontalDivider(color = RuwiaColor.Divider)
                     }
-                    if (idx < products.lastIndex) HorizontalDivider(color = RuwiaColor.Divider)
                 }
                 Spacer(Modifier.height(12.dp))
             }
@@ -408,34 +533,39 @@ private fun SaleTopBar(onBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(RuwiaColor.Background)
-            .statusBarsPadding()
-            .height(56.dp)
-            .padding(horizontal = 16.dp),
+            .statusBarsPadding(),
     ) {
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .background(RuwiaColor.Surface, RoundedCornerShape(10.dp))
-                .clickable(onClick = onBack)
-                .align(Alignment.CenterStart),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 16.dp)
         ) {
-            Icon(Icons.Rounded.ArrowBack, "Back", tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
-        }
-        Text(
-            text = "Add sale", fontSize = 17.sp, fontWeight = FontWeight.Bold,
-            color = RuwiaColor.TextPrimary, modifier = Modifier.align(Alignment.Center),
-        )
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .border(1.2.dp, RuwiaColor.Divider, RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Rounded.LocalShipping, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(13.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("EMP", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, color = RuwiaColor.TextSecondary)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(RuwiaColor.Surface, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack)
+                    .align(Alignment.CenterStart),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.ArrowBack, "Back", tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
+            }
+            Text(
+                text = "Add sale", fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                color = RuwiaColor.TextPrimary, modifier = Modifier.align(Alignment.Center),
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .border(1.2.dp, RuwiaColor.Divider, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.LocalShipping, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("EMP", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, color = RuwiaColor.TextSecondary)
+            }
         }
     }
 }
@@ -507,6 +637,7 @@ private fun MultiProductSection(
     sectionNumber: Int,
     products: List<ProductCategory>,
     lineItems: List<OutwardLineItem>,
+    availableUnitsMap: Map<String, Int> = emptyMap(),
     onChangeProduct: (lineIdx: Int) -> Unit,
     onQtyChange: (lineIdx: Int, qty: Int) -> Unit,
     onPriceChange: (lineIdx: Int, price: String) -> Unit,
@@ -578,6 +709,9 @@ private fun MultiProductSection(
             // range (e.g. the product list shrank since the line was added),
             // fall back to the first product instead of crashing.
             val product = products.getOrNull(item.productIdx) ?: products.first()
+            val availableUnitsRaw = availableUnitsMap[product.id] ?: product.stockAvailable
+            val upc = product.unitsPerCase.coerceAtLeast(1)
+            val availableCases = availableUnitsRaw / upc
             if (idx > 0) {
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.5f))
@@ -587,6 +721,7 @@ private fun MultiProductSection(
                 lineNumber   = idx + 1,
                 product      = product,
                 qty          = item.qty,
+                availableUnits = availableUnitsRaw,
                 priceText    = item.sellPriceText,
                 showRemove   = lineItems.size > 1,
                 onProductTap = { onChangeProduct(idx) },
@@ -618,6 +753,7 @@ private fun SaleLineCard(
     lineNumber: Int,
     product: ProductCategory,
     qty: Int,
+    availableUnits: Int,
     priceText: String,
     showRemove: Boolean,
     onProductTap: () -> Unit,
@@ -625,10 +761,16 @@ private fun SaleLineCard(
     onPriceChange: (String) -> Unit,
     onRemove: () -> Unit,
 ) {
+    val upc = product.unitsPerCase.coerceAtLeast(1)
+    val availableCases = availableUnits / upc
+    val isOverStock = qty > availableCases
+    val cardBorder  = if (isOverStock) Color(0xFFEF4444) else RuwiaColor.Divider
+    val cardBg      = if (isOverStock) Color(0xFF3B1616) else RuwiaColor.Background
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(RuwiaColor.Background, RoundedCornerShape(12.dp))
+            .background(cardBg, RoundedCornerShape(12.dp))
+            .border(1.dp, cardBorder, RoundedCornerShape(12.dp))
             .padding(12.dp),
     ) {
         // ── Product selector row ───────────────────────────────
@@ -665,11 +807,11 @@ private fun SaleLineCard(
                 Box(
                     modifier = Modifier
                         .size(30.dp)
-                        .background(Color(0xFFFFEEEE), RoundedCornerShape(8.dp))
+                        .background(Color(0xFF3B1616), RoundedCornerShape(8.dp))
                         .clickable(onClick = onRemove),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Rounded.Close, null, tint = Color(0xFFCC3333), modifier = Modifier.size(14.dp))
+                    Icon(Icons.Rounded.Close, null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
                 }
             }
         }
@@ -691,15 +833,36 @@ private fun SaleLineCard(
             ) {
                 SaleStepBtn(Icons.Rounded.Remove, qty > 1) { onQtyChange(qty - 1) }
                 Box(modifier = Modifier.width(40.dp), contentAlignment = Alignment.Center) {
-                    Text("$qty", fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                        color = RuwiaColor.TextPrimary, textAlign = TextAlign.Center)
+                    AnimatedContent(
+                        targetState = qty,
+                        transitionSpec = {
+                            if (targetState > initialState) {
+                                (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } +
+                                 fadeIn() +
+                                 scaleIn(initialScale = 0.8f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                                (slideOutVertically { height -> -height } + fadeOut())
+                            } else {
+                                (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } +
+                                 fadeIn() +
+                                 scaleIn(initialScale = 0.8f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                                (slideOutVertically { height -> height } + fadeOut())
+                            }.using(SizeTransform(clip = false))
+                        }
+                    ) { targetQty ->
+                        Text(
+                            text = "$targetQty",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOverStock) Color(0xFFCC2222) else RuwiaColor.TextPrimary,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
-                SaleStepBtn(Icons.Rounded.Add, true) { onQtyChange(qty + 1) }
+                SaleStepBtn(Icons.Rounded.Add, qty < availableCases) { onQtyChange(qty + 1) }
             }
 
             Spacer(Modifier.width(10.dp))
 
-            // Sell price field
             Row(
                 modifier = Modifier
                     .weight(1f)
@@ -711,20 +874,74 @@ private fun SaleLineCard(
                 Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TealPrimary)
                 Spacer(Modifier.width(4.dp))
                 Box(modifier = Modifier.weight(1f)) {
-                    if (priceText.isEmpty()) {
-                        Text("0", fontSize = 16.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Bold)
-                    }
-                    BasicTextField(
-                        value       = priceText,
-                        onValueChange = { if (it.all { c -> c.isDigit() || c == '.' }) onPriceChange(it) },
-                        textStyle   = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RuwiaColor.TealPrimary),
-                        cursorBrush = SolidColor(RuwiaColor.TealPrimary),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine  = true,
-                        modifier    = Modifier.fillMaxWidth(),
+                    Text(
+                        text = priceText.ifBlank { "0" },
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = RuwiaColor.TealPrimary
                     )
                 }
                 Text("/unit", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+            }
+        }
+
+        val upc = product.unitsPerCase
+        val availCases = availableUnits / upc.coerceAtLeast(1)
+        val availRem   = availableUnits % upc.coerceAtLeast(1)
+        val availLabel = if (upc > 1) {
+            if (availRem > 0) "$availCases cases + $availRem units available" else "$availCases cases available"
+        } else {
+            "$availableUnits cans available"
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    if (isOverStock) Color(0xFF3B1616) else RuwiaColor.TealExtraLight,
+                    RoundedCornerShape(8.dp)
+                )
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (isOverStock) Icons.Rounded.Warning else Icons.Rounded.Inventory2,
+                    contentDescription = null,
+                    tint = if (isOverStock) Color(0xFFEF4444) else RuwiaColor.TealPrimary,
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    if (isOverStock) "Over limit! $availLabel" else availLabel,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isOverStock) Color(0xFFFCA5A5) else RuwiaColor.TealPrimary,
+                )
+            }
+        }
+
+        val caseHint = if (upc > 1) "1 case = $upc units" else null
+
+
+
+        if (caseHint != null) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .background(Color(0xFF332005), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Info, null, tint = Color(0xFFFBBF24), modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = caseHint,
+                    fontSize = 11.sp,
+                    color = Color(0xFFFBBF24),
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
@@ -772,14 +989,43 @@ private fun SaleSummaryCard(
             Spacer(Modifier.height(6.dp))
             SaleSummaryRow("Products",  "$lineCount type${if (lineCount != 1) "s" else ""}")
             Spacer(Modifier.height(6.dp))
-            SaleSummaryRow("Total qty", "$totalQty units")
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Total qty", fontSize = 13.sp, color = Color.White.copy(alpha = 0.74f))
+                AnimatedContent(
+                    targetState = totalQty,
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> -height } + fadeOut())
+                        } else {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> height } + fadeOut())
+                        }.using(SizeTransform(clip = false))
+                    }
+                ) { targetQty ->
+                    Text("$targetQty units", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                }
+            }
             Spacer(Modifier.height(12.dp))
             HorizontalDivider(color = Color.White.copy(alpha = 0.30f), thickness = 0.8.dp)
             Spacer(Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Total sale value", fontSize = 13.sp, color = Color.White.copy(alpha = 0.78f))
-                Text("₹${sellingTotal.toInt()}", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                AnimatedContent(
+                    targetState = sellingTotal,
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> -height } + fadeOut())
+                        } else {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> height } + fadeOut())
+                        }.using(SizeTransform(clip = false))
+                    }
+                ) { targetTotal ->
+                    Text("₹${targetTotal.toInt()}", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                }
             }
         }
     }
@@ -796,23 +1042,119 @@ private fun SaleSummaryRow(label: String, value: String) {
 // ── Bottom bar ─────────────────────────────────────────────────────────────────
 
 @Composable
-private fun SaleBottomBar(isSaveEnabled: Boolean, onCancel: () -> Unit, onSave: () -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth().background(RuwiaColor.Background).navigationBarsPadding()) {
-        HorizontalDivider(color = RuwiaColor.Divider, thickness = 0.6.dp)
-        Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = RuwiaColor.TextSecondary)) {
-                Text("Cancel", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+private fun SaleBottomBar(
+    isSaveEnabled: Boolean,
+    lineCount: Int,
+    totalQty: Int,
+    totalAmount: Double,
+    onCancel: () -> Unit,
+    onSave: () -> Unit
+) {
+    val scale = remember { Animatable(1f) }
+    LaunchedEffect(totalQty, totalAmount) {
+        if (totalQty > 0) {
+            scale.animateTo(
+                targetValue = 1.03f,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessMedium)
+            )
+            scale.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+            )
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
             }
-            Button(onClick = onSave, enabled = isSaveEnabled, modifier = Modifier.weight(2f).height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = RuwiaColor.TealDark, contentColor = Color.White,
-                    disabledContainerColor = RuwiaColor.TextMuted.copy(alpha = 0.4f))) {
-                Icon(Icons.Rounded.CheckCircle, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Save sale", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            .background(RuwiaColor.Surface)
+            .navigationBarsPadding()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 14.dp)
+        ) {
+            // Summary row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AnimatedContent(
+                    targetState = totalQty,
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> -height } + fadeOut())
+                        } else {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> height } + fadeOut())
+                        }.using(SizeTransform(clip = false))
+                    }
+                ) { targetQty ->
+                    val itemsLabel = if (lineCount == 1) "1 Item" else "$lineCount Items"
+                    val unitsLabel = if (targetQty == 1) "1 Unit" else "$targetQty Units"
+                    Text(
+                        text = "$itemsLabel, $unitsLabel",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = RuwiaColor.TextSecondary
+                    )
+                }
+
+                AnimatedContent(
+                    targetState = totalAmount,
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> -height } + fadeOut())
+                        } else {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> height } + fadeOut())
+                        }.using(SizeTransform(clip = false))
+                    }
+                ) { targetAmount ->
+                    Text(
+                        text = "₹${targetAmount.toInt()}",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = RuwiaColor.TextPrimary
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onCancel,
+                    modifier = Modifier.weight(1f).height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = RuwiaColor.TextSecondary),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(RuwiaColor.Divider))
+                ) {
+                    Text("Cancel", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Button(
+                    onClick = onSave,
+                    enabled = isSaveEnabled,
+                    modifier = Modifier.weight(2f).height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RuwiaColor.TealPrimary,
+                        contentColor = Color.White,
+                        disabledContainerColor = RuwiaColor.LightGray,
+                        disabledContentColor = RuwiaColor.TextMuted
+                    )
+                ) {
+                    Text("Save Sale", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
@@ -822,9 +1164,33 @@ private fun SaleBottomBar(isSaveEnabled: Boolean, onCancel: () -> Unit, onSave: 
 
 @Composable
 private fun SaleStepBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.82f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        )
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (isPressed) RuwiaColor.TealExtraLight else RuwiaColor.Background,
+        animationSpec = tween(150)
+    )
     Box(
-        modifier = Modifier.size(32.dp).background(RuwiaColor.Background, CircleShape)
-            .clickable(enabled = enabled, onClick = onClick),
+        modifier = Modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .size(32.dp)
+            .background(bgColor, CircleShape)
+            .clickable(
+                enabled = enabled,
+                onClick = onClick,
+                interactionSource = interactionSource,
+                indication = androidx.compose.foundation.LocalIndication.current
+            ),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, tint = if (enabled) RuwiaColor.TextSecondary else RuwiaColor.TextMuted, modifier = Modifier.size(16.dp)) }
 }

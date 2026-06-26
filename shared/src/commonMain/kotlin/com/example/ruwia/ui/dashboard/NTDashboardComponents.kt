@@ -93,6 +93,7 @@ fun NTDashboardHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .statusBarsPadding()
             .padding(horizontal = NTDp.screenPad, vertical = NTDp.md),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -292,31 +293,31 @@ fun NTRevenueHeroCard(
                     fontSize = 30.sp, fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-1).sp, lineHeight = 34.sp,
                 )
-                Spacer(Modifier.height(10.dp))
-                // Growth badge — colour & icon depend on real data
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(NTDp.radFull))
-                        .background(badgeColor)
-                        .padding(horizontal = 9.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    when {
-                        growthPercent == null -> {
-                            Text("—", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
-                        }
-                        isPositive -> {
-                            Icon(Icons.Rounded.ArrowUpward, null, tint = Color.White, modifier = Modifier.size(11.dp))
-                            Spacer(Modifier.width(3.dp))
-                            Text("${formatPct(growthPercent)}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
-                        }
-                        else -> {
-                            Icon(Icons.Rounded.ArrowDownward, null, tint = Color.White, modifier = Modifier.size(11.dp))
-                            Spacer(Modifier.width(3.dp))
-                            Text("${formatPct(growthPercent)}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
-                        }
-                    }
-                }
+//                Spacer(Modifier.height(10.dp))
+//                // Growth badge — colour & icon depend on real data
+//                Row(
+//                    modifier = Modifier
+//                        .clip(RoundedCornerShape(NTDp.radFull))
+//                        .background(badgeColor)
+//                        .padding(horizontal = 9.dp, vertical = 5.dp),
+//                    verticalAlignment = Alignment.CenterVertically,
+//                ) {
+//                    when {
+//                        growthPercent == null -> {
+////                            Text("—", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+//                        }
+//                        isPositive -> {
+//                            Icon(Icons.Rounded.ArrowUpward, null, tint = Color.White, modifier = Modifier.size(11.dp))
+//                            Spacer(Modifier.width(3.dp))
+//                            Text("${formatPct(growthPercent)}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+//                        }
+//                        else -> {
+//                            Icon(Icons.Rounded.ArrowDownward, null, tint = Color.White, modifier = Modifier.size(11.dp))
+//                            Spacer(Modifier.width(3.dp))
+//                            Text("${formatPct(growthPercent)}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+//                        }
+//                    }
+//                }
                 Spacer(Modifier.height(7.dp))
                 Text(
                     "vs ${formatMrr(lastMonthValue)} last month",
@@ -356,18 +357,18 @@ fun NTRevenueHeroCard(
         }
 
         Spacer(Modifier.height(NTDp.md))
-        HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
-        Spacer(Modifier.height(NTDp.md))
+//        HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+//        Spacer(Modifier.height(NTDp.md))
 
-        // ── Stats row ───────────────────────────────────────────
-        Row(modifier = Modifier.fillMaxWidth()) {
-            stats.forEachIndexed { i, stat ->
-                HeroStatTile(stat = stat, modifier = Modifier.weight(1f))
-                if (i < stats.lastIndex) {
-                    Box(modifier = Modifier.width(0.8.dp).height(60.dp).background(Color.White.copy(alpha = 0.10f)))
-                }
-            }
-        }
+//        // ── Stats row ───────────────────────────────────────────
+//        Row(modifier = Modifier.fillMaxWidth()) {
+//            stats.forEachIndexed { i, stat ->
+//                HeroStatTile(stat = stat, modifier = Modifier.weight(1f))
+//                if (i < stats.lastIndex) {
+//                    Box(modifier = Modifier.width(0.8.dp).height(60.dp).background(Color.White.copy(alpha = 0.10f)))
+//                }
+//            }
+//        }
     }
 }
 
@@ -474,7 +475,20 @@ private fun HeroRevenueChart(
 
 @Composable
 fun NTGrowthBadge(percent: Double) {
-    val isPos = percent >= 0
+    val isPos = percent >= 0.1
+    val isNeg = percent <= -0.1
+    
+    val trendColor = when {
+        isPos -> NTColors.PrimaryLight
+        isNeg -> NTColors.ErrorLight
+        else -> NTColors.TextSecondary
+    }
+    val trendIcon = when {
+        isPos -> Icons.Rounded.TrendingUp
+        isNeg -> Icons.Rounded.TrendingDown
+        else -> Icons.Rounded.Remove
+    }
+
     Row(
         modifier = Modifier.clip(RoundedCornerShape(NTDp.radFull))
             .background(Color.White.copy(alpha = 0.18f))
@@ -483,14 +497,14 @@ fun NTGrowthBadge(percent: Double) {
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(
-            imageVector = if (isPos) Icons.Rounded.TrendingUp else Icons.Rounded.TrendingDown,
+            imageVector = trendIcon,
             contentDescription = null,
-            tint = if (isPos) NTColors.PrimaryLight else NTColors.ErrorLight,
+            tint = trendColor,
             modifier = Modifier.size(14.dp),
         )
         Text(
             "${if (isPos) "+" else ""}${(abs(percent) * 10).toLong() / 10.0}%",
-            color = if (isPos) NTColors.PrimaryLight else NTColors.ErrorLight,
+            color = trendColor,
             fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
         )
     }
@@ -520,7 +534,7 @@ data class NTKpiItem(
     val iconBg: Color,
     val iconFg: Color,
     val accentColor: Color,
-    val footerText: String,
+    val footerText: String?,
     val footerIcon: ImageVector,
     val footerColor: Color,
     val cardIndex: Int,             // 0=stock, 1=revenue, 2=cans, 3=customers
@@ -624,25 +638,25 @@ fun NTKpiCard(item: NTKpiItem, modifier: Modifier = Modifier) {
         }
 
         // ── Footer strip ───────────────────────────────────────
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(item.accentColor.copy(alpha = 0.07f))
-                .padding(horizontal = NTDp.md, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                item.footerIcon, null,
-                tint = item.footerColor,
-                modifier = Modifier.size(13.dp),
-            )
-            Spacer(Modifier.width(5.dp))
-            Text(
-                item.footerText,
-                fontSize = 11.sp, color = item.footerColor,
-                fontWeight = FontWeight.Medium,
-            )
-        }
+//        Row(
+//            modifier = Modifier
+//                .fillMaxWidth()
+//                .background(item.accentColor.copy(alpha = 0.07f))
+//                .padding(horizontal = NTDp.md, vertical = 9.dp),
+//            verticalAlignment = Alignment.CenterVertically,
+//        ) {
+//            Icon(
+//                item.footerIcon, null,
+//                tint = item.footerColor,
+//                modifier = Modifier.size(13.dp),
+//            )
+//            Spacer(Modifier.width(5.dp))
+//            Text(
+//                item.footerText ?: "",
+//                fontSize = 11.sp, color = item.footerColor,
+//                fontWeight = FontWeight.Medium,
+//            )
+//        }
     }
 }
 
@@ -898,7 +912,7 @@ private fun NTDateRange.label() = when (this) {
 
 data class NTNavTab(val index: Int, val label: String, val icon: ImageVector, val badge: Int = 0)
 
-private val NavBarBg = Color(0xFF0A2E2A)
+private val NavBarBg = Color(0xFF0F2B29)
 
 @Composable
 fun NTBottomNavigation(
@@ -943,7 +957,7 @@ private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: (
             modifier = Modifier
                 .clip(RoundedCornerShape(14.dp))
                 .background(
-                    if (isSelected) NTColors.Primary.copy(alpha = 0.25f)
+                    if (isSelected) Color(0xFF155B56)
                     else Color.Transparent
                 )
                 .padding(horizontal = 10.dp, vertical = 5.dp),
@@ -952,7 +966,7 @@ private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: (
             Icon(
                 imageVector = tab.icon,
                 contentDescription = tab.label,
-                tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.48f),
+                tint = if (isSelected) Color(0xFFFFFFFF) else Color(0xFF8AA0A4),
                 modifier = Modifier.size(22.dp),
             )
             if (tab.badge > 0) {
@@ -972,7 +986,7 @@ private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: (
         Spacer(Modifier.height(3.dp))
         Text(
             text       = tab.label,
-            color      = if (isSelected) Color.White else Color.White.copy(alpha = 0.48f),
+            color      = if (isSelected) Color(0xFFFFFFFF) else Color(0xFFB4C2C6),
             fontSize   = 10.sp,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
             maxLines   = 1,
@@ -982,10 +996,11 @@ private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: (
 }
 
 fun defaultNavTabs() = listOf(
-    NTNavTab(0, "Home",     Icons.Rounded.Home),
-    NTNavTab(1, "Products", Icons.Rounded.Category),
-    NTNavTab(2, "Stocks",   Icons.Rounded.Inventory2),
-    NTNavTab(3, "Profit",   Icons.Rounded.BarChart),
+    NTNavTab(0, "Home",      Icons.Rounded.Home),
+    NTNavTab(1, "Products",  Icons.Rounded.Category),
+    NTNavTab(2, "Stocks",    Icons.Rounded.Inventory2),
+    NTNavTab(3, "Analytics", Icons.Rounded.BarChart),
+    NTNavTab(4, "Settings",  Icons.Rounded.Settings),
 )
 
 // ── Shimmer brush ─────────────────────────────────────────────

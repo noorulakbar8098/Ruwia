@@ -26,6 +26,8 @@ data class EmployeeState(
     val todayInward: Int = 0,
     /** Total outward cans (stock movements + delivery completions) today. */
     val todayOutward: Int = 0,
+    /** Empty cans returned by customers and recorded by this employee today. */
+    val todayEmptyCans: Int = 0,
     val selectedTask: DeliveryTask? = null,
     val recentEntries: List<StockMovement> = emptyList(),
     /** All movements (any employee) at the current employee's shop — used by
@@ -67,31 +69,42 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         viewModelScope.launch {
             while (true) {
                 delay(15_000L)
-                if (currentEmployeeId.isBlank()) continue
                 runCatching {
-                    val recentEntries = repo.getRecentEntries(currentEmployeeId)
-                    val cans          = repo.getDailyCansSummary(currentEmployeeId)
-                    val earnings      = repo.getDailyEarningsSummary(currentEmployeeId)
-                    val shopStocks    = repo.getShopStocks()
-                    val customers     = repo.getCustomers()
-                    val products      = repo.getProductCategories()
-                    val suppliers     = repo.getSuppliers()
-                    // Shop-wide movements drive the Stock tab's live totals
-                    // (not just this employee's). Falls back to recentEntries
-                    // when no shop is configured yet.
+                    val products   = repo.getProductCategories()
+                    val shopStocks = repo.getShopStocks()
+                    val customers  = repo.getCustomers()
+                    val suppliers  = repo.getSuppliers()
+                    
                     val shopMovements = if (currentShopName.isNotBlank())
                         repo.getShopMovements(currentShopName)
-                    else recentEntries
+                    else emptyList()
+                    
+                    var recentEntries = _state.value.recentEntries
+                    var todayInward = _state.value.todayInward
+                    var todayOutward = _state.value.todayOutward
+                    var todayEmptyCans = _state.value.todayEmptyCans
+                    var dailyEarnings = _state.value.dailyEarnings
+                    
+                    if (currentEmployeeId.isNotBlank()) {
+                        recentEntries = repo.getRecentEntries(currentEmployeeId)
+                        val cans = repo.getDailyCansSummary(currentEmployeeId)
+                        todayInward = cans.inward
+                        todayOutward = cans.outward
+                        todayEmptyCans = cans.emptyReturned
+                        dailyEarnings = repo.getDailyEarningsSummary(currentEmployeeId)
+                    }
+                    
                     _state.value = _state.value.copy(
-                        recentEntries     = recentEntries,
-                        shopMovements     = shopMovements,
-                        todayInward       = cans.first,
-                        todayOutward      = cans.second,
-                        dailyEarnings     = earnings,
+                        productCategories = products,
                         shopStocks        = shopStocks,
                         customers         = customers,
-                        productCategories = products,
                         suppliers         = suppliers,
+                        shopMovements     = if (shopMovements.isNotEmpty() || currentEmployeeId.isBlank()) shopMovements else recentEntries,
+                        recentEntries     = recentEntries,
+                        todayInward       = todayInward,
+                        todayOutward      = todayOutward,
+                        todayEmptyCans    = todayEmptyCans,
+                        dailyEarnings     = dailyEarnings,
                     )
                 }
             }
@@ -131,24 +144,27 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         currentEmployeeId = empId
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
-            val tasks            = repo.getTodayRouteTasks(empId)
-            val earnings         = repo.getDailyEarningsSummary(empId)
-            val cans             = repo.getDailyCansSummary(empId)
-            val recentEntries    = repo.getRecentEntries(empId)
+            val dbShop = repo.getEmployeeShopName(empId)
+            val assignedShopName = if (dbShop.isNotBlank()) dbShop else currentShopName.ifBlank { "Shop 1" }
+            currentShopName = assignedShopName
+
+            val tasks            = if (empId.isNotBlank()) repo.getTodayRouteTasks(empId) else emptyList()
+            val earnings         = if (empId.isNotBlank()) repo.getDailyEarningsSummary(empId) else 0.0
+            val cans             = if (empId.isNotBlank()) repo.getDailyCansSummary(empId) else com.example.ruwia.data.DailyCansSummary(0, 0, 0)
+            val recentEntries    = if (empId.isNotBlank()) repo.getRecentEntries(empId) else emptyList()
             val productCategories = repo.getProductCategories()
             val customers        = repo.getCustomers()
             val suppliers        = repo.getSuppliers()
             val shopStocks       = repo.getShopStocks()
-            val shopMovements    = if (currentShopName.isNotBlank())
-                repo.getShopMovements(currentShopName)
-            else recentEntries
+            val shopMovements    = repo.getShopMovements(assignedShopName)
             val currentDate      = formattedToday()
             EmployeeState(
                 loading           = false,
                 tasks             = tasks,
                 dailyEarnings     = earnings,
-                todayInward       = cans.first,
-                todayOutward      = cans.second,
+                todayInward       = cans.inward,
+                todayOutward      = cans.outward,
+                todayEmptyCans    = cans.emptyReturned,
                 recentEntries     = recentEntries,
                 shopMovements     = shopMovements,
                 productCategories = productCategories,
@@ -156,7 +172,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                 suppliers         = suppliers,
                 shopStocks        = shopStocks,
                 currentDate       = currentDate,
-                assignedShop      = currentShopName,
+                assignedShop      = assignedShopName,
             )
         }.onSuccess { newState ->
             _state.value = newState
@@ -191,6 +207,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                 collectedAmount  = amount,
                 paymentMode      = mode,
                 employeeId       = employeeId,
+                shopName         = currentShopName,
             )
         }.onSuccess {
             loadDashboard(employeeId)
@@ -201,6 +218,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
     }
 
     fun addCustomer(customer: Customer) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
         runCatching { repo.addCustomer(customer) }
             .onSuccess { saved ->
                 // Replace any optimistic placeholder of this customer (id = null
@@ -212,9 +230,16 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                          existing.name.trim().equals(saved.name.trim(), ignoreCase = true)) ||
                         existing.id == saved.id
                     } + saved
-                _state.value = _state.value.copy(customers = merged)
+                _state.value = _state.value.copy(customers = merged, loading = false)
             }
-            .onFailure { _state.value = _state.value.copy(error = it.message) }
+            .onFailure {
+                it.printStackTrace()
+                _state.value = _state.value.copy(error = it.message, loading = false)
+            }
+    }
+
+    fun clearError() {
+        _state.value = _state.value.copy(error = null)
     }
 
     /**
@@ -224,24 +249,28 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
      * shows up immediately for the current user too.
      */
     fun addSupplier(name: String, location: String?) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
         runCatching { repo.addSupplier(name, location) }
             .onSuccess {
                 val updated = repo.getSuppliers()
-                _state.value = _state.value.copy(suppliers = updated)
+                _state.value = _state.value.copy(suppliers = updated, loading = false)
             }
-            .onFailure { _state.value = _state.value.copy(error = it.message) }
+            .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
     }
 
     fun addInwardStock(
         supplier: String,
         quantities: Map<String, Int>,
         shopName: String,
+        empties: Int = 0,
     ) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
         // The map's KEY is the productId — without passing it through to
         // [EmployeeRepository.addStockMovement] the repo can't bump the
         // matching `product_categories.stock_available` row, which is why the
         // admin's "STOCK ON HAND" KPI used to stay at zero even after an
         // employee logged inward stock.
+        var anyError: String? = null
         quantities.filter { it.value > 0 }.forEach { (productId, qty) ->
             runCatching {
                 repo.addStockMovement(
@@ -251,8 +280,20 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                     shopName  = shopName,
                     productId = productId,
                 )
-            }
+            }.onFailure { anyError = it.message }
         }
+        if (empties > 0) {
+            runCatching {
+                repo.addStockMovement(
+                    source    = "Empty cans · $supplier",
+                    qty       = empties,
+                    type      = "outward",
+                    shopName  = shopName,
+                    productId = null,
+                )
+            }.onFailure { anyError = it.message }
+        }
+
         // Refresh the slices that change as a result of the inward batch so
         // the dashboard reflects the new totals immediately.
         runCatching {
@@ -261,11 +302,19 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
             val updatedShops    = repo.getShopStocks()
             val cans            = repo.getDailyCansSummary(currentEmployeeId)
             _state.value = _state.value.copy(
+                loading           = false,
                 recentEntries     = updatedEntries,
                 productCategories = updatedProducts,
                 shopStocks        = updatedShops,
-                todayInward       = cans.first,
-                todayOutward      = cans.second,
+                todayInward       = cans.inward,
+                todayOutward      = cans.outward,
+                todayEmptyCans    = cans.emptyReturned,
+                error             = anyError,
+            )
+        }.onFailure {
+            _state.value = _state.value.copy(
+                loading = false,
+                error   = it.message ?: anyError
             )
         }
     }
@@ -286,19 +335,22 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         shopName: String,
         lines: List<EmployeeRepository.SaleLine>,
         emptyCansCollected: Int,
+        saleDate: String? = null,
     ) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
             repo.addOutwardSale(
                 customerName       = customerName,
                 shopName           = shopName,
                 lines              = lines,
                 emptyCansCollected = emptyCansCollected,
+                saleDate           = saleDate,
             )
         }.onSuccess {
             // Refresh today's totals, sales and recent entries.
             loadDashboard(currentEmployeeId)
         }.onFailure {
-            _state.value = _state.value.copy(error = it.message ?: "Could not save sale")
+            _state.value = _state.value.copy(loading = false, error = it.message ?: "Could not save sale")
         }
     }
 

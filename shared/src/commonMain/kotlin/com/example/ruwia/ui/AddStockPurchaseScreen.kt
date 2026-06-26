@@ -1,5 +1,9 @@
 package com.example.ruwia.ui
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.interaction.*
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,6 +13,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -33,6 +39,7 @@ import com.example.ruwia.theme.RuwiaColor
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import com.example.ruwia.domain.getUnitsPerCase
 
 // ── Inward line item ──────────────────────────────────────────────────────────
 
@@ -62,6 +69,11 @@ private data class InwardProduct(
     val purchasePriceGC: Double,
 )
 
+private fun getDefaultInwardQty(productName: String): Int {
+    val unitsPerCase = getUnitsPerCase(productName)
+    return if (unitsPerCase > 1) 5 else 2
+}
+
 // ── Public entry point ─────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,8 +88,7 @@ fun AddStockPurchaseScreen(
     isEmployee: Boolean = false,
     onSave: (
         supplier: String,
-        vehicleNum: String,
-        invoiceNum: String,
+        shopName: String,
         quantities: Map<String, Int>,
         empties: Int,
     ) -> Unit,
@@ -93,13 +104,30 @@ fun AddStockPurchaseScreen(
         .takeIf { it >= 0 } ?: effectiveProducts.indices.lastOrNull() ?: 0
 
     var lineItems          by remember(effectiveProducts) {
-        mutableStateOf(listOf(InwardLineItem(defaultLineIdx, 50)))
+        val defaultProduct = effectiveProducts.getOrNull(defaultLineIdx)
+        val defaultQty = defaultProduct?.let { getDefaultInwardQty(it.name) } ?: 2
+        mutableStateOf(listOf(InwardLineItem(defaultLineIdx, defaultQty)))
     }
     var selectedSupplier   by remember(effectiveSuppliers) { mutableStateOf(effectiveSuppliers.firstOrNull() ?: "") }
     var selectedShop       by remember { mutableStateOf(0) }
     var showSupplierPicker by remember { mutableStateOf(false) }
     var showProductPicker  by remember { mutableStateOf(false) }
     var editingLineIdx     by remember { mutableStateOf<Int?>(null) }
+    var empty20LText       by remember { mutableStateOf("") }
+    val only20LSelected = remember(lineItems, effectiveProducts) {
+        if (lineItems.isEmpty()) false
+        else {
+            val has20L = lineItems.any { item ->
+                val product = effectiveProducts.getOrNull(item.productIdx)
+                product != null && (product.name.contains("20") || product.displayName.contains("20"))
+            }
+            val hasNon20L = lineItems.any { item ->
+                val product = effectiveProducts.getOrNull(item.productIdx)
+                product == null || (!product.name.contains("20") && !product.displayName.contains("20"))
+            }
+            has20L && !hasNon20L
+        }
+    }
 
     // Date / time — use current date/time via kotlinx-datetime
     var displayDate by remember {
@@ -185,9 +213,13 @@ fun AddStockPurchaseScreen(
                         // can update product_categories.stock_available for
                         // the right row.
                         val quantities = lineItems.associate { item ->
-                            (effectiveProducts.getOrNull(item.productIdx)?.id ?: "") to item.qty
+                            val product = effectiveProducts.getOrNull(item.productIdx)
+                            val unitsPerCase = product?.let { getUnitsPerCase(it.name) } ?: 1
+                            (product?.id ?: "") to (item.qty * unitsPerCase)
                         }.filterKeys { it.isNotBlank() }
-                        onSave(selectedSupplier, "", "", quantities, 0)
+                        val s = effectiveShops.getOrNull(selectedShop)
+                        val e20 = if (only20LSelected) (empty20LText.toIntOrNull()?.coerceAtLeast(0) ?: 0) else 0
+                        onSave(selectedSupplier, s?.first ?: "", quantities, e20)
                     },
                 )
             },
@@ -223,7 +255,9 @@ fun AddStockPurchaseScreen(
                     onAdd          = {
                         val usedIdx = lineItems.map { it.productIdx }.toSet()
                         val nextIdx = effectiveProducts.indices.firstOrNull { it !in usedIdx } ?: 0
-                        lineItems = lineItems + InwardLineItem(nextIdx, 10)
+                        val nextProduct = effectiveProducts.getOrNull(nextIdx)
+                        val nextQty = nextProduct?.let { getDefaultInwardQty(it.name) } ?: 2
+                        lineItems = lineItems + InwardLineItem(nextIdx, nextQty)
                     },
                 )
                 Spacer(Modifier.height(10.dp))
@@ -260,11 +294,50 @@ fun AddStockPurchaseScreen(
                 }
                 Spacer(Modifier.height(20.dp))
 
+                if (isEmployee && only20LSelected) {
+                    Spacer(Modifier.height(10.dp))
+                    FormSectionCard(number = 4, title = "Empty cans returned") {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Returned empty cans to supplier/plant", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(RuwiaColor.Background, RoundedCornerShape(12.dp))
+                                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Rounded.Recycling, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Box(modifier = Modifier.weight(1f)) {
+                                    if (empty20LText.isEmpty()) {
+                                        Text("0", fontSize = 16.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Bold)
+                                    }
+                                    androidx.compose.foundation.text.BasicTextField(
+                                        value = empty20LText,
+                                        onValueChange = { newVal ->
+                                            if (newVal.all { it.isDigit() }) empty20LText = newVal
+                                        },
+                                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RuwiaColor.TealPrimary),
+                                        cursorBrush = androidx.compose.ui.graphics.SolidColor(RuwiaColor.TealPrimary),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                                Text("20L cans", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+
                 // ── Summary card ───────────────────────────────
                 InwardSummaryCard(
                     products   = effectiveProducts,
                     lineItems  = lineItems,
                     isEmployee = isEmployee,
+                    empty20L   = if (only20LSelected) (empty20LText.toIntOrNull()?.coerceAtLeast(0) ?: 0) else 0,
                 )
                 Spacer(Modifier.height(20.dp))
             }
@@ -388,34 +461,39 @@ private fun AddInwardTopBar(onBack: () -> Unit, onClose: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(RuwiaColor.Background)
-            .statusBarsPadding()
-            .height(56.dp)
-            .padding(horizontal = 16.dp),
+            .statusBarsPadding(),
     ) {
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .background(RuwiaColor.Surface, RoundedCornerShape(10.dp))
-                .clickable(onClick = onBack)
-                .align(Alignment.CenterStart),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 16.dp)
         ) {
-            Icon(Icons.Rounded.ArrowBack, "Back", tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
-        }
-        Text(
-            "Add inward stock", fontSize = 17.sp, fontWeight = FontWeight.Bold,
-            color = RuwiaColor.TextPrimary, modifier = Modifier.align(Alignment.Center),
-        )
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .border(1.2.dp, RuwiaColor.Divider, RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Rounded.LocalShipping, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(13.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("EMP", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, color = RuwiaColor.TextSecondary)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(RuwiaColor.Surface, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack)
+                    .align(Alignment.CenterStart),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.ArrowBack, "Back", tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
+            }
+            Text(
+                "Add inward stock", fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                color = RuwiaColor.TextPrimary, modifier = Modifier.align(Alignment.Center),
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .border(1.2.dp, RuwiaColor.Divider, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.LocalShipping, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("EMP", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, color = RuwiaColor.TextSecondary)
+            }
         }
     }
 }
@@ -601,9 +679,14 @@ private fun InwardLineCard(
 
         Spacer(Modifier.height(10.dp))
 
+        val unitsPerCase = getUnitsPerCase(product.name)
+        val isCase = unitsPerCase > 1
+        val qtyLabel = if (isCase) "Qty (Cases):" else "Qty (Cans):"
+        val step = if (isCase) 1 else 2
+
         // ── Qty row ────────────────────────────────────────────
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Qty:", fontSize = 12.sp, color = RuwiaColor.TextSecondary, fontWeight = FontWeight.Medium)
+            Text(qtyLabel, fontSize = 12.sp, color = RuwiaColor.TextSecondary, fontWeight = FontWeight.Medium)
             Spacer(Modifier.width(10.dp))
             Row(
                 modifier = Modifier
@@ -612,16 +695,40 @@ private fun InwardLineCard(
                     .padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                InwardStepBtn(Icons.Rounded.Remove, qty > 1) { onQtyChange(qty - 1) }
+                InwardStepBtn(Icons.Rounded.Remove, qty > step) { onQtyChange(qty - step) }
                 Box(modifier = Modifier.width(40.dp), contentAlignment = Alignment.Center) {
-                    Text("$qty", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary, textAlign = TextAlign.Center)
+                    AnimatedContent(
+                        targetState = qty,
+                        transitionSpec = {
+                            if (targetState > initialState) {
+                                (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } +
+                                 fadeIn() +
+                                 scaleIn(initialScale = 0.8f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                                (slideOutVertically { height -> -height } + fadeOut())
+                            } else {
+                                (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } +
+                                 fadeIn() +
+                                 scaleIn(initialScale = 0.8f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                                (slideOutVertically { height -> height } + fadeOut())
+                            }.using(SizeTransform(clip = false))
+                        }
+                    ) { targetQty ->
+                        Text(
+                            text = "$targetQty",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = RuwiaColor.TextPrimary,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
-                InwardStepBtn(Icons.Rounded.Add, true) { onQtyChange(qty + 1) }
+                InwardStepBtn(Icons.Rounded.Add, true) { onQtyChange(qty + step) }
             }
         }
 
         // ── Purchase price (admin only) ────────────────────────
         if (!isEmployee && product.purchasePriceGC > 0) {
+            val totalPrice = qty * product.purchasePriceGC
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier
@@ -632,20 +739,25 @@ private fun InwardLineCard(
             ) {
                 Icon(Icons.Rounded.Lock, null, tint = RuwiaColor.Orange, modifier = Modifier.size(13.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Purchase", fontSize = 11.sp, color = RuwiaColor.Orange.copy(alpha = 0.75f), fontWeight = FontWeight.Medium)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "₹${product.purchasePriceGC.fmt2} / unit",
-                    fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.Orange,
-                )
-                Spacer(Modifier.weight(1f))
-                Box(
-                    modifier = Modifier
-                        .background(RuwiaColor.Orange.copy(alpha = 0.15f), RoundedCornerShape(5.dp))
-                        .padding(horizontal = 7.dp, vertical = 2.dp),
-                ) {
-                    Text("ADMIN", fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp, color = RuwiaColor.Orange)
+                Column {
+                    Text("Purchase Rate", fontSize = 11.sp, color = RuwiaColor.Orange.copy(alpha = 0.75f), fontWeight = FontWeight.Medium)
+                    if (isCase) {
+                        Text(
+                            "$qty cases × ₹${product.purchasePriceGC.fmt2}",
+                            fontSize = 9.sp, color = RuwiaColor.Orange.copy(alpha = 0.8f)
+                        )
+                    } else if (qty > 1) {
+                        Text(
+                            "$qty cans × ₹${product.purchasePriceGC.fmt2}",
+                            fontSize = 9.sp, color = RuwiaColor.Orange.copy(alpha = 0.8f)
+                        )
+                    }
                 }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "₹${totalPrice.fmt2}",
+                    fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.Orange,
+                )
             }
         }
     }
@@ -759,11 +871,15 @@ private fun InwardSummaryCard(
     products: List<InwardProduct>,
     lineItems: List<InwardLineItem>,
     isEmployee: Boolean,
+    empty20L: Int = 0,
 ) {
-    val totalQty   = lineItems.sumOf { it.qty }
+    val totalQty = lineItems.sumOf {
+        val p = products.getOrNull(it.productIdx) ?: return@sumOf 0
+        it.qty * getUnitsPerCase(p.name)
+    }
     val totalValue = lineItems.sumOf {
         val p = products.getOrNull(it.productIdx) ?: return@sumOf 0.0
-        p.purchasePriceGC * it.qty
+        p.purchasePriceGC * it.qty * getUnitsPerCase(p.name)
     }
 
     Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(RuwiaColor.Orange)) {
@@ -773,7 +889,27 @@ private fun InwardSummaryCard(
         Column(modifier = Modifier.padding(20.dp)) {
             SummaryLine("Products", "${lineItems.size} type${if (lineItems.size != 1) "s" else ""}")
             Spacer(Modifier.height(8.dp))
-            SummaryLine("Total qty", "$totalQty units")
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Total qty", fontSize = 13.sp, color = Color.White.copy(alpha = 0.74f))
+                AnimatedContent(
+                    targetState = totalQty,
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> -height } + fadeOut())
+                        } else {
+                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                            (slideOutVertically { height -> height } + fadeOut())
+                        }.using(SizeTransform(clip = false))
+                    }
+                ) { targetQty ->
+                    Text("$targetQty units", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                }
+            }
+            if (isEmployee && empty20L > 0) {
+                Spacer(Modifier.height(8.dp))
+                SummaryLine("Empty cans returned", "$empty20L cans (20L)")
+            }
             if (!isEmployee) {
                 Spacer(Modifier.height(12.dp))
                 HorizontalDivider(color = Color.White.copy(alpha = 0.30f), thickness = 0.8.dp)
@@ -781,7 +917,20 @@ private fun InwardSummaryCard(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total inward value", fontSize = 13.sp, color = Color.White.copy(alpha = 0.78f))
-                    Text("₹${totalValue.toInt()}", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                    AnimatedContent(
+                        targetState = totalValue,
+                        transitionSpec = {
+                            if (targetState > initialState) {
+                                (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                                (slideOutVertically { height -> -height } + fadeOut())
+                            } else {
+                                (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
+                                (slideOutVertically { height -> height } + fadeOut())
+                            }.using(SizeTransform(clip = false))
+                        }
+                    ) { targetTotal ->
+                        Text("₹${targetTotal.toInt()}", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                    }
                 }
             }
         }
@@ -831,9 +980,33 @@ private fun RequiredFieldLabel(text: String) {
 
 @Composable
 private fun InwardStepBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.82f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        )
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (isPressed) RuwiaColor.TealExtraLight else RuwiaColor.Background,
+        animationSpec = tween(150)
+    )
     Box(
-        modifier = Modifier.size(32.dp).background(RuwiaColor.Background, CircleShape)
-            .clickable(enabled = enabled, onClick = onClick),
+        modifier = Modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .size(32.dp)
+            .background(bgColor, CircleShape)
+            .clickable(
+                enabled = enabled,
+                onClick = onClick,
+                interactionSource = interactionSource,
+                indication = androidx.compose.foundation.LocalIndication.current
+            ),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, tint = if (enabled) RuwiaColor.TextSecondary else RuwiaColor.TextMuted, modifier = Modifier.size(16.dp)) }
 }

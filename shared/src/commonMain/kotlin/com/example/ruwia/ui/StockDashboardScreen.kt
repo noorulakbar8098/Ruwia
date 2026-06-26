@@ -16,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
@@ -61,9 +63,10 @@ fun StockDashboardScreen(
     onRefresh: () -> Unit = {},
     onAddStock: () -> Unit = {},
     onAdjust: () -> Unit = {},
+    onViewInventory: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    Box(modifier = Modifier.fillMaxSize().background(NTColors.Background).statusBarsPadding()) {
+    Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
         when {
             state.loading       -> NTDashboardSkeleton(contentPadding)
             state.error != null -> NTErrorState(
@@ -72,14 +75,15 @@ fun StockDashboardScreen(
                 contentPadding = contentPadding,
             )
             else -> StockDashboardContent(
-                shopStocks     = state.shopStocks,
-                stockItems     = state.stockItems,
-                movements      = state.recentMovements,
-                onBack         = onBack,
-                onRefresh      = onRefresh,
-                onAddStock     = onAddStock,
-                onAdjust       = onAdjust,
-                contentPadding = contentPadding,
+                shopStocks        = state.shopStocks,
+                stockItems        = state.stockItems,
+                movements         = state.recentMovements,
+                onBack            = onBack,
+                onRefresh         = onRefresh,
+                onAddStock        = onAddStock,
+                onAdjust          = onAdjust,
+                onViewInventory   = onViewInventory,
+                contentPadding    = contentPadding,
             )
         }
     }
@@ -94,6 +98,7 @@ private fun StockDashboardContent(
     onRefresh: () -> Unit,
     onAddStock: () -> Unit,
     onAdjust: () -> Unit,
+    onViewInventory: () -> Unit = {},
     contentPadding: PaddingValues,
 ) {
     // ── Derive live shop totals from stock movements ─────────────────────────
@@ -111,8 +116,8 @@ private fun StockDashboardContent(
     //
     // `full_cans` = full_in − outward, `empty_cans` = empty_in,
     // `cans_with_customers` = outward, `total_cans` = sum of the three.
-    val derivedShops = remember(shopStocks, movements) {
-        deriveShopStockTotals(shopStocks, movements)
+    val derivedShops = remember(shopStocks, movements, stockItems) {
+        deriveShopStockTotals(shopStocks, movements, stockItems)
     }
 
     val totalCans  = derivedShops.sumOf { it.totalCans }
@@ -130,22 +135,23 @@ private fun StockDashboardContent(
         .groupBy { shopMatchKey(it.shopName) }
         .mapValues { (_, v) -> v.sumOf { it.qty } }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().background(NTColors.Background),
-        contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + 24.dp),
-    ) {
-        item { StockTopBar(onBack = onBack, onRefresh = onRefresh) }
+    Column(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
+        StockTopBar(onBack = onBack, onRefresh = onRefresh)
 
-        item { Spacer(modifier = Modifier.height(4.dp)) }
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + 24.dp),
+        ) {
+            item { Spacer(modifier = Modifier.height(4.dp)) }
 
         item {
             CombinedStockCard(
-                totalCans  = totalCans,
-                fullCans   = totalFull,
-                emptyCans  = totalEmpty,
-                withCust   = totalCust,
-                onAddStock = onAddStock,
-                onAdjust   = onAdjust,
+                totalCans       = totalFull,
+                emptyCans       = totalEmpty,
+                withCustomers   = totalCust,
+                onAddStock      = onAddStock,
+                onAdjust        = onAdjust,
+                onViewInventory = onViewInventory,
             )
         }
 
@@ -191,10 +197,10 @@ private fun StockDashboardContent(
                 val shopKey = shopMatchKey(shop.name)
                 val liveIn = inwardByShop[shopKey] ?: 0
                 val liveOut = outwardByShop[shopKey] ?: 0
+                val shopMovements = movements.filter { shopMatchKey(it.shopName) == shopKey }
                 ShopStockCard(
                     shop        = shop,
-                    liveInward  = liveIn,
-                    liveOutward = liveOut,
+                    shopMovements = shopMovements,
                     productItems = stockItems,
                 )
                 Spacer(modifier = Modifier.height(NTDp.md))
@@ -256,51 +262,62 @@ private fun StockDashboardContent(
 
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
     }
+    }
 }
 
 // ── Top bar ───────────────────────────────────────────────────
 
 @Composable
 private fun StockTopBar(onBack: () -> Unit, onRefresh: () -> Unit) {
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = NTDp.screenPad, vertical = NTDp.md),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(NTColors.Surface)
+            .statusBarsPadding()
+            .padding(bottom = 12.dp)
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(38.dp)
-                .background(NTColors.Surface, RoundedCornerShape(10.dp))
-                .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
-                .clickable(onClick = onBack),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Rounded.ArrowBack, null, tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp))
-        }
-        Spacer(modifier = Modifier.width(NTDp.sm))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Stock Dashboard",
-                fontSize   = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color      = NTColors.TextPrimary,
-            )
-            Text(
-                "Real-time stock overview across all shops",
-                fontSize = 12.sp,
-                color    = NTColors.TextTertiary,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .background(NTColors.Surface, RoundedCornerShape(10.dp))
-                .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
-                .clickable(onClick = onRefresh),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Rounded.Refresh, null, tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp))
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.ArrowBack, null, tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp))
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Stock Dashboard",
+                    fontSize   = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color      = NTColors.TextPrimary,
+                )
+                Text(
+                    "Real-time stock overview across all shops",
+                    fontSize = 12.sp,
+                    color    = NTColors.TextTertiary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
+                    .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onRefresh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Refresh, null, tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp))
+            }
         }
     }
 }
@@ -309,12 +326,12 @@ private fun StockTopBar(onBack: () -> Unit, onRefresh: () -> Unit) {
 
 @Composable
 private fun CombinedStockCard(
-    totalCans: Int,
-    fullCans: Int,
-    emptyCans: Int,
-    withCust: Int,
+    totalCans: Double,
+    emptyCans: Double,
+    withCustomers: Double,
     onAddStock: () -> Unit,
     onAdjust: () -> Unit,
+    onViewInventory: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -356,7 +373,7 @@ private fun CombinedStockCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
-                        "$totalCans",
+                        formatCases(totalCans),
                         fontSize      = 38.sp,
                         fontWeight    = FontWeight.ExtraBold,
                         color         = NTColors.TextPrimary,
@@ -364,7 +381,7 @@ private fun CombinedStockCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        "cans",
+                        "cans/cases",
                         fontSize   = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                         color      = NTColors.TextSecondary,
@@ -373,7 +390,7 @@ private fun CombinedStockCard(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "$fullCans Full · $emptyCans Empty · $withCust With Customers",
+                    "In Stock (Cases & Cans)",
                     fontSize   = 12.sp,
                     color      = NTColors.TextTertiary,
                     fontWeight = FontWeight.Medium,
@@ -409,7 +426,16 @@ private fun CombinedStockCard(
 
         Spacer(modifier = Modifier.height(NTDp.lg))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(NTDp.md)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = NTDp.md),
+            horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
+        ) {
+            CanStatChip(totalCans, "AVAILABLE", Icons.Rounded.Inventory2, FullNumColor, FullChipBg, Modifier.weight(1f))
+            CanStatChip(emptyCans, "EMPTY CANS", Icons.Rounded.Undo, EmptyNumColor, EmptyChipBg, Modifier.weight(1f))
+            CanStatChip(withCustomers, "WITH CUSTOMERS", Icons.Rounded.Group, CustNumColor, CustChipBg, Modifier.weight(1f))
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(NTDp.sm)) {
             ActionTile(
                 title     = "Add Stock",
                 subtitle  = "Add new stock",
@@ -421,13 +447,13 @@ private fun CombinedStockCard(
                 modifier  = Modifier.weight(1f),
             )
             ActionTile(
-                title     = "Adjust Stock",
-                subtitle  = "Modify existing",
-                icon      = Icons.Rounded.Tune,
-                iconBg    = Color(0xFFF97316),
-                tileBg    = Color(0xFFFFF1E6),
-                textColor = Color(0xFFB94508),
-                onClick   = onAdjust,
+                title     = "Inventory",
+                subtitle  = "Full catalogue",
+                icon      = Icons.Rounded.List,
+                iconBg    = Color(0xFF8B5CF6),
+                tileBg    = Color(0xFFEDE9FE),
+                textColor = Color(0xFF5B21B6),
+                onClick   = onViewInventory,
                 modifier  = Modifier.weight(1f),
             )
         }
@@ -510,16 +536,17 @@ private fun ActionTile(
 @Composable
 private fun ShopStockCard(
     shop: ShopStockInfo,
-    liveInward: Int,
-    liveOutward: Int,
+    shopMovements: List<StockMovement>,
     productItems: List<StockItem> = emptyList(),
 ) {
+    val expanded = remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radXxl))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radXxl))
+            .clickable { expanded.value = !expanded.value }
             .padding(NTDp.cardPad),
     ) {
         Row(
@@ -558,7 +585,12 @@ private fun ShopStockCard(
                 }
                 Spacer(modifier = Modifier.width(6.dp))
             }
-            Icon(Icons.Rounded.ChevronRight, null, tint = NTColors.TextTertiary, modifier = Modifier.size(20.dp))
+            Icon(
+                imageVector = if (expanded.value) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                contentDescription = if (expanded.value) "Collapse" else "Expand",
+                tint = NTColors.TextTertiary,
+                modifier = Modifier.size(20.dp)
+            )
         }
 
         Spacer(modifier = Modifier.height(NTDp.md))
@@ -567,19 +599,45 @@ private fun ShopStockCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
         ) {
-            CanStatChip(shop.fullCans,          "FULL",          Icons.Rounded.Water,  FullNumColor,  FullChipBg,  Modifier.weight(1f))
-            CanStatChip(shop.emptyCans,          "EMPTY",         Icons.Rounded.Water,  EmptyNumColor, EmptyChipBg, Modifier.weight(1f))
-            CanStatChip(shop.cansWithCustomers, "WITH\nCUST.",   Icons.Rounded.Groups, CustNumColor,  CustChipBg,  Modifier.weight(1f))
+            CanStatChip(shop.fullCans, "AVAILABLE", Icons.Rounded.Inventory2, FullNumColor, FullChipBg, Modifier.weight(1f))
+            CanStatChip(shop.emptyCans, "EMPTY CANS", Icons.Rounded.Undo, EmptyNumColor, EmptyChipBg, Modifier.weight(1f))
+            CanStatChip(shop.cansWithCustomers, "WITH CUSTOMERS", Icons.Rounded.Group, CustNumColor, CustChipBg, Modifier.weight(1f))
         }
 
-        Spacer(modifier = Modifier.height(NTDp.sm))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
-        ) {
-            CanStatChip(liveInward, "LIVE INWARD", Icons.Rounded.ArrowDownward, InwardFg, InwardBg, Modifier.weight(1f))
-            CanStatChip(liveOutward, "LIVE OUTWARD", Icons.Rounded.ArrowUpward, OutwardFg, OutwardBg, Modifier.weight(1f))
+        if (expanded.value && productItems.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(NTDp.md))
+            HorizontalDivider(color = NTColors.Border)
+            Spacer(modifier = Modifier.height(NTDp.md))
+            Text("PRODUCT BREAKDOWN", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NTColors.TextTertiary, letterSpacing = 0.8.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                productItems.forEach { product ->
+                    val productRows = shopMovements.filter { it.productId == product.id }
+                    val fullIn = productRows.filter { it.type == "inward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
+                    val sentOut = productRows.filter { it.type == "outward" }.sumOf { it.qty }
+                    val totalUnits = (fullIn - sentOut).coerceAtLeast(0)
+                    val cases = totalUnits / product.unitsPerCase
+                    val remainder = totalUnits % product.unitsPerCase
+                    
+                    if (cases > 0 || remainder > 0 || totalUnits > 0) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(product.name, fontSize = 13.sp, color = NTColors.TextSecondary)
+                            val unitLabel = if (product.unitsPerCase > 1) "cases" else "cans"
+                            val valText = buildString {
+                                append("$cases $unitLabel")
+                                if (remainder > 0 && product.unitsPerCase > 1) {
+                                    append(" + $remainder units")
+                                }
+                            }
+                            Text(valText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextPrimary)
+                        }
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(NTDp.md))
@@ -590,7 +648,7 @@ private fun ShopStockCard(
         ) {
             Icon(Icons.Rounded.Bookmark, null, tint = NTColors.TextTertiary, modifier = Modifier.size(14.dp))
             Text(
-                "${shop.totalCans} TOTAL CANS",
+                "${shop.totalCans} TOTAL CANS/CASES",
                 fontSize      = 11.sp,
                 fontWeight    = FontWeight.SemiBold,
                 color         = NTColors.TextTertiary,
@@ -603,7 +661,7 @@ private fun ShopStockCard(
         // admin sees what's in stock by SKU/litre, not just aggregate totals.
         // The product table is global (not yet shop-scoped), so we surface
         // the same list under each shop card with a clear caption.
-        if (productItems.isNotEmpty()) {
+        if (expanded.value && productItems.isNotEmpty()) {
             Spacer(modifier = Modifier.height(NTDp.md))
             HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
             Spacer(modifier = Modifier.height(NTDp.sm))
@@ -655,8 +713,10 @@ private fun ProductStockRow(item: StockItem) {
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             val capacityLabel = if (item.capacityLiters > 0) "${item.capacityLiters}L" else "—"
+            val isCan = item.unitsPerCase == 1
+            val unit = if (isCan) "can" else "case"
             Text(
-                "$capacityLabel · ₹${item.pricePerCan.toInt()}/can",
+                "$capacityLabel · ₹${item.pricePerCan.toInt()}/$unit",
                 fontSize = 11.sp, color = NTColors.TextTertiary,
             )
         }
@@ -666,8 +726,13 @@ private fun ProductStockRow(item: StockItem) {
                 .background(badgeBg)
                 .padding(horizontal = 10.dp, vertical = 4.dp),
         ) {
+            val isCan = item.unitsPerCase == 1
+            val displayCount = if (isCan) item.stockAvailable else item.stockAvailable / item.unitsPerCase.coerceAtLeast(1)
+            val remUnits     = if (!isCan) item.stockAvailable % item.unitsPerCase.coerceAtLeast(1) else 0
+            val units = if (isCan) "cans" else "cases"
+            val label = if (!isCan && remUnits > 0) "$displayCount $units +$remUnits" else "$displayCount $units"
             Text(
-                "${item.stockAvailable} cans",
+                label,
                 fontSize = 11.sp, fontWeight = FontWeight.Bold,
                 color = badgeFg,
             )
@@ -707,7 +772,7 @@ private fun AllProductsStockCard(
                     letterSpacing = 0.8.sp, color = NTColors.Primary,
                 )
                 Text(
-                    "${items.size} SKUs · ${items.sumOf { it.stockAvailable }} cans on hand",
+                    "${items.size} SKUs · ${items.sumOf { it.stockAvailable }} cans/cases on hand",
                     fontSize = 12.sp, color = NTColors.TextTertiary,
                 )
             }
@@ -722,7 +787,7 @@ private fun AllProductsStockCard(
 
 @Composable
 private fun CanStatChip(
-    value: Int,
+    value: Double,
     label: String,
     icon: ImageVector,
     numColor: Color,
@@ -739,7 +804,7 @@ private fun CanStatChip(
         Icon(icon, contentDescription = null, tint = numColor, modifier = Modifier.size(14.dp))
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            "$value",
+            formatCases(value),
             fontSize      = 20.sp,
             fontWeight    = FontWeight.ExtraBold,
             color         = numColor,
@@ -835,28 +900,80 @@ private fun MovementRow(movement: StockMovement) {
 internal fun deriveShopStockTotals(
     rawShops: List<ShopStockInfo>,
     movements: List<StockMovement>,
+    stockItems: List<StockItem>,
 ): List<ShopStockInfo> {
     if (rawShops.isEmpty()) return emptyList()
+    val productMap = stockItems.associateBy { it.id }
+
     return rawShops.map { shop ->
         val key = shopMatchKey(shop.name)
         val rows = movements.filter { shopMatchKey(it.shopName) == key }
-        val fullIn  = rows.filter { it.type == "inward"  && !it.source.isEmptyCansSource() }.sumOf { it.qty }
-        val emptyIn = rows.filter { it.type == "inward"  &&  it.source.isEmptyCansSource() }.sumOf { it.qty }
-        val sentOut = rows.filter { it.type == "outward" }.sumOf { it.qty }
+        
+        val productNetFull = mutableMapOf<String, Int>()
+        var unknownProductFull = 0
+        
+        rows.forEach { m ->
+            val isFullIn = m.type == "inward" && !m.source.trim().startsWith("Empty cans", ignoreCase = true)
+            val isSentOut = m.type == "outward"
+            if (isFullIn || isSentOut) {
+                val delta = if (isFullIn) m.qty else -m.qty
+                if (m.productId != null) {
+                    productNetFull[m.productId] = (productNetFull[m.productId] ?: 0) + delta
+                } else {
+                    unknownProductFull += delta
+                }
+            }
+        }
+        
+        var totalCases = unknownProductFull.toDouble().coerceAtLeast(0.0)
+        productNetFull.forEach { (pid, units) ->
+            val p = productMap[pid]
+            val actualUnits = units.coerceAtLeast(0)
+            if (p != null) {
+                totalCases += actualUnits.toDouble() / p.unitsPerCase.coerceAtLeast(1)
+            } else {
+                totalCases += actualUnits.toDouble()
+            }
+        }
+        
+        // Convert empty cans to case-equivalent units (20L & 5L cans stay as 1 = 1,
+        // but smaller sizes use their case size so the total is in consistent "case" units)
+        var emptyCases = 0.0
+        rows.filter { it.source.isEmptyCansSource() }.forEach { m ->
+            val delta = if (m.type == "inward") m.qty else -m.qty
+            if (m.productId != null) {
+                val p = productMap[m.productId]
+                if (p != null) emptyCases += delta.toDouble() / p.unitsPerCase.coerceAtLeast(1)
+                else emptyCases += delta.toDouble()
+            } else {
+                // No product linked — count each movement's qty individually.
+                emptyCases += delta.toDouble()
+            }
+        }
+        
+        val productOutward = mutableMapOf<String, Int>()
+        var unknownProductOutward = 0
+        rows.filter { it.type == "outward" && !it.source.isEmptyCansSource() }.forEach { m ->
+            if (m.productId != null) {
+                productOutward[m.productId] = (productOutward[m.productId] ?: 0) + m.qty
+            } else {
+                unknownProductOutward += m.qty
+            }
+        }
+        var withCust = unknownProductOutward.toDouble()
+        productOutward.forEach { (pid, units) ->
+            val p = productMap[pid]
+            if (p != null) withCust += units.toDouble() / p.unitsPerCase.coerceAtLeast(1) else withCust += units.toDouble()
+        }
 
-        // full_cans  = full inward minus what went to customers (clamped at 0)
-        // empty_cans = empties picked up from customers
-        // with_cust  = total cans currently at customers (= outward count)
-        val fullCans  = (fullIn - sentOut).coerceAtLeast(0)
-        val emptyCans = emptyIn
-        val withCust  = sentOut
-        val totalCans = fullCans + emptyCans + withCust
+        val fullCans = totalCases
+        val totalCans = fullCans + emptyCases + withCust
 
         shop.copy(
-            fullCans          = fullCans,
-            emptyCans         = emptyCans,
+            totalCans = totalCans,
+            fullCans = fullCans,
+            emptyCans = emptyCases,
             cansWithCustomers = withCust,
-            totalCans         = totalCans,
         )
     }
 }
@@ -874,4 +991,13 @@ internal fun shopMatchKey(name: String): String =
 private fun String.isEmptyCansSource(): Boolean =
     trim().startsWith("Empty cans", ignoreCase = true)
 
-
+/** Format a Double case count for display: whole numbers as "5", fractions as "5.5" etc. */
+private fun formatCases(value: Double): String {
+    val floored = kotlin.math.floor(value)
+    return if (value == floored && !value.isInfinite()) {
+        floored.toInt().toString()
+    } else {
+        val tenths = kotlin.math.round(value * 10).toInt()
+        "${tenths / 10}.${tenths % 10}"
+    }
+}

@@ -34,6 +34,29 @@ fun UserHomeScreen(
     onLogout: () -> Unit,
 ) {
     val state by vm.state.collectAsState()
+    var showLogoutDialog by remember { mutableStateOf(false) }
+
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title   = { Text("Logout?") },
+            text    = { Text("Are you sure you want to log out of your account?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutDialog = false
+                        vm.logout()
+                        onLogout()
+                    },
+                    colors  = ButtonDefaults.textButtonColors(contentColor = Color(0xFFCC3333)),
+                ) { Text("Logout", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel") }
+            },
+            shape = RoundedCornerShape(20.dp),
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -51,7 +74,7 @@ fun UserHomeScreen(
                 orders      = state.orders,
                 payments    = state.payments,
                 onPlaceOrder = onPlaceOrder,
-                onLogout    = { vm.logout(); onLogout() }
+                onLogout    = { showLogoutDialog = true }
             )
         }
     }

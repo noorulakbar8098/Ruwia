@@ -159,8 +159,7 @@ private fun List<SaleEntry>.seriesFor(
 
 /** Last 7 calendar days (oldest → newest) ending today. */
 private fun List<SaleEntry>.weekSeries(): ChartSeries {
-    val byDate = filter { it.createdAt != null }
-        .groupBy { it.createdAt!!.take(10) }
+    val byDate = groupBy { it.date }
     val days = byDate.keys.sortedDescending().take(7).reversed()  // oldest → newest
     val raw = days.map { d -> byDate[d]!!.sumOf { it.totalSelling } }
     val labels = days.map { d ->
@@ -194,9 +193,9 @@ private fun List<SaleEntry>.monthSeries(yearMonth: String): ChartSeries {
 
     val buckets = DoubleArray(nDays)
     forEach { e ->
-        val ca = e.createdAt ?: return@forEach
-        if (!ca.startsWith(yearMonth)) return@forEach
-        val d = ca.substring(8, 10).toIntOrNull() ?: return@forEach
+        val dStr = e.date
+        if (!dStr.startsWith(yearMonth)) return@forEach
+        val d = dStr.substring(8, 10).toIntOrNull() ?: return@forEach
         if (d in 1..nDays) buckets[d - 1] += e.totalSelling
     }
     val raw = buckets.toList()
@@ -257,13 +256,13 @@ private fun List<SaleEntry>.yearSeries(currentYearMonth: String): ChartSeries {
 
 private fun List<SaleEntry>.sumByMonth(yearMonth: String): Double {
     if (yearMonth.isBlank()) return 0.0
-    return filter { it.createdAt?.startsWith(yearMonth) == true }
+    return filter { it.date.startsWith(yearMonth) }
         .sumOf { it.totalSelling }
 }
 
 private fun List<SaleEntry>.distinctCustomersForMonth(yearMonth: String): Int {
     if (yearMonth.isBlank()) return 0
-    return filter { it.createdAt?.startsWith(yearMonth) == true }
+    return filter { it.date.startsWith(yearMonth) }
         .map { it.customerName.trim().lowercase() }
         .filter { it.isNotEmpty() }
         .distinct()
@@ -271,8 +270,7 @@ private fun List<SaleEntry>.distinctCustomersForMonth(yearMonth: String): Int {
 }
 
 private fun List<SaleEntry>.lastTwoWeekTotals(): Pair<Double, Double> {
-    val byDate = filter { it.createdAt != null }
-        .groupBy { it.createdAt!!.take(10) }
+    val byDate = groupBy { it.date }
     val days = byDate.keys.sortedDescending()
     val last7 = days.take(7).sumOf { d -> byDate[d]!!.sumOf { it.totalSelling } }
     val prev7 = days.drop(7).take(7).sumOf { d -> byDate[d]!!.sumOf { it.totalSelling } }
