@@ -125,12 +125,14 @@ fun AddSaleScreen(
         // product in an empty list.
         mutableStateOf(
             if (products.isNotEmpty()) {
+                val p = products.last()
+                val upc = p.unitsPerCase.coerceAtLeast(1)
                 listOf(
                     OutwardLineItem(
                         defaultProductIdx, 1,
-                        products.lastOrNull()?.defaultSellPrice?.let {
-                            if (it > 0) it.toInt().toString() else ""
-                        } ?: ""
+                        p.defaultSellPrice.let {
+                            if (it > 0) (it * upc).toInt().toString() else ""
+                        }
                     )
                 )
             } else emptyList()
@@ -173,9 +175,8 @@ fun AddSaleScreen(
     val timePickerState = rememberTimePickerState(initialHour = 11, initialMinute = 16)
 
     val totalQty   = lineItems.sumOf { it.qty }
-    val totalValue = lineItems.sumOf {
-        val p = products.getOrNull(it.productIdx) ?: return@sumOf 0.0
-        (it.sellPriceText.toDoubleOrNull() ?: p.defaultSellPrice) * it.qty
+    val lineTotals = lineItems.sumOf {
+        (it.sellPriceText.toDoubleOrNull() ?: 0.0) * it.qty
     }
     val isSaveEnabled = selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
 
@@ -262,7 +263,7 @@ fun AddSaleScreen(
                     isSaveEnabled = isSaveEnabled,
                     lineCount = lineItems.size,
                     totalQty = totalQty,
-                    totalAmount = totalValue,
+                    totalAmount = lineTotals,
                     onCancel = onBack,
                     onSave   = {
                         val empties = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
@@ -473,11 +474,14 @@ fun AddSaleScreen(
                                 .clickable {
                                     editingLineIdx?.let { lineIdx ->
                                         lineItems = lineItems.mapIndexed { i, item ->
-                                            if (i == lineIdx) item.copy(
-                                                productIdx    = originalIdx,
-                                                sellPriceText = if (p.defaultSellPrice > 0)
-                                                    p.defaultSellPrice.toInt().toString() else "",
-                                            ) else item
+                                            if (i == lineIdx) {
+                                                val upc = p.unitsPerCase.coerceAtLeast(1)
+                                                item.copy(
+                                                    productIdx    = originalIdx,
+                                                    sellPriceText = if (p.defaultSellPrice > 0)
+                                                        (p.defaultSellPrice * upc).toInt().toString() else "",
+                                                )
+                                            } else item
                                         }
                                     }
                                     showProductPicker = false
@@ -507,11 +511,12 @@ fun AddSaleScreen(
                                 Spacer(Modifier.width(12.dp))
                                 Column {
                                     Text(p.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
-                                    val upc = p.unitsPerCase
+                                    val upc = p.unitsPerCase.coerceAtLeast(1)
                                     val limitText = availableUnitsMap[p.id]?.let {
                                         if (upc > 1) "${it / upc} cases available" else "$it cans available"
                                     } ?: "Available stock: ${p.stockAvailable}"
-                                    Text("₹${p.defaultSellPrice.toInt()}/unit  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                                    val priceLabel = if (upc > 1) "case" else "can"
+                                    Text("₹${(p.defaultSellPrice * upc).toInt()}/$priceLabel  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
                                 }
                             }
                             if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
@@ -595,10 +600,10 @@ private fun SaleHeroCard() {
             }
             Spacer(Modifier.width(14.dp))
             Column {
-                Text("OUTWARD  ·  TO CUSTOMER", fontSize = 10.sp, letterSpacing = 1.2.sp,
+                Text("RECORD SALE  ·  OUTWARD", fontSize = 10.sp, letterSpacing = 1.2.sp,
                     fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.70f))
                 Spacer(Modifier.height(3.dp))
-                Text("Recording a customer sale", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Case-Wise Entry", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
     }
@@ -874,14 +879,21 @@ private fun SaleLineCard(
                 Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TealPrimary)
                 Spacer(Modifier.width(4.dp))
                 Box(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = priceText.ifBlank { "0" },
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = RuwiaColor.TealPrimary
+                    BasicTextField(
+                        value = priceText,
+                        onValueChange = onPriceChange,
+                        textStyle = TextStyle(
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = RuwiaColor.TealPrimary
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
-                Text("/unit", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                val priceLabel = if (upc > 1) "case" else "can"
+                Text("/$priceLabel", fontSize = 11.sp, color = RuwiaColor.TextMuted)
             }
         }
 

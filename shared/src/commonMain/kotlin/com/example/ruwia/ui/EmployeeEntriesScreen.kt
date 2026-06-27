@@ -28,8 +28,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.theme.RuwiaColor
+import kotlin.time.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Employee Entries Tab
@@ -47,6 +52,7 @@ fun EmployeeEntriesScreen(
     dailyEarnings: Double,
     currentDate: String,
     isLoading: Boolean,
+    products: List<ProductCategory> = emptyList(), // Added products
     onRefresh: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
@@ -97,7 +103,7 @@ fun EmployeeEntriesScreen(
             }
             else -> {
                 items(items = filtered, key = { "${it.id}-${it.createdAt}" }) { mov ->
-                    EntryRow(movement = mov, modifier = Modifier.padding(horizontal = 20.dp))
+                    EntryRow(movement = mov, products = products, modifier = Modifier.padding(horizontal = 20.dp))
                     Spacer(Modifier.height(8.dp))
                 }
             }
@@ -221,13 +227,28 @@ private fun VerticalDivider() {
 // ── Entry row ─────────────────────────────────────────────────────────────────
 
 @Composable
-private fun EntryRow(movement: StockMovement, modifier: Modifier = Modifier) {
+private fun EntryRow(
+    movement: StockMovement,
+    modifier: Modifier = Modifier,
+    products: List<ProductCategory> = emptyList()
+) {
     val isInward = movement.type == "inward"
     val iconBg   = if (isInward) RuwiaColor.OrangeLight    else RuwiaColor.IconTealBg
     val iconTint = if (isInward) RuwiaColor.Orange         else RuwiaColor.TealPrimary
     val amtColor = if (isInward) RuwiaColor.Orange         else Color(0xFF1BAF70)
     val sign     = if (isInward) "+"                       else "-"
     val statusLabel = if (isInward) "INWARD" else "OUTWARD"
+
+    val product = products.find { it.id == movement.productId }
+    val upc = product?.unitsPerCase?.coerceAtLeast(1) ?: 1
+    val isCaseWise = upc > 1
+    val casesCount = movement.qty / upc
+    val remUnits = movement.qty % upc
+    val displayQty = if (isCaseWise) {
+        if (remUnits > 0) "$casesCount cases + $remUnits units" else "$casesCount cases"
+    } else {
+        "${movement.qty} units"
+    }
 
     Row(
         modifier = modifier
@@ -283,7 +304,7 @@ private fun EntryRow(movement: StockMovement, modifier: Modifier = Modifier) {
             }
             Spacer(Modifier.height(3.dp))
             Text(
-                text     = "${movement.qty} units · ${formatDateLabel(movement.createdAt)}" +
+                text     = "$displayQty · ${formatDateLabel(movement.createdAt)}" +
                            if (movement.shopName.isNotBlank()) " · ${movement.shopName}" else "",
                 fontSize = 11.sp,
                 color    = RuwiaColor.TextMuted,
@@ -295,24 +316,42 @@ private fun EntryRow(movement: StockMovement, modifier: Modifier = Modifier) {
         Spacer(Modifier.width(10.dp))
 
         Text(
-            text       = "$sign${movement.qty}",
+            text       = "$sign${if (isCaseWise) casesCount else movement.qty}",
             fontSize   = 15.sp,
             fontWeight = FontWeight.Bold,
             color      = amtColor,
         )
+        if (isCaseWise) {
+            Text(
+                " cs",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = amtColor.copy(alpha = 0.7f),
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
     }
 }
 
 private fun formatDateLabel(createdAt: String?): String {
     if (createdAt.isNullOrBlank()) return "—"
-    val datePart = createdAt.take(10)
-    val parts = datePart.split("-")
-    if (parts.size != 3) return datePart
-    val month = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-        .getOrNull((parts[1].toIntOrNull() ?: 1) - 1) ?: parts[1]
-    val day = parts[2].toIntOrNull()?.toString() ?: parts[2]
-    val timePart = createdAt.drop(11).take(5)
-    return if (timePart.isNotEmpty()) "$day $month · $timePart" else "$day $month"
+    return try {
+        // Parse the full ISO-8601 UTC string from Supabase (e.g. "2026-06-26T07:04:49.123456+00:00")
+        // and convert to the device's local timezone so the time shown matches the wall clock.
+        val instant = Instant.parse(createdAt)
+        val local   = instant.toLocalDateTime(TimeZone.currentSystemDefault())
+        val month   = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+            .getOrNull(local.monthNumber - 1) ?: ""
+        val day     = local.dayOfMonth.toString()
+        val h       = local.hour
+        val hh      = if (h == 0) 12 else if (h > 12) h - 12 else h
+        val ampm    = if (h >= 12) "PM" else "AM"
+        val mm      = local.minute.toString().padStart(2, '0')
+        "$day $month · $hh:$mm $ampm"
+    } catch (_: Exception) {
+        // Fallback: just show the first 10 chars (date portion) if parsing fails
+        createdAt.take(10)
+    }
 }
 
 // ── Empty state ──────────────────────────────────────────────────────────────

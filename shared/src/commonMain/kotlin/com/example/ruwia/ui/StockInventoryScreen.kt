@@ -110,10 +110,8 @@ fun StockInventoryScreen(
         }
     }
 
-    val effectiveStockMap = remember(liveStockMap, products, currentShopKey) {
-        products.associate { p ->
-            p.id to if (currentShopKey == null) p.stockAvailable else (liveStockMap[p.id] ?: 0)
-        }
+    val effectiveStockMap = remember(liveStockMap) {
+        liveStockMap
     }
 
     // ── Metrics ──────────────────────────────────────────────────────────────
@@ -1485,14 +1483,19 @@ private fun RecentActivityFeed(
             .padding(16.dp)
     ) {
         movements.forEachIndexed { index, m ->
+            val isReturn = m.source.trim().startsWith("Empty cans", ignoreCase = true)
             val product = products.find { it.id == m.productId }
-            val prodName = product?.displayName ?: "Water Bottle"
-            val upc = product?.unitsPerCase ?: 1
+            val prodName = if (isReturn) "Empty Cans" else (product?.displayName ?: "Water Bottle")
+            val upc = if (isReturn) 1 else (product?.unitsPerCase ?: 1)
             val casesCount = if (upc > 1) m.qty / upc else m.qty
-            val suffix = if (upc > 1) "Cases" else "Cans"
+            val suffix = if (isReturn) "Cans" else if (upc > 1) "Cases" else "Cans"
 
             val isAdd = m.type == "inward"
-            val titleText = if (isAdd) "Stock Added" else "Stock Sold"
+            val titleText = when {
+                isReturn -> if (isAdd) "Cans Collected" else "Cans Returned"
+                isAdd    -> "Stock Added"
+                else     -> "Stock Sold"
+            }
             val qtyText = "${if (isAdd) "+" else "-"}$casesCount $suffix"
             val sourceText = if (isAdd) "From ${m.source}" else "To ${m.source}"
             

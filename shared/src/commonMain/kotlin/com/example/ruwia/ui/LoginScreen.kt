@@ -1,49 +1,47 @@
 package com.example.ruwia.ui
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Business
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Email
-import androidx.compose.material.icons.outlined.LocalShipping
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Phone
-import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material.icons.automirrored.rounded.*
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.UserRole
@@ -51,24 +49,26 @@ import com.example.ruwia.presentation.AuthViewModel
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.app_logo
+import ruwia.shared.generated.resources.new_app_logo
 
-// ─── Premium SaaS Color Palette ─────────────────────────────────────────────
-private val DeepTeal = Color(0xFF006D77)
-private val MidTeal = Color(0xFF1E8A6E)
-private val EmeraldGreen = Color(0xFF2A9D8F)
-private val AccentOrange = Color(0xFFF4A261)
-private val DarkSurface = Color(0xFF0D1B2A)
-private val CardDark = Color(0xFF152238)
-private val CardBorder = Color(0xFF1E3050)
-private val TextPrimary = Color(0xFFF0F4F8)
-private val TextSecondary = Color(0xFF8899AA)
-private val TextMuted = Color(0xFF5C6E7F)
-private val InputBackground = Color(0xFF1A2D42)
-private val InputBorder = Color(0xFF253D56)
-private val InputFocusBorder = Color(0xFF2A9D8F)
-private val ErrorRed = Color(0xFFFF6B6B)
-private val SuccessGreen = Color(0xFF51CF66)
+// ── Premium SaaS Color Palette ─────────────────────────────────────────────
+private object DroplyColor {
+    val Background   = Color(0xFF08141F)
+    val Surface      = Color(0xFF132437)
+    val Card         = Color(0xD1162538) // Glassmorphism alpha
+    val Input        = Color(0xFF162B40)
+    val Border       = Color(0x14FFFFFF) // 0.08 alpha
+    val InputBorder  = Color(0xFF29455F)
+    val Primary      = Color(0xFF00C9A7)
+    val Secondary    = Color(0xFF14D8B3)
+    val Accent       = Color(0xFF0EA5E9)
+    val TextPrimary  = Color(0xFFFFFFFF)
+    val TextSecondary = Color(0xFF94A3B8)
+    val Placeholder  = Color(0xFF64748B)
+    val Error        = Color(0xFFEF4444)
+    
+    val PrimaryGradient = Brush.linearGradient(listOf(Primary, Secondary))
+}
 
 @Composable
 fun LoginScreen(
@@ -78,7 +78,7 @@ fun LoginScreen(
 ) {
     val state by vm.state.collectAsState()
 
-    // Screen state
+    // Screen states
     var isSignUp by remember { mutableStateOf(false) }
     var selectedRole by remember { mutableStateOf(UserRole.admin) }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -89,15 +89,12 @@ fun LoginScreen(
     var signupName by remember { mutableStateOf("") }
     var signupPhone by remember { mutableStateOf("") }
 
-    // Animated background shimmer
-    val infiniteTransition = rememberInfiniteTransition()
+    // Animations
+    val infiniteTransition = rememberInfiniteTransition(label = "background")
     val shimmerOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(6000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        )
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(8000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "shimmer"
     )
 
     LaunchedEffect(state.loggedIn) {
@@ -107,506 +104,473 @@ fun LoginScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        DarkSurface,
-                        Color(0xFF0F2237),
-                        Color(0xFF122B44)
-                    )
-                )
-            )
+            .background(DroplyColor.Background)
     ) {
-        // ── Animated Ambient Background Orbs ──────────────────────────────
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(DeepTeal.copy(alpha = 0.15f), Color.Transparent),
-                    center = Offset(
-                        x = size.width * (0.85f + shimmerOffset * 0.1f),
-                        y = size.height * 0.12f
-                    ),
-                    radius = size.width * 0.45f
-                ),
-                center = Offset(
-                    x = size.width * (0.85f + shimmerOffset * 0.1f),
-                    y = size.height * 0.12f
-                ),
-                radius = size.width * 0.45f
-            )
+        // ── 1. Layered Premium Background ──────────────────────────────
+        PremiumBackgroundEffects(shimmerOffset)
 
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(EmeraldGreen.copy(alpha = 0.1f), Color.Transparent),
-                    center = Offset(
-                        x = size.width * (0.1f - shimmerOffset * 0.05f),
-                        y = size.height * 0.85f
-                    ),
-                    radius = size.width * 0.55f
-                ),
-                center = Offset(
-                    x = size.width * (0.1f - shimmerOffset * 0.05f),
-                    y = size.height * 0.85f
-                ),
-                radius = size.width * 0.55f
-            )
-
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(AccentOrange.copy(alpha = 0.06f), Color.Transparent),
-                    center = Offset(
-                        x = size.width * 0.7f,
-                        y = size.height * (0.55f + shimmerOffset * 0.05f)
-                    ),
-                    radius = size.width * 0.3f
-                ),
-                center = Offset(
-                    x = size.width * 0.7f,
-                    y = size.height * (0.55f + shimmerOffset * 0.05f)
-                ),
-                radius = size.width * 0.3f
-            )
-        }
-
-        // ── Main Content ──────────────────────────────────────────────────
+        // ── 2. Scrollable Content ──────────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
-                .padding(top = 48.dp, bottom = 24.dp),
+                .statusBarsPadding()
+                .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // ── 1. Brand Header with Logo ────────────────────────────────
-            Spacer(modifier = Modifier.height(8.dp))
+//            Spacer(modifier = Modifier.height(40.dp))
 
-            Image(
-                painter = painterResource(Res.drawable.app_logo),
-                contentDescription = "App Logo",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .size(140.dp)
-            )
+            // ── Hero Section (Logo + Brand) ───────────────────────────
+            HeroBrandSection()
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // ── 2. Glassmorphic Card Container ────────────────────────────
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = CardDark.copy(alpha = 0.75f)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(
-                        width = 1.dp,
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                CardBorder.copy(alpha = 0.6f),
-                                CardBorder.copy(alpha = 0.2f)
-                            )
-                        ),
-                        shape = RoundedCornerShape(24.dp)
-                    )
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // ── Title ──────────────────────────────────────────────
-                    Text(
-                        text = if (isSignUp) "Create your account" else "Welcome back",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
+            // ── Welcome Text ──────────────────────────────────────────
+            WelcomeSection(isSignUp)
 
-                    Text(
-                        text = if (isSignUp) "Register as an admin to manage your franchise"
-                        else "Sign in to manage your water business",
-                        fontSize = 13.sp,
-                        color = TextSecondary,
-                        textAlign = TextAlign.Center
-                    )
+            Spacer(modifier = Modifier.height(32.dp))
 
-                    // ── Role Selector (Sign-In only) ──────────────────────
-                    if (!isSignUp) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .background(InputBackground, RoundedCornerShape(14.dp))
-                                .border(1.dp, InputBorder, RoundedCornerShape(14.dp))
-                                .padding(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Owner Tab
-                            val isOwnerSelected = selectedRole == UserRole.admin
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .background(
-                                        if (isOwnerSelected) Brush.linearGradient(
-                                            colors = listOf(DeepTeal, EmeraldGreen)
-                                        ) else Brush.linearGradient(
-                                            colors = listOf(Color.Transparent, Color.Transparent)
-                                        ),
-                                        RoundedCornerShape(10.dp)
-                                    )
-                                    .clickable(
-                                        indication = null,
-                                        interactionSource = remember { MutableInteractionSource() }
-                                    ) { selectedRole = UserRole.admin },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Shield,
-                                        contentDescription = "Owner",
-                                        tint = if (isOwnerSelected) Color.White else TextSecondary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Text(
-                                        text = "Admin",
-                                        color = if (isOwnerSelected) Color.White else TextSecondary,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                            }
-
-                            // Employee Tab
-                            val isEmpSelected = selectedRole == UserRole.employee
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .background(
-                                        if (isEmpSelected) Brush.linearGradient(
-                                            colors = listOf(DeepTeal, EmeraldGreen)
-                                        ) else Brush.linearGradient(
-                                            colors = listOf(Color.Transparent, Color.Transparent)
-                                        ),
-                                        RoundedCornerShape(10.dp)
-                                    )
-                                    .clickable(
-                                        indication = null,
-                                        interactionSource = remember { MutableInteractionSource() }
-                                    ) { selectedRole = UserRole.employee },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.LocalShipping,
-                                        contentDescription = "Employee",
-                                        tint = if (isEmpSelected) Color.White else TextSecondary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Text(
-                                        text = "Employee",
-                                        color = if (isEmpSelected) Color.White else TextSecondary,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                            }
-                        }
+            // ── Main Login Card (Glassmorphism) ───────────────────────
+            LoginGlassCard(
+                isSignUp = isSignUp,
+                selectedRole = selectedRole,
+                onRoleChange = { selectedRole = it },
+                email = email,
+                onEmailChange = { email = it },
+                password = pass,
+                onPasswordChange = { pass = it },
+                passwordVisible = passwordVisible,
+                onTogglePassword = { passwordVisible = !passwordVisible },
+                signupName = signupName,
+                onSignupNameChange = { signupName = it },
+                signupPhone = signupPhone,
+                onSignupPhoneChange = { signupPhone = it },
+                isLoading = state.loading,
+                error = state.error,
+                onPrimaryAction = {
+                    if (isSignUp) {
+                        vm.signUp(email.trim(), pass, signupName.trim(), signupPhone.trim())
+                    } else {
+                        vm.login(email.trim(), pass, selectedRole)
                     }
+                },
+                onForgotPass = onForgotPassword,
+                onToggleMode = { isSignUp = !isSignUp }
+            )
 
-                    // ── Sign-Up Additional Fields (Animated) ──────────────
-                    AnimatedVisibility(
-                        visible = isSignUp,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically()
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            SaasInputField(
-                                value = signupName,
-                                onValueChange = { signupName = it },
-                                label = "Business / Owner Name",
-                                placeholder = "Enter your business or full name",
-                                icon = Icons.Outlined.Business
-                            )
+            Spacer(modifier = Modifier.height(40.dp))
 
-                            SaasInputField(
-                                value = signupPhone,
-                                onValueChange = { signupPhone = it },
-                                label = "Contact Number",
-                                placeholder = "Enter your phone number",
-                                icon = Icons.Outlined.Phone
-                            )
-                        }
-                    }
+            // ── Footer ────────────────────────────────────────────────
+            LoginFooter()
 
-                    // ── Email Field ───────────────────────────────────────
-                    SaasInputField(
-                        value = email,
-                        onValueChange = { email = it },
-                        label = if (selectedRole == UserRole.employee && !isSignUp)
-                            "Employee ID or Email" else "Email Address",
-                        placeholder = if (selectedRole == UserRole.employee && !isSignUp)
-                            "Enter your employee ID or email" else "you@company.com",
-                        icon = Icons.Outlined.Email,
-                        trailingContent = if (email.contains("@") && email.contains(".")) {
-                            {
-                                Icon(
-                                    imageVector = Icons.Outlined.CheckCircle,
-                                    contentDescription = "Valid",
-                                    tint = SuccessGreen,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        } else null
-                    )
-
-                    // ── Password Field ────────────────────────────────────
-                    SaasInputField(
-                        value = pass,
-                        onValueChange = { pass = it },
-                        label = "Password",
-                        placeholder = "Enter your password",
-                        icon = Icons.Outlined.Lock,
-                        isPassword = true,
-                        passwordVisible = passwordVisible,
-                        trailingContent = {
-                            IconButton(
-                                onClick = { passwordVisible = !passwordVisible },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (passwordVisible) Icons.Outlined.Visibility
-                                    else Icons.Outlined.VisibilityOff,
-                                    contentDescription = if (passwordVisible) "Hide password" else "Show password",
-                                    tint = TextMuted,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    )
-
-                    // ── Options Row (Login Only) ──────────────────────────
-                    if (!isSignUp) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Forgot password?",
-                                color = EmeraldGreen,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                modifier = Modifier.clickable { onForgotPassword() }
-                            )
-                        }
-                    }
-
-                    // ── Primary Action Button ─────────────────────────────
-                    Button(
-                        onClick = {
-                            if (isSignUp) {
-                                vm.signUp(email.trim(), pass, signupName.trim(), signupPhone.trim())
-                            } else {
-                                vm.login(email.trim(), pass, selectedRole)
-                            }
-                        },
-                        enabled = !state.loading && email.isNotBlank() && pass.length >= 6,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent
-                        ),
-                        contentPadding = PaddingValues(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    brush = if (!state.loading && email.isNotBlank() && pass.length >= 6)
-                                        Brush.linearGradient(
-                                            colors = listOf(DeepTeal, EmeraldGreen)
-                                        )
-                                    else Brush.linearGradient(
-                                        colors = listOf(
-                                            DeepTeal.copy(alpha = 0.4f),
-                                            EmeraldGreen.copy(alpha = 0.4f)
-                                        )
-                                    ),
-                                    shape = RoundedCornerShape(16.dp)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (state.loading) {
-                                CircularProgressIndicator(
-                                    color = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                    strokeWidth = 2.5.dp
-                                )
-                            } else {
-                                Text(
-                                    text = if (isSignUp) "Create Account" else "Sign In",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = Color.White,
-                                    letterSpacing = 0.5.sp
-                                )
-                            }
-                        }
-                    }
-
-                    // ── Error Message ─────────────────────────────────────
-                    state.error?.let { err ->
-                        Card(
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = ErrorRed.copy(alpha = 0.12f)
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Warning,
-                                    contentDescription = "Error",
-                                    tint = ErrorRed,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = err,
-                                    color = ErrorRed,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-
-                    // ── Divider ───────────────────────────────────────────
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        HorizontalDivider(
-                            modifier = Modifier.weight(1f),
-                            color = InputBorder
-                        )
-                        Text(
-                            text = "  OR  ",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextMuted
-                        )
-                        HorizontalDivider(
-                            modifier = Modifier.weight(1f),
-                            color = InputBorder
-                        )
-                    }
-
-                    // ── Social / SSO Button ───────────────────────────────
-                    OutlinedButton(
-                        onClick = { /* Google SSO stub */ },
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, InputBorder),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = InputBackground.copy(alpha = 0.5f),
-                            contentColor = TextPrimary
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            // Stylized Google "G" using bold colored text
-                            Text(
-                                text = "G",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFFEA4335)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "Continue with Google",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                        }
-                    }
-
-                    // ── Toggle Sign In / Sign Up ──────────────────────────
-                    if (isSignUp || selectedRole != UserRole.employee) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = if (isSignUp) "Already have an account? " else "Don't have an account? ",
-                                fontSize = 13.sp,
-                                color = TextSecondary
-                            )
-                            Text(
-                                text = if (isSignUp) "Sign In" else "Sign Up",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = EmeraldGreen,
-                                modifier = Modifier.clickable { isSignUp = !isSignUp }
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // ── Footer ────────────────────────────────────────────────────
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.alpha(0.5f)
-            ) {
-                Text(
-                    text = "Secured by Supabase  ·  256-bit TLS",
-                    fontSize = 11.sp,
-                    color = TextMuted,
-                    style = TextStyle(letterSpacing = 1.sp)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Terms of Service  ·  Privacy Policy",
-                    fontSize = 11.sp,
-                    color = TextMuted
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(32.dp))
         }
 
         if (state.loading) {
-            SaaSLoadingOverlay(message = "Signing In")
+            SaaSLoadingOverlay(message = if (isSignUp) "Creating Account" else "Signing In")
         }
     }
 }
 
-// ─── Reusable SaaS Input Field with Material Icons & Placeholder ─────────────
 @Composable
-private fun SaasInputField(
+private fun PremiumBackgroundEffects(shimmerOffset: Float) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Radial glows
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            // Top Left Teal Glow
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(DroplyColor.Primary.copy(alpha = 0.18f), Color.Transparent),
+                    center = Offset(size.width * 0.1f, size.height * 0.1f),
+                    radius = size.width * 0.8f
+                ),
+                alpha = 0.6f
+            )
+
+            // Bottom Right Blue Glow
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(DroplyColor.Accent.copy(alpha = 0.15f), Color.Transparent),
+                    center = Offset(size.width * 0.9f, size.height * 0.9f),
+                    radius = size.width * 0.7f
+                ),
+                alpha = 0.5f
+            )
+
+            // Blurred Floating Circles
+            drawCircle(
+                color = DroplyColor.Primary.copy(alpha = 0.12f),
+                center = Offset(
+                    size.width * (0.8f - shimmerOffset * 0.1f),
+                    size.height * (0.2f + shimmerOffset * 0.05f)
+                ),
+                radius = 120.dp.toPx()
+            )
+        }
+        
+        // Subtle Noise Overlay (Simulated with alpha grain)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .alpha(0.02f)
+                .background(Color.White)
+        )
+    }
+}
+
+@Composable
+private fun HeroBrandSection() {
+    val infiniteTransition = rememberInfiniteTransition(label = "logo")
+    val floatAnim by infiniteTransition.animateFloat(
+        initialValue = -8f, targetValue = 8f,
+        animationSpec = infiniteRepeatable(tween(2000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "float"
+    )
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(100.dp)
+                .graphicsLayer { translationY = floatAnim },
+            contentAlignment = Alignment.Center
+        ) {
+            // Logo Glow
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .blur(20.dp)
+                    .background(DroplyColor.Primary.copy(alpha = 0.3f), CircleShape)
+            )
+            
+            Image(
+                painter = painterResource(Res.drawable.app_icon),
+                contentDescription = "NEER THULI",
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(RoundedCornerShape(15.dp)),
+                contentScale = ContentScale.Crop
+            )
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Text(
+            text = "NEER THULI",
+            style = TextStyle(
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = DroplyColor.TextPrimary,
+                letterSpacing = (-0.5).sp
+            )
+        )
+        
+        Text(
+            text = "Water Distribution Management",
+            style = TextStyle(
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = DroplyColor.TextSecondary,
+                letterSpacing = 1.sp
+            )
+        )
+    }
+}
+
+@Composable
+private fun WelcomeSection(isSignUp: Boolean) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Text(
+            text = if (isSignUp) "Create Account ✨" else "Welcome back 👋",
+            style = TextStyle(
+                fontSize = 36.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = DroplyColor.TextPrimary,
+                letterSpacing = (-1).sp
+            )
+        )
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Text(
+            text = if (isSignUp) "Join the leading network of water distributors and grow your enterprise."
+                  else "Manage deliveries, customers, inventory and payments from one unified platform.",
+            style = TextStyle(
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = DroplyColor.TextSecondary,
+                lineHeight = 24.sp
+            )
+        )
+    }
+}
+
+@Composable
+private fun LoginGlassCard(
+    isSignUp: Boolean,
+    selectedRole: UserRole,
+    onRoleChange: (UserRole) -> Unit,
+    email: String,
+    onEmailChange: (String) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    passwordVisible: Boolean,
+    onTogglePassword: () -> Unit,
+    signupName: String,
+    onSignupNameChange: (String) -> Unit,
+    signupPhone: String,
+    onSignupPhoneChange: (String) -> Unit,
+    isLoading: Boolean,
+    error: String?,
+    onPrimaryAction: () -> Unit,
+    onForgotPass: () -> Unit,
+    onToggleMode: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 40.dp,
+                shape = RoundedCornerShape(32.dp),
+                ambientColor = Color.Black.copy(alpha = 0.45f),
+                spotColor = Color.Black.copy(alpha = 0.45f)
+            ),
+        shape = RoundedCornerShape(32.dp),
+        color = DroplyColor.Card,
+        border = BorderStroke(1.dp, DroplyColor.Border)
+    ) {
+        Column(
+            modifier = Modifier.padding(32.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            // ── Role Selector ──────────────────────────────────────
+            if (!isSignUp) {
+                PremiumSegmentedControl(
+                    selectedRole = selectedRole,
+                    onRoleChange = onRoleChange
+                )
+            }
+
+            // ── Inputs ─────────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (isSignUp) {
+                    DroplyInput(
+                        value = signupName,
+                        onValueChange = onSignupNameChange,
+                        label = "Business Name",
+                        placeholder = "Acme Water Corp",
+                        icon = Icons.Outlined.Business
+                    )
+                    DroplyInput(
+                        value = signupPhone,
+                        onValueChange = onSignupPhoneChange,
+                        label = "Phone Number",
+                        placeholder = "+1 (555) 000-0000",
+                        icon = Icons.Outlined.Phone,
+                        keyboardType = KeyboardType.Phone
+                    )
+                }
+
+                DroplyInput(
+                    value = email,
+                    onValueChange = onEmailChange,
+                    label = if (selectedRole == UserRole.employee && !isSignUp) "Employee ID" else "Email Address",
+                    placeholder = if (selectedRole == UserRole.employee && !isSignUp) "EMP-12345" else "name@company.com",
+                    icon = Icons.Outlined.Email,
+                    keyboardType = KeyboardType.Email
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DroplyInput(
+                        value = password,
+                        onValueChange = onPasswordChange,
+                        label = "Password",
+                        placeholder = "••••••••",
+                        icon = Icons.Outlined.Lock,
+                        isPassword = true,
+                        passwordVisible = passwordVisible,
+                        onTogglePassword = onTogglePassword
+                    )
+                    
+                    if (!isSignUp) {
+                        Text(
+                            text = "Forgot password? →",
+                            style = TextStyle(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = DroplyColor.Primary
+                            ),
+                            modifier = Modifier
+                                .align(Alignment.End)
+                                .clickable(onClick = onForgotPass)
+                        )
+                    }
+                }
+            }
+
+            // ── Primary Action ─────────────────────────────────────
+            PrimaryActionButton(
+                text = if (isSignUp) "Create Account" else "Sign In to Platform",
+                onClick = onPrimaryAction,
+                enabled = !isLoading && email.isNotBlank() && password.length >= 6,
+                isLoading = isLoading
+            )
+
+            // ── Error State ────────────────────────────────────────
+            if (error != null) {
+                ErrorDisplay(error)
+            }
+
+            // ── Divider ────────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                HorizontalDivider(modifier = Modifier.weight(1f), color = DroplyColor.Border)
+                Text(
+                    text = "  or continue with  ",
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = DroplyColor.Placeholder
+                    )
+                )
+                HorizontalDivider(modifier = Modifier.weight(1f), color = DroplyColor.Border)
+            }
+
+            // ── Google Button ──────────────────────────────────────
+//            GoogleSSOButton()
+
+            // ── Toggle Mode ────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = if (isSignUp) "Already have an account? " else "Don't have an account? ",
+                    style = TextStyle(fontSize = 14.sp, color = DroplyColor.TextSecondary)
+                )
+                Text(
+                    text = if (isSignUp) "Sign In →" else "Sign Up →",
+                    style = TextStyle(
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = DroplyColor.Primary,
+                        textDecoration = TextDecoration.Underline
+                    ),
+                    modifier = Modifier.clickable(onClick = onToggleMode)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumSegmentedControl(
+    selectedRole: UserRole,
+    onRoleChange: (UserRole) -> Unit
+) {
+    val isOwner = selectedRole == UserRole.admin
+    
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .background(DroplyColor.Background, RoundedCornerShape(20.dp))
+            .border(1.dp, DroplyColor.InputBorder.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+            .padding(4.dp)
+    ) {
+        val maxWidth = maxWidth
+        val indicatorWidth = maxWidth / 2
+        val targetOffset = if (isOwner) 0.dp else indicatorWidth
+        
+        val animatedOffset by animateDpAsState(
+            targetValue = targetOffset,
+            animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow),
+            label = "indicator"
+        )
+
+        // Sliding Indicator
+        Box(
+            modifier = Modifier
+                .offset(x = animatedOffset)
+                .width(indicatorWidth)
+                .fillMaxHeight()
+                .shadow(elevation = 8.dp, shape = RoundedCornerShape(16.dp), spotColor = DroplyColor.Primary.copy(alpha = 0.4f))
+                .background(DroplyColor.PrimaryGradient, RoundedCornerShape(16.dp))
+        )
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            RoleTab(
+                label = "Admin",
+                icon = Icons.Rounded.AdminPanelSettings,
+                isSelected = isOwner,
+                modifier = Modifier.weight(1f),
+                onClick = { onRoleChange(UserRole.admin) }
+            )
+            RoleTab(
+                label = "Employee",
+                icon = Icons.Rounded.Badge,
+                isSelected = !isOwner,
+                modifier = Modifier.weight(1f),
+                onClick = { onRoleChange(UserRole.employee) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun RoleTab(
+    label: String,
+    icon: ImageVector,
+    isSelected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    val contentColor by animateColorAsState(
+        targetValue = if (isSelected) Color.White else DroplyColor.TextSecondary,
+        animationSpec = tween(300),
+        label = "color"
+    )
+    
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = label,
+                style = TextStyle(
+                    fontSize = 14.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = contentColor
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun DroplyInput(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
@@ -614,50 +578,290 @@ private fun SaasInputField(
     icon: ImageVector,
     isPassword: Boolean = false,
     passwordVisible: Boolean = false,
-    trailingContent: @Composable (() -> Unit)? = null,
+    onTogglePassword: () -> Unit = {},
+    keyboardType: KeyboardType = KeyboardType.Text
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    var isFocused by remember { mutableStateOf(false) }
+    val glowAlpha by animateFloatAsState(if (isFocused) 0.15f else 0f)
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextSecondary
+            style = TextStyle(
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = DroplyColor.TextSecondary
+            )
         )
 
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .onFocusChanged { isFocused = it.isFocused }
+                .drawWithContent {
+                    if (isFocused) {
+                        // Focus Glow Effect
+                        drawRect(
+                            brush = Brush.radialGradient(
+                                colors = listOf(DroplyColor.Primary.copy(alpha = glowAlpha), Color.Transparent),
+                                center = Offset(size.width / 2, size.height / 2),
+                                radius = size.width
+                            ),
+                            alpha = glowAlpha
+                        )
+                    }
+                    drawContent()
+                },
             placeholder = {
                 Text(
                     text = placeholder,
-                    fontSize = 14.sp,
-                    color = TextMuted
+                    style = TextStyle(fontSize = 16.sp, color = DroplyColor.Placeholder)
                 )
             },
-            visualTransformation = if (isPassword && !passwordVisible) PasswordVisualTransformation()
-            else VisualTransformation.None,
-            shape = RoundedCornerShape(14.dp),
             leadingIcon = {
                 Icon(
                     imageVector = icon,
-                    contentDescription = label,
-                    tint = TextMuted,
+                    contentDescription = null,
+                    tint = if (isFocused) DroplyColor.Primary else DroplyColor.Placeholder,
                     modifier = Modifier.size(20.dp)
                 )
             },
-            trailingIcon = trailingContent,
+            trailingIcon = if (isPassword) {
+                {
+                    IconButton(onClick = onTogglePassword) {
+                        Icon(
+                            imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
+                            contentDescription = null,
+                            tint = DroplyColor.Placeholder,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            } else null,
+            visualTransformation = if (isPassword && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            singleLine = true,
+            shape = RoundedCornerShape(18.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = InputFocusBorder,
-                unfocusedBorderColor = InputBorder,
-                focusedContainerColor = InputBackground,
-                unfocusedContainerColor = InputBackground,
-                cursorColor = EmeraldGreen,
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary,
+                focusedBorderColor = DroplyColor.Primary,
+                unfocusedBorderColor = DroplyColor.InputBorder,
+                focusedContainerColor = DroplyColor.Input,
+                unfocusedContainerColor = DroplyColor.Input,
+                focusedTextColor = DroplyColor.TextPrimary,
+                unfocusedTextColor = DroplyColor.TextPrimary,
+                cursorColor = DroplyColor.Primary
             ),
-            textStyle = TextStyle(fontSize = 14.sp),
-            modifier = Modifier.fillMaxWidth()
+            textStyle = TextStyle(fontSize = 16.sp)
         )
     }
 }
+
+@Composable
+private fun PrimaryActionButton(
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    isLoading: Boolean = false
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (isPressed) 0.97f else 1f)
+
+    Button(
+        onClick = onClick,
+        enabled = enabled && !isLoading,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .scale(scale)
+            .shadow(
+                elevation = if (enabled && !isLoading) 16.dp else 0.dp,
+                shape = RoundedCornerShape(18.dp),
+                spotColor = DroplyColor.Primary.copy(alpha = 0.35f)
+            ),
+        shape = RoundedCornerShape(18.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent,
+            disabledContainerColor = Color.White.copy(alpha = 0.05f)
+        ),
+        contentPadding = PaddingValues(),
+        interactionSource = interactionSource
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    if (enabled && !isLoading) DroplyColor.PrimaryGradient 
+                    else Brush.linearGradient(listOf(Color.Gray.copy(0.1f), Color.Gray.copy(0.1f)))
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    color = Color.White,
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.5.dp
+                )
+            } else {
+                Text(
+                    text = text,
+                    style = TextStyle(
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (enabled) Color.White else DroplyColor.Placeholder
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GoogleSSOButton() {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (isPressed) 0.98f else 1f)
+
+    OutlinedButton(
+        onClick = { },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .scale(scale),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.2.dp, Color.White.copy(alpha = 0.15f)),
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = Color.White.copy(alpha = 0.03f)
+        ),
+        interactionSource = interactionSource
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Google Icon (Simplified Drawing using paths for the 'G')
+            Box(
+                modifier = Modifier.size(20.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val path = Path().apply {
+                        val strokeWidth = 2.5.dp.toPx()
+                        val radius = (size.minDimension - strokeWidth) / 2f
+                        addArc(
+                            androidx.compose.ui.geometry.Rect(
+                                size.width / 2 - radius,
+                                size.height / 2 - radius,
+                                size.width / 2 + radius,
+                                size.height / 2 + radius
+                            ),
+                            startAngleDegrees = 0f,
+                            sweepAngleDegrees = -280f
+                        )
+                    }
+                    drawPath(
+                        path = path,
+                        color = Color.White,
+                        style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                    // The cross bar of the 'G'
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(size.width / 2, size.height / 2),
+                        end = Offset(size.width, size.height / 2),
+                        strokeWidth = 2.5.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.width(16.dp))
+            
+            Text(
+                text = "Continue with Google",
+                style = TextStyle(
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = DroplyColor.TextPrimary
+                )
+            )
+            
+            Spacer(modifier = Modifier.weight(1f))
+            
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                contentDescription = null,
+                tint = DroplyColor.Placeholder,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ErrorDisplay(message: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DroplyColor.Error.copy(alpha = 0.1f), RoundedCornerShape(14.dp))
+            .border(1.dp, DroplyColor.Error.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.ErrorOutline,
+            contentDescription = null,
+            tint = DroplyColor.Error,
+            modifier = Modifier.size(20.dp)
+        )
+        Text(
+            text = message,
+            style = TextStyle(
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = DroplyColor.Error
+            )
+        )
+    }
+}
+
+@Composable
+private fun LoginFooter() {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.alpha(0.6f)
+        ) {
+            Icon(Icons.Rounded.Https, null, tint = DroplyColor.TextSecondary, modifier = Modifier.size(14.dp))
+            Text(
+                text = "Enterprise-grade security",
+                style = TextStyle(fontSize = 12.sp, color = DroplyColor.TextSecondary, fontWeight = FontWeight.Medium)
+            )
+        }
+        
+        Text(
+            text = "Powered by Supabase - safe secure Authentication",
+            style = TextStyle(fontSize = 11.sp, color = DroplyColor.Placeholder, letterSpacing = 0.5.sp)
+        )
+//
+//        Row(
+//            horizontalArrangement = Arrangement.spacedBy(16.dp),
+//            modifier = Modifier.alpha(0.5f)
+//        ) {
+//            Text("Privacy Policy", style = TextStyle(fontSize = 11.sp, color = DroplyColor.Placeholder))
+//            Text("•", style = TextStyle(fontSize = 11.sp, color = DroplyColor.Placeholder))
+//            Text("Terms of Service", style = TextStyle(fontSize = 11.sp, color = DroplyColor.Placeholder))
+//        }
+    }
+}
+

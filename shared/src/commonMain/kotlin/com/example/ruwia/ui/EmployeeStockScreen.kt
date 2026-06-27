@@ -9,16 +9,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -61,23 +68,12 @@ fun EmployeeStockScreen(
         deriveShopStockTotals(visibleShops, visibleMovements, stockItems)
     }
 
-    val cleanShop = shopName.trim().lowercase().substringBefore("·").trim()
-    val isMainShop = cleanShop.startsWith("shop 1") ||
-                     cleanShop.contains("main") ||
-                     cleanShop.contains("warehouse") ||
-                     cleanShop.contains("primary") ||
-                     cleanShop.isBlank()
-
-    val availableUnitsMap = remember(visibleMovements, products, shopName) {
+    val availableUnitsMap = remember(visibleMovements, products) {
         products.associate { product ->
-            if (isMainShop) {
-                product.id to product.stockAvailable
-            } else {
-                val rows = visibleMovements.filter { it.productId == product.id }
-                val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
-                val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-                product.id to (inward - outward).coerceAtLeast(0)
-            }
+            val rows = visibleMovements.filter { it.productId == product.id }
+            val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
+            val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+            product.id to (inward - outward).coerceAtLeast(0)
         }
     }
 
@@ -235,8 +231,9 @@ private fun ProductStockCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 val unitLabel = if (isCan) "Can" else "Case"
+                val displayPrice = if (isCan) product.defaultSellPrice else product.defaultSellPrice * upc
                 Text(
-                    text = "₹${product.defaultSellPrice.toInt()} / $unitLabel  ·  $displayStock $unitLabel${if (displayStock != 1) "s" else ""} Available",
+                    text = "₹${displayPrice.toInt()} / $unitLabel  ·  $displayStock $unitLabel${if (displayStock != 1) "s" else ""} Available",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = RuwiaColor.TextSecondary
@@ -269,73 +266,91 @@ private fun TodayStockCard(
     withCustomer: Double,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    Card(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(RuwiaColor.TealExtraLight)
-            .padding(16.dp)
+            .shadow(4.dp, RoundedCornerShape(24.dp), ambientColor = Color.Black.copy(alpha = 0.05f), spotColor = Color.Black.copy(alpha = 0.05f)),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = RuwiaColor.Surface)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            StockItemCol(
-                value = "${formatCases(available)} Cans",
-                label = "Available Stock",
-                modifier = Modifier.weight(1f)
-            )
-            StockItemDivider()
-            StockItemCol(
-                value = formatCases(empty),
-                label = "Empty Cans",
-                modifier = Modifier.weight(1f)
-            )
-            StockItemDivider()
-            StockItemCol(
-                value = formatCases(withCustomer),
-                label = "With Customer",
-                modifier = Modifier.weight(1f)
-            )
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "Live Inventory",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RuwiaColor.TealPrimary,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "${formatCases(available)} cans",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black,
+                        color = RuwiaColor.TextPrimary
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(RuwiaColor.TealExtraLight, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Inventory2, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(24.dp))
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+            HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.6f))
+            Spacer(Modifier.height(18.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                StockItemSmallCol(
+                    value = formatCases(empty),
+                    label = "Empty Cans",
+                    icon = Icons.AutoMirrored.Rounded.Undo,
+                    color = Color(0xFFF59E0B)
+                )
+                VerticalDivider(modifier = Modifier.height(32.dp), color = RuwiaColor.Divider)
+                StockItemSmallCol(
+                    value = formatCases(withCustomer),
+                    label = "With Customer",
+                    icon = Icons.Rounded.Group,
+                    color = Color(0xFF6366F1)
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun StockItemCol(
+private fun StockItemSmallCol(
     value: String,
     label: String,
-    modifier: Modifier = Modifier
+    icon: ImageVector,
+    color: Color
 ) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = value,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            color = RuwiaColor.TealPrimary
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = label,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            color = RuwiaColor.TextSecondary
-        )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(32.dp).background(color.copy(alpha = 0.1f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
+            Text(label, fontSize = 11.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Medium)
+        }
     }
-}
-
-@Composable
-private fun StockItemDivider() {
-    Box(
-        modifier = Modifier
-            .width(1.dp)
-            .height(24.dp)
-            .background(RuwiaColor.Divider)
-    )
 }
 
 // ── Empty state ──────────────────────────────────────────────────────────────

@@ -31,8 +31,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 
-// ─────────────────────────────────────────────────────────────
-//  Reusable dashboard components — Material Icons only, no emojis
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import org.jetbrains.compose.resources.painterResource
+import ruwia.shared.generated.resources.Res
+import ruwia.shared.generated.resources.new_app_logo
+
 // ─────────────────────────────────────────────────────────────
 
 // ── Section header ────────────────────────────────────────────
@@ -97,17 +101,18 @@ fun NTDashboardHeader(
             .padding(horizontal = NTDp.screenPad, vertical = NTDp.md),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        val initials = adminName.split(" ")
-            .mapNotNull { it.firstOrNull()?.uppercaseChar() }
-            .take(2).joinToString("")
-
         Box(
             modifier = Modifier.size(NTDp.avatarLg).clip(CircleShape)
                 .background(NTColors.AvatarGold)
                 .clickable(onClick = onAvatarClick),
             contentAlignment = Alignment.Center
         ) {
-            Text(initials, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Image(
+                painter = painterResource(Res.drawable.new_app_logo),
+                contentDescription = "Logo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
         }
 
         Spacer(modifier = Modifier.width(NTDp.md))

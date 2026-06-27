@@ -2,6 +2,7 @@ package com.example.ruwia.presentation
 
 import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.unitsPerCase
 
 /**
  * Selectable time window the dashboard chart can display.
@@ -46,6 +47,11 @@ data class DashboardMetrics(
 
     val newCustomersThisMonth: Int,
     val activeSkus: Int,
+    /** Total cases currently on hand across all shops (derived from movements). */
+    val totalStockCases: Double,
+    /** Total empty cans currently at all shops (derived from movements). */
+    val emptyCansAtShop: Int,
+    /** Total cans currently held by all customers (derived from movements). */
     val emptyCansOut: Int,
 
     /** Sum of all `inward` stock movements for the current month. */
@@ -104,7 +110,34 @@ fun AdminState.toDashboardMetrics(
     val custGrowth = pctChange(thisCust.toDouble(), lastCust.toDouble())
 
     val activeSkus = productCategories.count { it.isActive }
-    val emptyCans  = customers.sumOf { it.cansHeld }
+    
+    // ── Live Stock derivation ────────────────────────────────────────────────
+    val liveProductStock = productCategories.associate { p ->
+        val rows = recentMovements.filter { it.productId == p.id }
+        val inward = rows.filter { it.type == "inward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
+        val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+        p.id to (inward - outward).coerceAtLeast(0)
+    }
+    val totalStockCases = productCategories.sumOf { p ->
+        val units = liveProductStock[p.id] ?: 0
+        units.toDouble() / p.unitsPerCase.coerceAtLeast(1)
+    }
+    
+    // ── Live Empty Can derivation ────────────────────────────────────────────
+    // Sum of all 'inward' movements where source starts with "Empty cans".
+    val liveEmptyAtShop = recentMovements
+        .filter { it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+        .sumOf { m -> if (m.type == "inward") m.qty else -m.qty }
+        .coerceAtLeast(0)
+    
+    // Sum of all 'outward' movements (delivered) - Sum of all 'inward' empty returns.
+    val liveCansWithCustomers = recentMovements
+        .filter { it.type == "outward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+        .sumOf { it.qty } - 
+        recentMovements
+        .filter { it.type == "inward" && it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+        .sumOf { it.qty }
+        .let { it.coerceAtLeast(0) }
 
     return DashboardMetrics(
         thisMonthRevenue       = thisMonthRev,
@@ -125,7 +158,9 @@ fun AdminState.toDashboardMetrics(
         customerGrowthPercent  = custGrowth,
         newCustomersThisMonth  = thisCust,
         activeSkus             = activeSkus,
-        emptyCansOut           = emptyCans,
+        totalStockCases        = totalStockCases,
+        emptyCansAtShop        = liveEmptyAtShop,
+        emptyCansOut           = liveCansWithCustomers,
         stockInwardThisMonth   = thisInward,
         stockOutwardThisMonth  = thisOutward,
         isRevenueUp            = (revGrowth ?: 0.0) >= 0.0,

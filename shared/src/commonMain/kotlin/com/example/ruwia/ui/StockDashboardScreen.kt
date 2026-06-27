@@ -951,29 +951,26 @@ internal fun deriveShopStockTotals(
             }
         }
         
-        val productOutward = mutableMapOf<String, Int>()
-        var unknownProductOutward = 0
-        rows.filter { it.type == "outward" && !it.source.isEmptyCansSource() }.forEach { m ->
-            if (m.productId != null) {
-                productOutward[m.productId] = (productOutward[m.productId] ?: 0) + m.qty
-            } else {
-                unknownProductOutward += m.qty
+        // Cans with customers: increase on outward sale, decrease on inward return.
+        var withCust = 0.0
+        rows.forEach { m ->
+            val isReturn = m.source.isEmptyCansSource() && m.type == "inward"
+            val isSale   = !m.source.isEmptyCansSource() && m.type == "outward"
+            if (isReturn || isSale) {
+                val delta = if (isSale) m.qty else -m.qty
+                val p = if (m.productId != null) productMap[m.productId] else null
+                withCust += delta.toDouble() / (p?.unitsPerCase?.coerceAtLeast(1) ?: 1)
             }
-        }
-        var withCust = unknownProductOutward.toDouble()
-        productOutward.forEach { (pid, units) ->
-            val p = productMap[pid]
-            if (p != null) withCust += units.toDouble() / p.unitsPerCase.coerceAtLeast(1) else withCust += units.toDouble()
         }
 
         val fullCans = totalCases
-        val totalCans = fullCans + emptyCases + withCust
+        val totalCans = fullCans + emptyCases + withCust.coerceAtLeast(0.0)
 
         shop.copy(
             totalCans = totalCans,
             fullCans = fullCans,
             emptyCans = emptyCases,
-            cansWithCustomers = withCust,
+            cansWithCustomers = withCust.coerceAtLeast(0.0),
         )
     }
 }

@@ -2,7 +2,9 @@ package com.example.ruwia.ui.admin
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -45,6 +47,7 @@ import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.Instant
 import kotlin.math.*
 
 private object SaaSColors {
@@ -88,12 +91,46 @@ fun ProfitDashboardScreen(
 
     val selectedMonthKey = "$selectedYear-${(selectedMonth + 1).toString().padStart(2, '0')}"
 
+    // ── Date Filtering ──────────────────────────────────────────────────────
+    var filterDate by remember { mutableStateOf<String?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = Clock.System.now().toEpochMilliseconds()
+    )
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        val localDate = Instant.fromEpochMilliseconds(millis)
+                            .toLocalDateTime(TimeZone.UTC).date
+                        filterDate = localDate.toString()
+                        selectedYear = localDate.year
+                        selectedMonth = localDate.monthNumber - 1
+                    }
+                    showDatePicker = false
+                }) { Text("Confirm") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
     LaunchedEffect(selectedMonthKey) {
         onExpenseMonthSelected(selectedMonthKey)
     }
 
     // ── Data Processing ──────────────────────────────────────────────────────
-    val monthSales = state.saleEntries.filter { it.date.startsWith(selectedMonthKey) }
+    val monthSales = state.saleEntries.filter { 
+        if (filterDate != null) it.date == filterDate
+        else it.date.startsWith(selectedMonthKey) 
+    }
     val todaySales = monthSales.filter { it.date == today.date.toString() }
 
     val todayRevenue = todaySales.sumOf { it.totalSelling }
@@ -156,10 +193,20 @@ fun ProfitDashboardScreen(
 
     // Daily Performance Metrics
     val dailySalesMap = monthSales.groupBy { it.date }
-    val dailyRevenueList = (1..30).map { day ->
+    val daysInMonth = when (selectedMonth + 1) {
+        1, 3, 5, 7, 8, 10, 12 -> 31
+        4, 6, 9, 11 -> 30
+        2 -> if (selectedYear % 4 == 0 && (selectedYear % 100 != 0 || selectedYear % 400 == 0)) 29 else 28
+        else -> 30
+    }
+    val daysRange = (1..daysInMonth).toList() // Oldest to newest (chronological)
+    
+    val dailyRevenueList = daysRange.map { day ->
         val dateStr = "$selectedMonthKey-${day.toString().padStart(2, '0')}"
         dailySalesMap[dateStr]?.sumOf { it.totalSelling }?.toFloat() ?: 0f
     }
+    val dailyRevenueLabels = daysRange.map { it.toString() }
+    
     val dailyProfitList = (1..30).map { day ->
         val dateStr = "$selectedMonthKey-${day.toString().padStart(2, '0')}"
         val margin = dailySalesMap[dateStr]?.sumOf { it.totalMargin } ?: 0.0
@@ -173,7 +220,7 @@ fun ProfitDashboardScreen(
 
     var showClearConfirm by remember { mutableStateOf(false) }
     var reportViewMode by remember { mutableStateOf("product") }
-    var transactionSortOrder by remember { mutableStateOf("newest") }
+    var transactionSortOrder by remember { mutableStateOf("oldest") }
 
     if (showClearConfirm) {
         AlertDialog(
@@ -210,7 +257,10 @@ fun ProfitDashboardScreen(
                 year     = selectedYear,
                 onYearChange = { selectedYear = it },
                 onBack   = onBack,
-                onClear  = { showClearConfirm = true }
+                onClear  = { showClearConfirm = true },
+                filterDate = filterDate,
+                onOpenPicker = { showDatePicker = true },
+                onClearFilter = { filterDate = null }
             )
             LazyColumn(
                 modifier = Modifier.weight(1f),
@@ -245,7 +295,8 @@ fun ProfitDashboardScreen(
                     totalProfit  = totalProfit,
                     margin       = profitMargin,
                     growth       = growthRate,
-                    chartData    = dailyRevenueList
+                    chartData    = dailyRevenueList,
+                    labels       = dailyRevenueLabels
                 )
                 Spacer(Modifier.height(24.dp))
             }
@@ -463,7 +514,16 @@ fun ProfitDashboardScreen(
 // ── Components ───────────────────────────────────────────────────────────────
 
 @Composable
-private fun TopBarSection(title: String, year: Int, onYearChange: (Int) -> Unit, onBack: () -> Unit, onClear: () -> Unit) {
+private fun TopBarSection(
+    title: String, 
+    year: Int, 
+    onYearChange: (Int) -> Unit, 
+    onBack: () -> Unit, 
+    onClear: () -> Unit,
+    filterDate: String? = null,
+    onOpenPicker: () -> Unit = {},
+    onClearFilter: () -> Unit = {}
+) {
     var dropdownExpanded by remember { mutableStateOf(false) }
     
     Box(
@@ -510,6 +570,36 @@ private fun TopBarSection(title: String, year: Int, onYearChange: (Int) -> Unit,
             }
             
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (filterDate != null) {
+                    Surface(
+                        onClick = onClearFilter,
+                        shape = RoundedCornerShape(10.dp),
+                        color = SaaSColors.Error.copy(alpha = 0.1f),
+                        border = BorderStroke(1.dp, SaaSColors.Error.copy(alpha = 0.3f)),
+                        modifier = Modifier.height(38.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Rounded.EventAvailable, null, tint = SaaSColors.Error, modifier = Modifier.size(16.dp))
+                            Text(formatDateString(filterDate), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Error)
+                            Icon(Icons.Rounded.Close, null, tint = SaaSColors.Error, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                } else {
+                    IconButton(
+                        onClick = onOpenPicker,
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(SaaSColors.SurfaceVar, RoundedCornerShape(10.dp))
+                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(10.dp))
+                    ) {
+                        Icon(Icons.Rounded.CalendarToday, "Filter by Date", tint = SaaSColors.Primary, modifier = Modifier.size(18.dp))
+                    }
+                }
+
                 IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
                     Icon(Icons.Rounded.DeleteSweep, "Clear Data", tint = SaaSColors.Error, modifier = Modifier.size(20.dp))
                 }
@@ -831,7 +921,7 @@ private fun TodaySummaryCard(revenue: Double, expenses: Double, profit: Double) 
 }
 
 @Composable
-private fun RevenueAnalyticsSection(totalRev: Double, totalProfit: Double, margin: Double, growth: Double, chartData: List<Float>) {
+private fun RevenueAnalyticsSection(totalRev: Double, totalProfit: Double, margin: Double, growth: Double, chartData: List<Float>, labels: List<String>) {
     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Revenue Analytics", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
@@ -857,7 +947,7 @@ private fun RevenueAnalyticsSection(totalRev: Double, totalProfit: Double, margi
         
         Spacer(Modifier.height(24.dp))
         
-        SaaSBarChart(points = chartData, modifier = Modifier.fillMaxWidth().height(180.dp))
+        SaaSBarChart(points = chartData, labels = labels, modifier = Modifier.fillMaxWidth().height(180.dp))
     }
 }
 
@@ -1564,7 +1654,7 @@ private fun FABActionItem(label: String, icon: ImageVector, onClick: () -> Unit)
 // ── Custom Charts ────────────────────────────────────────────────────────────
 
 @Composable
-private fun SaaSBarChart(points: List<Float>, modifier: Modifier = Modifier) {
+private fun SaaSBarChart(points: List<Float>, labels: List<String>, modifier: Modifier = Modifier) {
     val textMeasurer = rememberTextMeasurer()
     val textStyle = TextStyle(
         fontSize = 9.sp,
@@ -1573,15 +1663,33 @@ private fun SaaSBarChart(points: List<Float>, modifier: Modifier = Modifier) {
     )
     val maxPoint = points.maxOrNull()?.coerceAtLeast(1f) ?: 1f
     
+    // Touch interaction state
+    var selectedIndex by remember { mutableStateOf(-1) }
+    val scrollState = rememberScrollState()
+
+    // 1. Remove tooltip when scrolling
+    LaunchedEffect(scrollState.isScrollInProgress) {
+        if (scrollState.isScrollInProgress) {
+            selectedIndex = -1
+        }
+    }
+
+    // 2. Auto-scroll to today's date on first load so user sees recent data first
+    LaunchedEffect(points) {
+        if (points.isNotEmpty()) {
+            scrollState.animateScrollTo(Int.MAX_VALUE)
+        }
+    }
+    
     Row(modifier = modifier) {
         // 1. Fixed Y-axis (Left)
-        Canvas(modifier = Modifier.width(50.dp).fillMaxHeight()) {
+        Canvas(modifier = Modifier.width(52.dp).fillMaxHeight()) {
             val height = size.height
-            val bottomPadding = 20.dp.toPx()
-            val topPadding = 10.dp.toPx()
+            val bottomPadding = 24.dp.toPx()
+            val topPadding = 16.dp.toPx()
             val graphHeight = height - bottomPadding - topPadding
             
-            val yTicks = 4
+            val yTicks = 5
             for (i in 0 until yTicks) {
                 val fraction = i.toFloat() / (yTicks - 1)
                 val y = height - bottomPadding - (fraction * graphHeight)
@@ -1592,9 +1700,9 @@ private fun SaaSBarChart(points: List<Float>, modifier: Modifier = Modifier) {
                 
                 drawText(
                     textLayoutResult = textLayoutResult,
-                    color = SaaSColors.TextMuted,
+                    color = SaaSColors.TextMuted.copy(alpha = 0.8f),
                     topLeft = Offset(
-                        x = size.width - textLayoutResult.size.width - 8.dp.toPx(),
+                        x = size.width - textLayoutResult.size.width - 12.dp.toPx(),
                         y = y - textLayoutResult.size.height / 2f
                     )
                 )
@@ -1602,10 +1710,9 @@ private fun SaaSBarChart(points: List<Float>, modifier: Modifier = Modifier) {
         }
         
         // 2. Scrollable Graph Area (Right)
-        val barWidth = 28.dp
-        val barGap = 5.dp
+        val barWidth = 24.dp
+        val barGap = 8.dp
         val stepWidth = barWidth + barGap
-        val scrollState = rememberScrollState()
         
         Box(
             modifier = Modifier
@@ -1618,24 +1725,33 @@ private fun SaaSBarChart(points: List<Float>, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .width(totalContentWidth)
                     .fillMaxHeight()
+                    .pointerInput(points) {
+                        detectTapGestures { offset ->
+                            val idx = (offset.x / stepWidth.toPx()).toInt()
+                            selectedIndex = if (idx in points.indices) {
+                                if (selectedIndex == idx) -1 else idx
+                            } else -1
+                        }
+                    }
             ) {
                 val width = size.width
                 val height = size.height
                 
-                val bottomPadding = 20.dp.toPx()
-                val topPadding = 10.dp.toPx()
+                val bottomPadding = 24.dp.toPx()
+                val topPadding = 16.dp.toPx()
                 val graphHeight = height - bottomPadding - topPadding
                 
-                val yTicks = 4
+                // Draw background horizontal grid lines
+                val yTicks = 5
                 for (i in 0 until yTicks) {
                     val fraction = i.toFloat() / (yTicks - 1)
                     val y = height - bottomPadding - (fraction * graphHeight)
                     
                     drawLine(
-                        color = SaaSColors.Border.copy(alpha = 0.5f),
+                        color = SaaSColors.Border.copy(alpha = 0.3f),
                         start = Offset(0f, y),
                         end = Offset(width, y),
-                        strokeWidth = 1.dp.toPx()
+                        strokeWidth = 0.8.dp.toPx()
                     )
                 }
                 
@@ -1646,6 +1762,15 @@ private fun SaaSBarChart(points: List<Float>, modifier: Modifier = Modifier) {
                     val right = left + barWidth.toPx()
                     val bottom = height - bottomPadding
                     
+                    // Selected bar highlight (vertical background line)
+                    if (i == selectedIndex) {
+                        drawRect(
+                            color = SaaSColors.Primary.copy(alpha = 0.05f),
+                            topLeft = Offset(left - (barGap.toPx() / 4f), topPadding),
+                            size = Size(barWidth.toPx() + (barGap.toPx() / 2f), graphHeight)
+                        )
+                    }
+
                     if (barHeight > 0f) {
                         val path = Path().apply {
                             addRoundRect(
@@ -1654,39 +1779,106 @@ private fun SaaSBarChart(points: List<Float>, modifier: Modifier = Modifier) {
                                     top = top,
                                     right = right,
                                     bottom = bottom,
-                                    topLeftCornerRadius = CornerRadius(4.dp.toPx()),
-                                    topRightCornerRadius = CornerRadius(4.dp.toPx()),
+                                    topLeftCornerRadius = CornerRadius(6.dp.toPx()),
+                                    topRightCornerRadius = CornerRadius(6.dp.toPx()),
                                     bottomLeftCornerRadius = CornerRadius(0f),
                                     bottomRightCornerRadius = CornerRadius(0f)
                                 )
                             )
                         }
+                        
+                        // Professional Gradient
+                        val barColor = if (i == selectedIndex) SaaSColors.Primary else SaaSColors.Primary.copy(alpha = 0.85f)
                         drawPath(
                             path = path,
-                            color = SaaSColors.Primary
+                            brush = Brush.verticalGradient(
+                                colors = listOf(barColor, barColor.copy(alpha = 0.7f)),
+                                startY = top,
+                                endY = bottom
+                            )
                         )
                     }
                     
-                    val day = i + 1
-                    if (day == 1 || day % 5 == 0 || day == points.size) {
-                        val labelText = day.toString()
-                        val textLayoutResult = textMeasurer.measure(labelText, style = textStyle)
+                    // X-Axis Labels
+                    val labelText = labels.getOrNull(i) ?: ""
+                    if (i == 0 || i == points.size - 1 || i % 5 == 0 || i == selectedIndex) {
+                        val textLayoutResult = textMeasurer.measure(labelText, style = textStyle.copy(
+                            fontWeight = if (i == selectedIndex) FontWeight.Bold else FontWeight.Medium,
+                            color = if (i == selectedIndex) SaaSColors.TextPrimary else SaaSColors.TextMuted
+                        ))
                         drawText(
                             textLayoutResult = textLayoutResult,
-                            color = SaaSColors.TextMuted,
                             topLeft = Offset(
                                 x = left + (barWidth.toPx() - textLayoutResult.size.width) / 2f,
-                                y = height - bottomPadding + 4.dp.toPx()
+                                y = height - bottomPadding + 6.dp.toPx()
                             )
                         )
                     }
                 }
+
+                // Draw Enhanced Tooltip
+                if (selectedIndex != -1 && selectedIndex in points.indices) {
+                    val p = points[selectedIndex]
+                    val barHeight = (p / maxPoint) * graphHeight
+                    val left = selectedIndex * stepWidth.toPx() + (barGap.toPx() / 2f)
+                    val top = height - bottomPadding - barHeight
+                    
+                    val tooltipText = "₹${formatValue(p.toDouble())}"
+                    val textResult = textMeasurer.measure(tooltipText, style = textStyle.copy(
+                        color = Color.White, 
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp
+                    ))
+                    
+                    val hPadding = 10.dp.toPx()
+                    val vPadding = 6.dp.toPx()
+                    val tooltipWidth = textResult.size.width + hPadding * 2
+                    val tooltipHeight = textResult.size.height + vPadding * 2
+                    
+                    val tooltipLeft = (left + barWidth.toPx() / 2f - tooltipWidth / 2f).coerceIn(4.dp.toPx(), width - tooltipWidth - 4.dp.toPx())
+                    val tooltipTop = (top - tooltipHeight - 10.dp.toPx()).coerceAtLeast(4.dp.toPx())
+                    
+                    // Tooltip Shadow (Simulated)
+                    drawRoundRect(
+                        color = Color.Black.copy(alpha = 0.15f),
+                        topLeft = Offset(tooltipLeft + 2.dp.toPx(), tooltipTop + 2.dp.toPx()),
+                        size = Size(tooltipWidth, tooltipHeight),
+                        cornerRadius = CornerRadius(8.dp.toPx())
+                    )
+
+                    // Tooltip Container
+                    drawRoundRect(
+                        color = Color(0xFF1E293B), // Dark blue-grey professional color
+                        topLeft = Offset(tooltipLeft, tooltipTop),
+                        size = Size(tooltipWidth, tooltipHeight),
+                        cornerRadius = CornerRadius(8.dp.toPx())
+                    )
+                    
+                    // Tooltip Arrow (Small triangle)
+                    val arrowPath = Path().apply {
+                        val centerX = left + barWidth.toPx() / 2f
+                        moveTo(centerX - 6.dp.toPx(), tooltipTop + tooltipHeight)
+                        lineTo(centerX + 6.dp.toPx(), tooltipTop + tooltipHeight)
+                        lineTo(centerX, tooltipTop + tooltipHeight + 6.dp.toPx())
+                        close()
+                    }
+                    drawPath(arrowPath, Color(0xFF1E293B))
+
+                    drawText(
+                        textLayoutResult = textResult,
+                        topLeft = Offset(
+                            x = tooltipLeft + (tooltipWidth - textResult.size.width) / 2f,
+                            y = tooltipTop + (tooltipHeight - textResult.size.height) / 2f
+                        )
+                    )
+                }
                 
+                // Base line
                 drawLine(
-                    color = SaaSColors.Border,
+                    color = SaaSColors.Border.copy(alpha = 0.8f),
                     start = Offset(0f, height - bottomPadding),
                     end = Offset(width, height - bottomPadding),
-                    strokeWidth = 1.dp.toPx()
+                    strokeWidth = 1.2.dp.toPx()
                 )
             }
         }

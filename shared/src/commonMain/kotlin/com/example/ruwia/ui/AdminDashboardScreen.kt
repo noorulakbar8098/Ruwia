@@ -19,12 +19,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.Order
-import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.presentation.AdminViewModel
 import com.example.ruwia.presentation.DashboardMetrics
@@ -51,6 +54,19 @@ fun AdminDashboardScreen(
     adminEmail: String = "",
 ) {
     val state by vm.state.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.loadData()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AdminDashboardContentSwitcher(
@@ -308,7 +324,7 @@ private fun AdminDashboardContent(
         state.toDashboardMetrics(selectedRange.toDashboardRange())
     }
 
-    val totalStock     = state.stockItems.sumOf { it.stockAvailable.toDouble() / it.unitsPerCase.coerceAtLeast(1) }
+    val totalStock     = metrics.totalStockCases
     val pendingOrders  = state.orders.count { it.status == "pending" }
     val deliveredToday = state.orders.count { it.status == "delivered" }
     val activeStaff    = state.employees.count { it.status != "inactive" }
@@ -785,7 +801,7 @@ private fun formatPctShort(p: Double): String {
  * red = down, neutral grey when there's no last-month baseline).
  */
 private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiItem> {
-    val totalStock = state.stockItems.sumOf { it.stockAvailable.toDouble() / it.unitsPerCase.coerceAtLeast(1) }
+    val totalStock = metrics.totalStockCases
 
     // ── 1. Stock on hand ─────────────────────────────────────
     val stockKpi = run {
@@ -827,19 +843,19 @@ private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiI
         )
     }
 
-    // ── 3. Empty cans (no time-series available, show field count only) ──
+    // ── 3. Empty cans (live derivation from movements) ──
     val cansKpi = NTKpiItem(
         title         = "EMPTY CANS",
-        value         = "${metrics.emptyCansOut}",
-        subtitle      = "With customers",
+        value         = "${metrics.emptyCansAtShop}",
+        subtitle      = "Available at shop",
         subtitleColor = NTColors.TextSecondary,
-        icon          = Icons.Rounded.Water,
+        icon          = Icons.AutoMirrored.Rounded.Undo,
         iconBg        = Color(0xFFFFF3E8),
         iconFg        = Color(0xFFF97316),
         accentColor   = Color(0xFFF97316),
-        footerText    = "/*${state.customers.count { it.cansHeld > 0 }} customers holding cans*/",
-        footerIcon    = Icons.Rounded.Schedule,
-        footerColor   = Color(0xFFF97316),
+        footerText    = "${metrics.emptyCansOut} with customers",
+        footerIcon    = Icons.Rounded.Group,
+        footerColor   = NTColors.TextTertiary,
         cardIndex     = 2,
     )
 

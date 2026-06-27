@@ -22,7 +22,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import org.jetbrains.compose.resources.painterResource
+import ruwia.shared.generated.resources.Res
+import ruwia.shared.generated.resources.new_app_logo
 import com.example.ruwia.presentation.AdminState
+import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import com.example.ruwia.ui.dashboard.*
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
@@ -49,6 +55,15 @@ fun SettingsScreen(
     var darkMode     by remember { mutableStateOf(NTColors.isDarkMode) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var isLoggingOut by remember { mutableStateOf(false) }
+
+    if (isLoggingOut) {
+        SaaSLoadingOverlay(message = "Signing Out")
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(1000L)
+            onLogout()
+        }
+    }
 
     val shopCount  = state.shopStocks.size.coerceAtLeast(2)
     val staffCount = state.employees.size
@@ -88,7 +103,7 @@ fun SettingsScreen(
                 TextButton(
                     onClick = {
                         showLogoutDialog = false
-                        onLogout()
+                        isLoggingOut = true
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = NTColors.Error)
                 ) {
@@ -186,11 +201,11 @@ fun SettingsScreen(
                                         .background(Brush.linearGradient(listOf(NTColors.Primary, NTColors.PrimaryMid))),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Opacity,
+                                    Image(
+                                        painter = painterResource(Res.drawable.new_app_logo),
                                         contentDescription = "Neerthuli Logo",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(30.dp)
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
                                     )
                                 }
                                 Spacer(Modifier.width(16.dp))
@@ -212,30 +227,30 @@ fun SettingsScreen(
                                         )
                                         Spacer(Modifier.height(4.dp))
                                     }
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(NTColors.AccentLight)
-                                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                "Business Pro",
-                                                color = NTColors.Accent,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                        Text(
-                                            "★★★★ Premium",
-                                            fontSize = 11.sp,
-                                            color = NTColors.Accent,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
+//                                    Row(
+//                                        verticalAlignment = Alignment.CenterVertically,
+//                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+//                                    ) {
+//                                        Box(
+//                                            modifier = Modifier
+//                                                .clip(RoundedCornerShape(6.dp))
+//                                                .background(NTColors.AccentLight)
+//                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+//                                        ) {
+//                                            Text(
+//                                                "Business Pro",
+//                                                color = NTColors.Accent,
+//                                                fontSize = 10.sp,
+//                                                fontWeight = FontWeight.Bold
+//                                            )
+//                                        }
+//                                        Text(
+//                                            "★★★★ Premium",
+//                                            fontSize = 11.sp,
+//                                            color = NTColors.Accent,
+//                                            fontWeight = FontWeight.SemiBold
+//                                        )
+//                                    }
                                 }
                             }
                             
@@ -319,49 +334,49 @@ fun SettingsScreen(
                 }
 
                 // ── 5. Danger Zone ──
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = NTColors.ErrorLight),
-                        border = BorderStroke(1.dp, NTColors.Error)
-                    ) {
-                        Column(modifier = Modifier.padding(20.dp)) {
-                            Text(
-                                "DANGER ZONE",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = NTColors.ErrorText,
-                                letterSpacing = 1.2.sp
-                            )
-                            Spacer(Modifier.height(14.dp))
-                            
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { showDeleteDialog = true }
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(NTColors.ErrorLight),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(Icons.Rounded.DeleteForever, null, tint = NTColors.Error, modifier = Modifier.size(20.dp))
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Delete All Data", color = NTColors.ErrorText, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text("Permanently erase database transactions", color = NTColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                                }
-                                Icon(Icons.Rounded.ChevronRight, null, tint = NTColors.Error, modifier = Modifier.size(20.dp))
-                            }
-                        }
-                    }
-                }
+//                item {
+//                    Card(
+//                        modifier = Modifier.fillMaxWidth(),
+//                        shape = RoundedCornerShape(24.dp),
+//                        colors = CardDefaults.cardColors(containerColor = NTColors.ErrorLight),
+//                        border = BorderStroke(1.dp, NTColors.Error)
+//                    ) {
+//                        Column(modifier = Modifier.padding(20.dp)) {
+//                            Text(
+//                                "DANGER ZONE",
+//                                fontSize = 11.sp,
+//                                fontWeight = FontWeight.Bold,
+//                                color = NTColors.ErrorText,
+//                                letterSpacing = 1.2.sp
+//                            )
+//                            Spacer(Modifier.height(14.dp))
+//
+//                            Row(
+//                                modifier = Modifier
+//                                    .fillMaxWidth()
+//                                    .clickable { showDeleteDialog = true }
+//                                    .padding(vertical = 4.dp),
+//                                verticalAlignment = Alignment.CenterVertically,
+//                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+//                            ) {
+//                                Box(
+//                                    modifier = Modifier
+//                                        .size(36.dp)
+//                                        .clip(RoundedCornerShape(8.dp))
+//                                        .background(NTColors.ErrorLight),
+//                                    contentAlignment = Alignment.Center
+//                                ) {
+//                                    Icon(Icons.Rounded.DeleteForever, null, tint = NTColors.Error, modifier = Modifier.size(20.dp))
+//                                }
+//                                Column(modifier = Modifier.weight(1f)) {
+//                                    Text("Delete All Data", color = NTColors.ErrorText, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+//                                    Text("Permanently erase database transactions", color = NTColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+//                                }
+//                                Icon(Icons.Rounded.ChevronRight, null, tint = NTColors.Error, modifier = Modifier.size(20.dp))
+//                            }
+//                        }
+//                    }
+//                }
                 
                 // ── 6. Sign Out Button ──
                 item {

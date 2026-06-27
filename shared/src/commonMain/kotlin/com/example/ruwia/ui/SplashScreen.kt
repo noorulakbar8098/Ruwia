@@ -11,7 +11,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -22,7 +24,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.app_logo
+import ruwia.shared.generated.resources.app_icon
 
 // SaaS dark palette (consistent with Login)
 private val DarkSurface = Color(0xFF0D1B2A)
@@ -70,12 +72,13 @@ fun SplashScreen(
 
             // ── Actual Logo Image with pulse animation ────────────────────
             Image(
-                painter = painterResource(Res.drawable.app_logo),
+                painter = painterResource(Res.drawable.app_icon),
                 contentDescription = "App Logo",
-                contentScale = ContentScale.Fit,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(220.dp)
                     .scale(pulseScale)
+                    .clip(RoundedCornerShape(15.dp))
             )
 
             Spacer(modifier = Modifier.height(24.dp))

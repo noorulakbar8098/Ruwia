@@ -194,14 +194,9 @@ private fun ProductPriceCard(
                     color = NTColors.TextPrimary,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    lineHeight = 22.sp
+                    lineHeight = 22.sp,
+                    modifier = Modifier.padding(bottom = 8.dp)
                 )
-                if (item.tags.isNotEmpty()) {
-                    Text(item.tags, color = NTColors.TextTertiary,
-                        fontSize = 11.sp, fontWeight = FontWeight.Medium,
-                        letterSpacing = 0.3.sp,
-                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp))
-                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PriceChip(label = "COST", amount = "₹${item.costPrice.toInt()}",
                         bg = NTColors.SurfaceVar, fg = NTColors.TextSecondary)

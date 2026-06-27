@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,7 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -28,6 +31,7 @@ import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.unitsPerCase
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import com.example.ruwia.presentation.EmployeeViewModel
@@ -40,6 +44,14 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
 import com.example.ruwia.ui.dashboard.NTNavTab
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import org.jetbrains.compose.resources.painterResource
+import ruwia.shared.generated.resources.Res
+import ruwia.shared.generated.resources.new_app_logo
 
 // ── Entry display model ──────────────────────────────────────────────────────
 
@@ -61,7 +73,7 @@ private fun DeliveryTask.toEntryDisplay(): EntryDisplay = EntryDisplay(
 
 private fun StockMovement.toEntryDisplay(): EntryDisplay = EntryDisplay(
     name     = source,
-    detail   = "$qty units · ${createdAt?.take(10) ?: ""}",
+    detail   = "$qty units · ${formatCreatedAtTime(createdAt)}",
     amount   = if (type == "inward") "+$qty" else "-$qty",
     status   = type.uppercase(),
     isInward = type == "inward",
@@ -96,6 +108,20 @@ fun EmployeeDashboardScreen(
     userEmail: String = "",
 ) {
     val state by vm.state.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.loadDashboard()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -106,6 +132,15 @@ fun EmployeeDashboardScreen(
     var screen by remember { mutableStateOf<EmpScreen>(EmpScreen.Home) }
     var selectedTab by remember { mutableStateOf(0) }
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var isLoggingOut by remember { mutableStateOf(false) }
+
+    if (isLoggingOut) {
+        SaaSLoadingOverlay(message = "Signing Out")
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(1000L)
+            onLogout()
+        }
+    }
 
     if (showLogoutDialog) {
         AlertDialog(
@@ -114,7 +149,10 @@ fun EmployeeDashboardScreen(
             text    = { Text("Are you sure you want to log out of your account?") },
             confirmButton = {
                 TextButton(
-                    onClick = { showLogoutDialog = false; onLogout() },
+                    onClick = {
+                        showLogoutDialog = false
+                        isLoggingOut = true
+                    },
                     colors  = ButtonDefaults.textButtonColors(contentColor = Color(0xFFCC3333)),
                 ) { Text("Logout", fontWeight = FontWeight.Bold) }
             },
@@ -190,13 +228,14 @@ fun EmployeeDashboardScreen(
                         val lines = items.mapNotNull { item ->
                             val product = state.productCategories.getOrNull(item.productIdx) ?: return@mapNotNull null
                             val upc = product.unitsPerCase.coerceAtLeast(1)
-                            val sellPrice = item.sellPriceText.toDoubleOrNull() ?: product.defaultSellPrice
+                            // item.sellPriceText is now Case Price if upc > 1
+                            val sellPricePerCase = item.sellPriceText.toDoubleOrNull() ?: (product.defaultSellPrice * upc)
                             com.example.ruwia.data.EmployeeRepository.SaleLine(
                                 productId            = product.id,
                                 productName          = product.displayName.ifBlank { product.name },
                                 qty                  = item.qty * upc,  // cases → units
-                                sellingPricePerUnit  = sellPrice / upc,  // case price → unit price
-                                purchasePricePerUnit = product.purchasePriceGC / upc,
+                                sellingPricePerUnit  = sellPricePerCase / upc,  // case price → unit price
+                                purchasePricePerUnit = product.purchasePriceGC, // This was also wrong?
                             )
                         }
                         if (lines.isNotEmpty()) {
@@ -269,6 +308,7 @@ fun EmployeeDashboardScreen(
                             dailyEarnings  = state.dailyEarnings,
                             currentDate    = state.currentDate,
                             isLoading      = state.loading,
+                            products       = state.productCategories,
                             onRefresh      = { vm.loadDashboard() },
                             contentPadding = padding,
                         )
@@ -326,15 +366,18 @@ private data class HomeActivityItem(
 )
 
 private fun formatCreatedAtTime(createdAt: String?): String {
-    if (createdAt == null) return ""
-    // e.g. "2026-06-24T11:30:00Z" or "2026-06-24 11:30:00"
-    val timePart = createdAt.split("T").getOrNull(1) ?: createdAt.split(" ").getOrNull(1) ?: return ""
-    val parts = timePart.split(":")
-    val hour = parts.getOrNull(0)?.toIntOrNull() ?: return ""
-    val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
-    val hh = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
-    val ampm = if (hour >= 12) "PM" else "AM"
-    return "$hh:${minute.toString().padStart(2, '0')} $ampm"
+    if (createdAt.isNullOrBlank()) return ""
+    return try {
+        // Parse full ISO-8601 UTC string from Supabase and convert to local timezone
+        // so the activity feed shows the correct wall-clock time for the device.
+        val instant = Instant.parse(createdAt)
+        val local   = instant.toLocalDateTime(TimeZone.currentSystemDefault())
+        val h       = local.hour
+        val hh      = if (h == 0) 12 else if (h > 12) h - 12 else h
+        val ampm    = if (h >= 12) "PM" else "AM"
+        val mm      = local.minute.toString().padStart(2, '0')
+        "$hh:$mm $ampm"
+    } catch (_: Exception) { "" }
 }
 
 private fun StockMovement.toHomeActivityItem(): HomeActivityItem {
@@ -424,9 +467,20 @@ private fun EmployeeHomeContent(
                     onLogout       = onLogout,
                     onProfileClick = onProfileClick,
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(20.dp))
             }
         }
+
+//        // ── Today's Performance ─────────────────────
+//        item {
+//            TodayPerformanceCard(
+//                earnings = state.dailyEarnings,
+//                inward   = state.todayInward,
+//                outward  = state.todayOutward,
+//                modifier = Modifier.padding(horizontal = 20.dp)
+//            )
+//            Spacer(Modifier.height(24.dp))
+//        }
 
         // ── Today's Stock Card ───────────────────────
         item {
@@ -550,39 +604,58 @@ private fun EmpHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Column {
-            val greeting = remember {
-                try {
-                    val hour = Clock.System.now()
-                        .toLocalDateTime(TimeZone.currentSystemDefault()).hour
-                    when {
-                        hour < 12 -> "Good Morning"
-                        hour < 17 -> "Good Afternoon"
-                        else      -> "Good Evening"
-                    }
-                } catch (_: Exception) { "Good Morning" }
-            }
-            Text(
-                text = greeting,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = RuwiaColor.TextSecondary,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = name,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = RuwiaColor.TextPrimary,
-            )
-            if (shopInfo.isNotEmpty()) {
-                val formattedShop = remember(shopInfo) { shopInfo.replace("·", "•") }
-                Text(
-                    text = formattedShop,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = RuwiaColor.TextMuted,
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(RuwiaColor.TealPrimary, RuwiaColor.TealDark)))
+                    .clickable(onClick = onProfileClick),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(Res.drawable.new_app_logo),
+                    contentDescription = "Logo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
+            }
+
+            Spacer(Modifier.width(14.dp))
+
+            Column {
+                val greeting = remember {
+                    try {
+                        val hour = Clock.System.now()
+                            .toLocalDateTime(TimeZone.currentSystemDefault()).hour
+                        when {
+                            hour < 12 -> "Good Morning"
+                            hour < 17 -> "Good Afternoon"
+                            else      -> "Good Evening"
+                        }
+                    } catch (_: Exception) { "Good Morning" }
+                }
+                Text(
+                    text = "$greeting,",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = RuwiaColor.TextSecondary,
+                )
+                Text(
+                    text = name,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = RuwiaColor.TextPrimary,
+                )
+                if (shopInfo.isNotEmpty()) {
+                    val formattedShop = remember(shopInfo) { shopInfo.replace("·", "•") }
+                    Text(
+                        text = formattedShop,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RuwiaColor.TealPrimary,
+                    )
+                }
             }
         }
 
@@ -593,9 +666,9 @@ private fun EmpHeader(
             // Notification Icon inside Elevated Container
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .background(RuwiaColor.MintLight, RoundedCornerShape(10.dp))
-                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
+                    .size(42.dp)
+                    .background(RuwiaColor.Surface, RoundedCornerShape(12.dp))
+                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
                     .clickable { /* Notifications */ },
                 contentAlignment = Alignment.Center
             ) {
@@ -603,29 +676,110 @@ private fun EmpHeader(
                     Icons.Rounded.Notifications,
                     contentDescription = "Notifications",
                     tint = RuwiaColor.TextSecondary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(20.dp)
                 )
+            }
+        }
+    }
+}
+
+// ── Today's Performance Card ───────────────────────────────────────────────────
+
+@Composable
+private fun TodayPerformanceCard(
+    earnings: Double,
+    inward: Int,
+    outward: Int,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(6.dp, RoundedCornerShape(24.dp), ambientColor = RuwiaColor.TealPrimary.copy(alpha = 0.1f), spotColor = RuwiaColor.TealPrimary.copy(alpha = 0.1f)),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = RuwiaColor.TealDark)
+    ) {
+        Column(modifier = Modifier.padding(24.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "TODAY'S EARNINGS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.7f),
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "₹${earnings.toInt()}",
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color.White
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(14.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Payments, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                }
             }
 
-            // Profile Initials inside Elevated Container
-            val initials = name.split(" ")
-                .take(2).joinToString("") { it.firstOrNull()?.toString()?.uppercase() ?: "" }
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(RuwiaColor.MintLight, RoundedCornerShape(10.dp))
-                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClick = onProfileClick),
-                contentAlignment = Alignment.Center
+            Spacer(Modifier.height(20.dp))
+            HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+            Spacer(Modifier.height(18.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = initials,
-                    color = RuwiaColor.TealPrimary,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
+                PerformanceStat(
+                    label = "Full in",
+                    value = "$inward",
+                    icon = Icons.Rounded.ArrowDownward,
+                    color = RuwiaColor.TealLight
+                )
+                PerformanceStat(
+                    label = "Sold out",
+                    value = "$outward",
+                    icon = Icons.Rounded.ArrowUpward,
+                    color = Color(0xFFFCA5A5) // Soft red
+                )
+                PerformanceStat(
+                    label = "Deliveries",
+                    value = "${outward}", // Simplified
+                    icon = Icons.Rounded.LocalShipping,
+                    color = Color(0xFFC7D2FE) // Soft indigo
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun PerformanceStat(
+    label: String,
+    value: String,
+    icon: ImageVector,
+    color: Color
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(28.dp).background(color.copy(alpha = 0.2f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(value, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text(label, fontSize = 9.sp, color = Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -639,74 +793,91 @@ private fun TodayStockCard(
     withCustomer: Double,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    Card(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(RuwiaColor.Surface)
-            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(20.dp))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .shadow(4.dp, RoundedCornerShape(24.dp), ambientColor = Color.Black.copy(alpha = 0.05f), spotColor = Color.Black.copy(alpha = 0.05f)),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = RuwiaColor.Surface)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            StockItemCol(
-                value = formatCases(available),
-                label = "Available",
-                modifier = Modifier.weight(1f)
-            )
-            StockItemDivider()
-            StockItemCol(
-                value = formatCases(empty),
-                label = "Empty",
-                modifier = Modifier.weight(1f)
-            )
-            StockItemDivider()
-            StockItemCol(
-                value = formatCases(withCustomer),
-                label = "Customer",
-                modifier = Modifier.weight(1f)
-            )
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "Live Inventory",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RuwiaColor.TealPrimary,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "${formatCases(available)} cans",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black,
+                        color = RuwiaColor.TextPrimary
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(RuwiaColor.TealExtraLight, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Inventory2, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(24.dp))
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+            HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.6f))
+            Spacer(Modifier.height(18.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                StockItemSmallCol(
+                    value = formatCases(empty),
+                    label = "Empty Cans",
+                    icon = Icons.AutoMirrored.Rounded.Undo,
+                    color = Color(0xFFF59E0B)
+                )
+                VerticalDivider(modifier = Modifier.height(32.dp), color = RuwiaColor.Divider)
+                StockItemSmallCol(
+                    value = formatCases(withCustomer),
+                    label = "With Customer",
+                    icon = Icons.Rounded.Group,
+                    color = Color(0xFF6366F1)
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun StockItemCol(
+private fun StockItemSmallCol(
     value: String,
     label: String,
-    modifier: Modifier = Modifier
+    icon: ImageVector,
+    color: Color
 ) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = value,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = RuwiaColor.TealPrimary
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = RuwiaColor.TextSecondary
-        )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(32.dp).background(color.copy(alpha = 0.1f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
+            Text(label, fontSize = 11.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Medium)
+        }
     }
-}
-
-@Composable
-private fun StockItemDivider() {
-    Box(
-        modifier = Modifier
-            .width(1.dp)
-            .height(24.dp)
-            .background(RuwiaColor.Divider)
-    )
 }
 
 // ── Quick Actions ─────────────────────────────────────────────────────────────
@@ -721,40 +892,44 @@ private fun QuickActionGrid(
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             QuickActionCard(
                 icon = Icons.Rounded.ShoppingCart,
                 title = "Record Sale",
                 onClick = onRecordSale,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                color = RuwiaColor.TealPrimary
             )
             QuickActionCard(
                 icon = Icons.Rounded.Autorenew,
                 title = "Return Cans",
                 onClick = onReturnEmptyCans,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                color = Color(0xFFF59E0B)
             )
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             QuickActionCard(
                 icon = Icons.Rounded.Inventory2,
                 title = "View Stock",
                 onClick = onViewStock,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                color = Color(0xFF6366F1)
             )
             QuickActionCard(
                 icon = Icons.Rounded.History,
                 title = "History",
                 onClick = onHistory,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                color = Color(0xFFEC4899)
             )
         }
     }
@@ -765,7 +940,8 @@ private fun QuickActionCard(
     icon: ImageVector,
     title: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    color: Color = RuwiaColor.TealPrimary
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -776,41 +952,41 @@ private fun QuickActionCard(
 
     Box(
         modifier = modifier
-            .height(85.dp)
+            .height(100.dp)
             .graphicsLayer(scaleX = scale, scaleY = scale)
-            .clip(RoundedCornerShape(20.dp))
-            .background(RuwiaColor.Surface)
-            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(20.dp))
+            .shadow(2.dp, RoundedCornerShape(24.dp), ambientColor = Color.Black.copy(alpha = 0.03f), spotColor = Color.Black.copy(alpha = 0.03f))
+            .background(RuwiaColor.Surface, RoundedCornerShape(24.dp))
             .clickable(
                 interactionSource = interactionSource,
                 indication = androidx.compose.foundation.LocalIndication.current,
                 onClick = onClick
             )
-            .padding(vertical = 10.dp, horizontal = 12.dp),
+            .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxHeight()
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxSize()
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
-                    .background(RuwiaColor.TealLight, RoundedCornerShape(10.dp)),
+                    .size(40.dp)
+                    .background(color.copy(alpha = 0.1f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = title,
-                    tint = RuwiaColor.TealPrimary,
-                    modifier = Modifier.size(16.dp)
+                    tint = color,
+                    modifier = Modifier.size(20.dp)
                 )
             }
+            Spacer(Modifier.height(10.dp))
             Text(
                 text = title,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
                 color = RuwiaColor.TextPrimary
             )
         }
@@ -827,28 +1003,30 @@ private fun RecentActivityItemRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(RuwiaColor.Surface)
-            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(20.dp))
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .shadow(2.dp, RoundedCornerShape(20.dp), ambientColor = Color.Black.copy(alpha = 0.02f), spotColor = Color.Black.copy(alpha = 0.02f))
+            .background(RuwiaColor.Surface, RoundedCornerShape(20.dp))
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Left: Icon Container (36dp)
+        val iconColor = if (item.isSale) RuwiaColor.TealPrimary else Color(0xFFF59E0B)
+        val icon = if (item.isSale) Icons.Rounded.ArrowUpward else Icons.AutoMirrored.Rounded.Undo
+
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .background(RuwiaColor.MintLight, RoundedCornerShape(10.dp)),
+                .size(40.dp)
+                .background(iconColor.copy(alpha = 0.1f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (item.isSale) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward,
+                imageVector = icon,
                 contentDescription = null,
-                tint = if (item.isSale) RuwiaColor.TealPrimary else RuwiaColor.TextSecondary,
-                modifier = Modifier.size(16.dp)
+                tint = iconColor,
+                modifier = Modifier.size(18.dp)
             )
         }
 
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(14.dp))
 
         // Middle: Customer & Type
         Column(modifier = Modifier.weight(1f)) {
@@ -857,37 +1035,27 @@ private fun RecentActivityItemRow(
             }
             Text(
                 text = customerName,
-                fontSize = 14.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = RuwiaColor.TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(Modifier.height(2.dp))
             Text(
-                text = if (item.isSale) "Sale" else "Return",
+                text = if (item.isSale) "Delivered • ${item.time}" else "Returned • ${item.time}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                color = RuwiaColor.TextSecondary
-            )
-        }
-
-        // Right: Quantity & Time
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                text = item.detail,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (item.isSale) RuwiaColor.TealPrimary else RuwiaColor.TextPrimary
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = item.time,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Normal,
                 color = RuwiaColor.TextMuted
             )
         }
+
+        // Right: Quantity
+        Text(
+            text = item.detail,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Black,
+            color = if (item.isSale) RuwiaColor.TealPrimary else RuwiaColor.TextPrimary
+        )
     }
 }
 
