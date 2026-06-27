@@ -49,7 +49,7 @@ import com.example.ruwia.presentation.AuthViewModel
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.new_app_logo
+import ruwia.shared.generated.resources.logo
 
 // ── Premium SaaS Color Palette ─────────────────────────────────────────────
 private object DroplyColor {
@@ -119,9 +119,6 @@ fun LoginScreen(
                 .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-//            Spacer(modifier = Modifier.height(40.dp))
-
-            // ── Hero Section (Logo + Brand) ───────────────────────────
             HeroBrandSection()
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -221,34 +218,17 @@ private fun PremiumBackgroundEffects(shimmerOffset: Float) {
 
 @Composable
 private fun HeroBrandSection() {
-    val infiniteTransition = rememberInfiniteTransition(label = "logo")
-    val floatAnim by infiniteTransition.animateFloat(
-        initialValue = -8f, targetValue = 8f,
-        animationSpec = infiniteRepeatable(tween(2000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "float"
-    )
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .size(100.dp)
-                .graphicsLayer { translationY = floatAnim },
+                .size(160.dp),
             contentAlignment = Alignment.Center
         ) {
-            // Logo Glow
-            Box(
-                modifier = Modifier
-                    .size(60.dp)
-                    .blur(20.dp)
-                    .background(DroplyColor.Primary.copy(alpha = 0.3f), CircleShape)
-            )
-            
             Image(
-                painter = painterResource(Res.drawable.app_icon),
+                painter = painterResource(Res.drawable.logo),
                 contentDescription = "NEER THULI",
-                modifier = Modifier
-                    .size(80.dp)
-                    .clip(RoundedCornerShape(15.dp)),
+                modifier = Modifier.size(140.dp),
                 contentScale = ContentScale.Crop
             )
         }

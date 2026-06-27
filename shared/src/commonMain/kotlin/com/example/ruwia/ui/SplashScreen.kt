@@ -14,8 +14,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -25,6 +27,7 @@ import kotlinx.coroutines.delay
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
 import ruwia.shared.generated.resources.app_icon
+import ruwia.shared.generated.resources.logo
 
 // SaaS dark palette (consistent with Login)
 private val DarkSurface = Color(0xFF0D1B2A)
@@ -71,16 +74,26 @@ fun SplashScreen(
             Spacer(modifier = Modifier.weight(1.5f))
 
             // ── Actual Logo Image with pulse animation ────────────────────
-            Image(
-                painter = painterResource(Res.drawable.app_icon),
-                contentDescription = "App Logo",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(220.dp)
-                    .scale(pulseScale)
-                    .clip(RoundedCornerShape(15.dp))
-            )
+//            Image(
+//                painter = painterResource(Res.drawable.app_icon),
+//                contentDescription = "App Logo",
+//                contentScale = ContentScale.Fit,
+//                modifier = Modifier
+//                    .size(220.dp)
+//                    .clip(RoundedCornerShape(16.dp))
+////                    .scale(pulseScale)
+//            )
 
+            Image(
+                painter = painterResource(Res.drawable.logo),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(140.dp)
+                    .graphicsLayer {
+                        translationX = 10f
+                    },
+                contentScale = ContentScale.FillHeight
+            )
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(

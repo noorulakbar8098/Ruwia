@@ -51,7 +51,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.new_app_logo
+import ruwia.shared.generated.resources.app_icon
 
 // ── Entry display model ──────────────────────────────────────────────────────
 
@@ -608,15 +608,13 @@ private fun EmpHeader(
             Box(
                 modifier = Modifier
                     .size(52.dp)
-                    .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(RuwiaColor.TealPrimary, RuwiaColor.TealDark)))
                     .clickable(onClick = onProfileClick),
                 contentAlignment = Alignment.Center
             ) {
                 Image(
-                    painter = painterResource(Res.drawable.new_app_logo),
+                    painter = painterResource(Res.drawable.app_icon),
                     contentDescription = "Logo",
-                    contentScale = ContentScale.Crop,
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
             }

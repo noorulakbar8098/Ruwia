@@ -35,7 +35,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.new_app_logo
+import ruwia.shared.generated.resources.app_icon
 
 // ─────────────────────────────────────────────────────────────
 
@@ -101,16 +101,18 @@ fun NTDashboardHeader(
             .padding(horizontal = NTDp.screenPad, vertical = NTDp.md),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Spacer(modifier = Modifier.height(NTDp.md))
         Box(
-            modifier = Modifier.size(NTDp.avatarLg).clip(CircleShape)
-                .background(NTColors.AvatarGold)
+            modifier = Modifier
+                .size(NTDp.kpiIconBox)
+                .clip(RoundedCornerShape(10.dp))
                 .clickable(onClick = onAvatarClick),
             contentAlignment = Alignment.Center
         ) {
             Image(
-                painter = painterResource(Res.drawable.new_app_logo),
+                painter = painterResource(Res.drawable.app_icon),
                 contentDescription = "Logo",
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -131,25 +133,25 @@ fun NTDashboardHeader(
             )
         }
 
-        NTIconCircleButton(icon = Icons.Rounded.Search, onClick = onSearchClick)
-        Spacer(modifier = Modifier.width(NTDp.sm))
-
-        Box {
-            NTIconCircleButton(icon = Icons.Rounded.Notifications, onClick = onNotificationClick)
-            if (notificationCount > 0) {
-                Box(
-                    modifier = Modifier.align(Alignment.TopEnd)
-                        .offset(x = (-2).dp, y = 2.dp).size(18.dp)
-                        .clip(CircleShape).background(NTColors.Error),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (notificationCount > 9) "9+" else notificationCount.toString(),
-                        color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
+//        NTIconCircleButton(icon = Icons.Rounded.Search, onClick = onSearchClick)
+//        Spacer(modifier = Modifier.width(NTDp.sm))
+//
+//        Box {
+//            NTIconCircleButton(icon = Icons.Rounded.Notifications, onClick = onNotificationClick)
+//            if (notificationCount > 0) {
+//                Box(
+//                    modifier = Modifier.align(Alignment.TopEnd)
+//                        .offset(x = (-2).dp, y = 2.dp).size(18.dp)
+//                        .clip(CircleShape).background(NTColors.Error),
+//                    contentAlignment = Alignment.Center
+//                ) {
+//                    Text(
+//                        text = if (notificationCount > 9) "9+" else notificationCount.toString(),
+//                        color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold
+//                    )
+//                }
+//            }
+//        }
     }
 }
 

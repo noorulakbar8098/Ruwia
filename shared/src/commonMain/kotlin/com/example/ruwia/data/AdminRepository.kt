@@ -35,8 +35,13 @@ class AdminRepository {
     suspend fun getMRR(): Double {
         return try {
             val prefix = currentYearMonth()
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return 0.0
             supabase.from("sale_entries")
-                .select { order("created_at", SortOrder.DESCENDING); limit(500) }
+                .select { 
+                    filter { eq("admin_id", adminId) }
+                    order("created_at", SortOrder.DESCENDING)
+                    limit(500) 
+                }
                 .decodeList<SaleEntry>()
                 .filter { it.createdAt?.startsWith(prefix) == true }
                 .sumOf { it.totalSelling }
@@ -47,8 +52,14 @@ class AdminRepository {
 
     suspend fun getActiveFleetCount(): Int {
         return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return 0
             supabase.from("employees")
-                .select { filter { eq("status", "active") } }
+                .select { 
+                    filter { 
+                        eq("status", "active")
+                        eq("admin_id", adminId)
+                    } 
+                }
                 .decodeList<EmployeeInfo>()
                 .size
         } catch (e: Exception) { 0 }
@@ -58,8 +69,14 @@ class AdminRepository {
 
     suspend fun getProductCategories(): List<ProductCategory> {
         return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
             supabase.from("product_categories")
-                .select { filter { eq("is_active", true) } }
+                .select { 
+                    filter { 
+                        eq("is_active", true)
+                        eq("admin_id", adminId)
+                    } 
+                }
                 .decodeList<ProductCategory>()
                 // Deduplicate by name (case-insensitive) — keeps the first occurrence.
                 // This guards against accidental duplicate rows that may already exist in the DB.
@@ -97,6 +114,7 @@ class AdminRepository {
             )
         }
 
+        val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: return
         supabase.from("product_categories").insert(
             buildJsonObject {
                 put("name", cat.name.trim())
@@ -107,6 +125,7 @@ class AdminRepository {
                 put("default_sell_price", cat.defaultSellPrice)
                 put("stock_available", cat.stockAvailable)
                 put("is_active", cat.isActive)
+                put("admin_id", currentAdminId)
             }
         )
     }
@@ -138,8 +157,10 @@ class AdminRepository {
 
     suspend fun getSaleEntries(productName: String? = null): List<SaleEntry> {
         return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
             supabase.from("sale_entries")
                 .select {
+                    filter { eq("admin_id", adminId) }
                     order("created_at", SortOrder.DESCENDING)
                     limit(500)
                 }
@@ -153,6 +174,7 @@ class AdminRepository {
     }
 
     suspend fun addSaleEntry(entry: SaleEntry) {
+        val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: return
         supabase.from("sale_entries").insert(
             buildJsonObject {
                 put("date", entry.date)
@@ -167,6 +189,7 @@ class AdminRepository {
                 put("total_margin", entry.totalMargin)
                 put("shop_id", entry.shopId)
                 if (entry.employeeId != null) put("employee_id", entry.employeeId)
+                put("admin_id", currentAdminId)
             }
         )
     }
@@ -175,8 +198,14 @@ class AdminRepository {
 
     suspend fun getMonthlyExpense(month: String): MonthlyExpense? {
         return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return null
             supabase.from("monthly_expenses")
-                .select { filter { eq("month", month) } }
+                .select { 
+                    filter { 
+                        eq("month", month)
+                        eq("admin_id", adminId)
+                    } 
+                }
                 .decodeSingleOrNull()
         } catch (e: Exception) { null }
     }
@@ -256,8 +285,13 @@ class AdminRepository {
 
     suspend fun getWeeklyRevenueSummary(): Triple<List<Float>, List<Float>, String> {
         return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return defaultRevenuePlaceholder()
             val entries = supabase.from("sale_entries")
-                .select { order("created_at", SortOrder.DESCENDING); limit(200) }
+                .select { 
+                    filter { eq("admin_id", adminId) }
+                    order("created_at", SortOrder.DESCENDING)
+                    limit(200) 
+                }
                 .decodeList<SaleEntry>()
 
             if (entries.isEmpty()) return defaultRevenuePlaceholder()
@@ -295,11 +329,15 @@ class AdminRepository {
 
     suspend fun getAllCustomers(): List<Customer> {
         return try {
-            supabase.from("customers").select().decodeList()
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
+            supabase.from("customers").select {
+                filter { eq("admin_id", adminId) }
+            }.decodeList()
         } catch (e: Exception) { emptyList() }
     }
 
     suspend fun addCustomer(customer: Customer): Customer {
+        val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: ""
         suspend fun insertCustomerInternal(client: io.github.jan.supabase.SupabaseClient): Customer {
             return try {
                 client.from("customers").insert(
@@ -308,6 +346,7 @@ class AdminRepository {
                         if (customer.phone != null) put("phone", customer.phone)
                         if (customer.address != null) put("address", customer.address)
                         if (customer.otherDetails != null) put("other_details", customer.otherDetails)
+                        if (currentAdminId.isNotBlank()) put("admin_id", currentAdminId)
                     }
                 ) { select() }.decodeSingle()
             } catch (e: Exception) {
@@ -320,6 +359,7 @@ class AdminRepository {
                             put("name", customer.name)
                             if (customer.phone != null) put("phone", customer.phone)
                             if (customer.address != null) put("address", customer.address)
+                            if (currentAdminId.isNotBlank()) put("admin_id", currentAdminId)
                         }
                     ) { select() }.decodeSingle()
                 } else {
@@ -369,8 +409,13 @@ class AdminRepository {
 
     suspend fun getAllOrders(): List<Order> {
         return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
             supabase.from("orders")
-                .select { order("created_at", SortOrder.DESCENDING); limit(50) }
+                .select { 
+                    filter { eq("admin_id", adminId) }
+                    order("created_at", SortOrder.DESCENDING)
+                    limit(50) 
+                }
                 .decodeList()
         } catch (e: Exception) { emptyList() }
     }
@@ -379,7 +424,10 @@ class AdminRepository {
 
     suspend fun getEmployees(): List<EmployeeInfo> {
         return try {
-            supabase.from("employees").select().decodeList()
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
+            supabase.from("employees").select {
+                filter { eq("admin_id", adminId) }
+            }.decodeList()
         } catch (e: Exception) { emptyList() }
     }
 
@@ -393,17 +441,23 @@ class AdminRepository {
         password: String,
     ): EmployeeInfo {
         initAdminSession()
+        val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: throw IllegalStateException("Not logged in")
 
         val newUser = supabaseAdmin.auth.admin.createUserWithEmail {
             this.email       = email
             this.password    = password
             this.autoConfirm = true
+            userMetadata = buildJsonObject {
+                put("role", "employee")
+                put("admin_id", currentAdminId)
+                put("full_name", name)
+                put("phone", phone)
+            }
         }
         val userId = newUser.id
 
-        supabaseAdmin.from("profiles").upsert(
-            Profile(id = userId, role = UserRole.employee, fullName = name, phone = phone)
-        )
+        // Profiles is now handled by SQL trigger using metadata, 
+        // but we still need to populate the employee-specific details.
 
         supabaseAdmin.from("employees").insert(
             buildJsonObject {
@@ -414,6 +468,7 @@ class AdminRepository {
                 put("shop_name",      shopName)
                 put("monthly_salary", salary)
                 put("status",         "active")
+                put("admin_id",       currentAdminId)
             }
         )
 
@@ -432,7 +487,10 @@ class AdminRepository {
 
     suspend fun getShopStocks(): List<ShopStockInfo> {
         return try {
-            supabase.from("shop_stocks").select()
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
+            supabase.from("shop_stocks").select {
+                filter { eq("admin_id", adminId) }
+            }
                 .decodeList<ShopStockInfo>()
                 // Deduplicate by name (case-insensitive) — keeps the first occurrence.
                 // Guards against accidental duplicate rows already in the DB.
@@ -442,12 +500,17 @@ class AdminRepository {
 
     suspend fun getRecentMovements(): List<StockMovement> {
         return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
             // 1000 rows so we have at least the last ~3 months for dashboard
             // aggregations (inward / outward totals, month-over-month deltas).
             // RLS on `stock_movements` exposes every employee's record to the
             // admin, so this is the cross-team view they expect.
             supabase.from("stock_movements")
-                .select { order("created_at", SortOrder.DESCENDING); limit(1000) }
+                .select { 
+                    filter { eq("admin_id", adminId) }
+                    order("created_at", SortOrder.DESCENDING)
+                    limit(1000) 
+                }
                 .decodeList()
         } catch (e: Exception) { emptyList() }
     }
@@ -558,8 +621,14 @@ class AdminRepository {
     /** Returns the full supplier rows (including IDs) for management screens. */
     suspend fun getSuppliersFull(): List<Supplier> {
         return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
             supabase.from("suppliers")
-                .select { filter { eq("is_active", true) } }
+                .select { 
+                    filter { 
+                        eq("is_active", true)
+                        eq("admin_id", adminId)
+                    } 
+                }
                 .decodeList<Supplier>()
                 // De-duplicate by (name, location) so legacy duplicate rows
                 // collapse into a single entry in the management UI.
@@ -569,6 +638,7 @@ class AdminRepository {
 
     suspend fun addSupplier(name: String, location: String?) {
         if (name.isBlank()) return
+        val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: ""
         // Check whether a row with the same (name, location) already exists.
         // We do this client-side because the suppliers table may not have a
         // unique constraint yet, and silently inserting a duplicate is exactly
@@ -586,6 +656,7 @@ class AdminRepository {
                     put("name", name.trim())
                     if (!location.isNullOrBlank()) put("location", location.trim())
                     put("is_active", true)
+                    if (currentAdminId.isNotBlank()) put("admin_id", currentAdminId)
                 }
             )
         } catch (e: Exception) {
@@ -597,6 +668,7 @@ class AdminRepository {
                     put("name", name.trim())
                     if (!location.isNullOrBlank()) put("location", location.trim())
                     put("is_active", true)
+                    if (currentAdminId.isNotBlank()) put("admin_id", currentAdminId)
                 }
             )
         }

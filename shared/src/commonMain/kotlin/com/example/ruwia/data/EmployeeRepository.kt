@@ -51,16 +51,27 @@ class EmployeeRepository {
 
     suspend fun getTodayRouteTasks(employeeId: String): List<DeliveryTask> {
         return try {
+            val adminId = getAdminIdForUser(employeeId)
             supabase.from("route_tasks")
                 .select {
                     filter {
                         eq("employee_id", employeeId)
                         eq("scheduled_date", today())
+                        if (adminId != null) eq("admin_id", adminId)
                     }
                     order("created_at", SortOrder.ASCENDING)
                 }
                 .decodeList()
         } catch (e: Exception) { emptyList() }
+    }
+
+    private suspend fun getAdminIdForUser(userId: String): String? {
+        return try {
+            val profile = supabase.from("profiles")
+                .select { filter { eq("id", userId) } }
+                .decodeSingleOrNull<com.example.ruwia.domain.Profile>()
+            profile?.adminId
+        } catch (e: Exception) { null }
     }
 
     suspend fun recordDeliveryCompletion(
@@ -102,9 +113,13 @@ class EmployeeRepository {
     suspend fun getDailyEarningsSummary(employeeId: String): Double {
         return try {
             val prefix = today()
+            val adminId = getAdminIdForUser(employeeId)
             supabase.from("sale_entries")
                 .select {
-                    filter { eq("employee_id", employeeId) }
+                    filter { 
+                        eq("employee_id", employeeId)
+                        if (adminId != null) eq("admin_id", adminId)
+                    }
                     order("created_at", SortOrder.DESCENDING)
                     limit(200)
                 }
@@ -128,11 +143,15 @@ class EmployeeRepository {
     suspend fun getDailyCansSummary(employeeId: String): DailyCansSummary {
         return try {
             val prefix = today()
+            val adminId = getAdminIdForUser(employeeId)
 
             // Stock-movement totals (inward / outward) for today
             val movements = supabase.from("stock_movements")
                 .select {
-                    filter { eq("employee_id", employeeId) }
+                    filter { 
+                        eq("employee_id", employeeId)
+                        if (adminId != null) eq("admin_id", adminId)
+                    }
                     order("created_at", SortOrder.DESCENDING)
                     limit(200)
                 }
@@ -170,7 +189,11 @@ class EmployeeRepository {
 
     suspend fun getCustomers(): List<Customer> {
         return try {
-            supabase.from("customers").select().decodeList()
+            val uid = currentUserId() ?: return emptyList()
+            val adminId = getAdminIdForUser(uid)
+            supabase.from("customers").select {
+                if (adminId != null) filter { eq("admin_id", adminId) }
+            }.decodeList()
         } catch (e: Exception) { emptyList() }
     }
 
@@ -217,8 +240,15 @@ class EmployeeRepository {
 
     suspend fun getProductCategories(): List<ProductCategory> {
         return try {
+            val uid = currentUserId() ?: return emptyList()
+            val adminId = getAdminIdForUser(uid)
             supabase.from("product_categories")
-                .select { filter { eq("is_active", true) } }
+                .select { 
+                    filter { 
+                        eq("is_active", true)
+                        if (adminId != null) eq("admin_id", adminId)
+                    } 
+                }
                 .decodeList()
         } catch (e: Exception) { emptyList() }
     }
@@ -234,7 +264,11 @@ class EmployeeRepository {
      */
     suspend fun getShopStocks(): List<ShopStockInfo> {
         return try {
-            supabase.from("shop_stocks").select()
+            val uid = currentUserId() ?: return emptyList()
+            val adminId = getAdminIdForUser(uid)
+            supabase.from("shop_stocks").select {
+                if (adminId != null) filter { eq("admin_id", adminId) }
+            }
                 .decodeList<ShopStockInfo>()
                 // Defensive de-duplication — historical inserts before the
                 // unique-name constraint can leave duplicate rows that would
@@ -247,8 +281,15 @@ class EmployeeRepository {
 
     suspend fun getSuppliers(): List<String> {
         return try {
+            val uid = currentUserId() ?: return emptyList()
+            val adminId = getAdminIdForUser(uid)
             supabase.from("suppliers")
-                .select { filter { eq("is_active", true) } }
+                .select { 
+                    filter { 
+                        eq("is_active", true) 
+                        if (adminId != null) eq("admin_id", adminId)
+                    } 
+                }
                 .decodeList<Supplier>()
                 .map { s -> if (s.location != null) "${s.name}  ·  ${s.location}" else s.name }
                 // Defensive — historic dupes before the unique constraint was
@@ -299,9 +340,13 @@ class EmployeeRepository {
 
     suspend fun getRecentEntries(employeeId: String): List<StockMovement> {
         return try {
+            val adminId = getAdminIdForUser(employeeId)
             supabase.from("stock_movements")
                 .select {
-                    filter { eq("employee_id", employeeId) }
+                    filter { 
+                        eq("employee_id", employeeId) 
+                        if (adminId != null) eq("admin_id", adminId)
+                    }
                     order("created_at", SortOrder.DESCENDING)
                     limit(20)
                 }
@@ -319,8 +364,11 @@ class EmployeeRepository {
     suspend fun getShopMovements(shopName: String): List<StockMovement> {
         if (shopName.isBlank()) return emptyList()
         return try {
+            val uid = currentUserId() ?: return emptyList()
+            val adminId = getAdminIdForUser(uid)
             supabase.from("stock_movements")
                 .select {
+                    if (adminId != null) filter { eq("admin_id", adminId) }
                     order("created_at", SortOrder.DESCENDING)
                     limit(500)
                 }

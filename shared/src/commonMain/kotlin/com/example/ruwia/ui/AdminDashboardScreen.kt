@@ -40,6 +40,11 @@ import com.example.ruwia.ui.admin.ProductManagementScreen
 import com.example.ruwia.ui.admin.ProfitDashboardScreen
 import com.example.ruwia.ui.dashboard.*
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
+import kotlinx.datetime.LocalTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Clock
+
 
 // ─────────────────────────────────────────────────────────────
 //  Admin Dashboard Screen — Neer Thuli
@@ -768,24 +773,51 @@ fun AdminReportsTab(state: AdminState, contentPadding: PaddingValues) {
 
 // ── Helper functions ──────────────────────────────────────────
 
+private fun getGreeting(): String {
+    val hour = Clock.System.now()
+        .toLocalDateTime(TimeZone.currentSystemDefault())
+        .hour
+
+    return when (hour) {
+        in 6..11 -> "Good Morning ☀️"
+        in 12..16 -> "Good Afternoon 🌤️"
+        in 17..20 -> "Good Evening 🌇"
+        else -> "Good Night 🌙"
+    }
+}
+
 private fun buildGreeting(
     profit: Double,
     pending: Int,
     delivered: Int,
     revGrowth: Double?,
 ): Pair<String, String> {
-    val greeting = "Good morning"  // Platform time can override via ViewModel if needed
+
+    val greeting = getGreeting()
+
     val subtext = when {
-        pending > 5            -> "$pending orders are pending dispatch."
-        delivered > 0          -> "$delivered deliveries completed today."
-        profit < 0             -> "Heads up — this month is running at a loss so far."
-        revGrowth != null && revGrowth >= 10.0
-                               -> "Revenue is up ${formatPctShort(revGrowth)}% vs last month — nice work."
-        revGrowth != null && revGrowth <= -5.0
-                               -> "Revenue is down ${formatPctShort(-revGrowth)}% vs last month."
-        profit > 0             -> "You're in the green this month."
-        else                   -> "Here's how your business is doing today."
+        pending > 5 ->
+            "$pending orders are pending dispatch."
+
+        delivered > 0 ->
+            "$delivered deliveries completed today."
+
+        profit < 0 ->
+            "Heads up — this month is running at a loss so far."
+
+        revGrowth != null && revGrowth >= 10.0 ->
+            "Revenue is up ${formatPctShort(revGrowth)}% vs last month — nice work."
+
+        revGrowth != null && revGrowth <= -5.0 ->
+            "Revenue is down ${formatPctShort(-revGrowth)}% vs last month."
+
+        profit > 0 ->
+            "You're in the green this month."
+
+        else ->
+            "Here's how your business is doing today."
     }
+
     return greeting to subtext
 }
 

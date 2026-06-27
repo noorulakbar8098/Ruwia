@@ -28,7 +28,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.new_app_logo
+import ruwia.shared.generated.resources.app_icon
+import ruwia.shared.generated.resources.logo
 
 // Reusing the same SaaS palette from LoginScreen
 private val DarkSurface = Color(0xFF0D1B2A)
@@ -118,14 +119,11 @@ fun ForgotPasswordScreen(
 
             Spacer(modifier = Modifier.height(40.dp))
 
-            // Brand Logo Image
             Image(
-                painter = painterResource(Res.drawable.new_app_logo),
-                contentDescription = "App Logo",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(100.dp)
-                    .clip(RoundedCornerShape(15.dp))
+                painter = painterResource(Res.drawable.logo),
+                contentDescription = "NEER THULI",
+                modifier = Modifier.size(140.dp),
+                contentScale = ContentScale.Crop
             )
 
             Spacer(modifier = Modifier.height(24.dp))

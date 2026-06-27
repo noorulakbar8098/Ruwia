@@ -1241,7 +1241,7 @@ private fun ProductManagementCard(
                 // Product Thumbnail (80.dp size matching ProductBreakdownCard)
                 Box(
                     modifier = Modifier
-                        .size(80.dp)
+                        .size(100.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(if (painter != null) NTColors.Surface else NTColors.SurfaceVar)
                         .border(1.dp, NTColors.Border, RoundedCornerShape(12.dp)),
@@ -1256,7 +1256,7 @@ private fun ProductManagementCard(
                             modifier = Modifier.fillMaxSize().padding(6.dp)
                         )
                     } else {
-                        Box(modifier = Modifier.padding(2.dp)) {
+                        Box(modifier = Modifier) {
                             BottleSilhouette(
                                 sizeKey = product.displayName,
                                 color = if (product.isActive) themeColor else themeColor.copy(alpha = 0.3f)
@@ -1784,7 +1784,7 @@ private fun productPainter(sizeKey: String): Painter? = when {
     sizeKey.contains("1",   true) -> painterResource(Res.drawable.bottle_2l)
     sizeKey.contains("2",   true) -> painterResource(Res.drawable.bottle_2l)
     sizeKey.contains("5",   true) -> painterResource(Res.drawable.bottle_5l)
-    sizeKey.contains("20",  true) -> painterResource(Res.drawable.bottle_20l)
+    sizeKey.contains("20L",  true) -> painterResource(Res.drawable.bottle_20l)
     else -> null
 }
 

@@ -26,13 +26,13 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.new_app_logo
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import com.example.ruwia.ui.dashboard.*
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import ruwia.shared.generated.resources.app_icon
 
 @Composable
 fun SettingsScreen(
@@ -181,7 +181,7 @@ fun SettingsScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                
+
                 // ── 1. Business Hero Profile Card ──
                 item {
                     Card(
@@ -197,14 +197,14 @@ fun SettingsScreen(
                                 Box(
                                     modifier = Modifier
                                         .size(60.dp)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(Brush.linearGradient(listOf(NTColors.Primary, NTColors.PrimaryMid))),
+                                        .clip(RoundedCornerShape(20.dp))
+                                    ,
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Image(
-                                        painter = painterResource(Res.drawable.new_app_logo),
+                                        painter = painterResource(Res.drawable.app_icon),
                                         contentDescription = "Neerthuli Logo",
-                                        contentScale = ContentScale.Crop,
+                                        contentScale = ContentScale.Fit,
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }

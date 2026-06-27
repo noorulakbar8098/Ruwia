@@ -12,6 +12,7 @@ data class Profile(
     val role: UserRole = UserRole.user,
     @SerialName("full_name") val fullName: String? = null,
     val phone: String? = null,
+    @SerialName("admin_id") val adminId: String? = null,
 )
 
 @Serializable
