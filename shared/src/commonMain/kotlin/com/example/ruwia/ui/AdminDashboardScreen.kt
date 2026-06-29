@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.Order
 import com.example.ruwia.presentation.AdminState
@@ -36,6 +37,7 @@ import com.example.ruwia.presentation.EmployeeCreationState
 import com.example.ruwia.presentation.toDashboardMetrics
 import com.example.ruwia.SystemBackHandler
 import com.example.ruwia.ui.admin.ProductDetailScreen
+import com.example.ruwia.ui.admin.ProductFormSheet
 import com.example.ruwia.ui.admin.ProductManagementScreen
 import com.example.ruwia.ui.admin.ProfitDashboardScreen
 import com.example.ruwia.ui.dashboard.*
@@ -104,6 +106,7 @@ private fun AdminDashboardContentSwitcher(
     var showPricing       by remember { mutableStateOf(false) }
     var showSuppliers     by remember { mutableStateOf(false) }
     var showCustomers     by remember { mutableStateOf(false) }
+    var showAddProduct   by remember { mutableStateOf(false) }
 
     var productDetailName by remember { mutableStateOf<String?>(null) }
 
@@ -219,6 +222,28 @@ private fun AdminDashboardContentSwitcher(
         return
     }
 
+    if (showAddProduct) {
+        SystemBackHandler { showAddProduct = false }
+        Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .clickable { showAddProduct = false },
+            )
+            ProductFormSheet(
+                existing = null,
+                onDismiss = { showAddProduct = false },
+                onSave = { updated: ProductCategory ->
+                    vm.addProductCategory(updated)
+                    showAddProduct = false
+                },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+        return
+    }
+
 
 
     Scaffold(
@@ -256,6 +281,7 @@ private fun AdminDashboardContentSwitcher(
                      onBack         = { selectedTab = 0 },
                      onAddMovement  = vm::addStockMovement,
                      onAddStock     = { showAddStock = true },
+                     onAddProduct   = { showAddProduct = true },
                      contentPadding = contentPadding,
                  )
             3 -> ProfitDashboardScreen(

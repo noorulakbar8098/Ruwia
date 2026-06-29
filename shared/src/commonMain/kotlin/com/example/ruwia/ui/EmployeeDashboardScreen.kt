@@ -235,7 +235,7 @@ fun EmployeeDashboardScreen(
                                 productName          = product.displayName.ifBlank { product.name },
                                 qty                  = item.qty * upc,  // cases → units
                                 sellingPricePerUnit  = sellPricePerCase / upc,  // case price → unit price
-                                purchasePricePerUnit = product.purchasePriceGC, // This was also wrong?
+                                purchasePricePerUnit = if (product.purchasePrice > 0) product.purchasePrice else product.purchasePriceGC,
                             )
                         }
                         if (lines.isNotEmpty()) {

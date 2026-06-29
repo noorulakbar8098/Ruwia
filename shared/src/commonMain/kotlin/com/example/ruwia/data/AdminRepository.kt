@@ -93,8 +93,8 @@ class AdminRepository {
                     capacityLiters = parseLiters(cat.name),
                     stockAvailable = cat.stockAvailable,
                     pricePerCan    = cat.defaultSellPrice,
-                    costPrice      = cat.purchasePriceGC,
-                    tags           = cat.supplierGroup,
+                    costPrice      = if (cat.purchasePrice > 0) cat.purchasePrice else cat.purchasePriceGC,
+                    tags           = cat.brandName,
                 )
             }
         } catch (e: Exception) { emptyList() }
@@ -119,9 +119,8 @@ class AdminRepository {
             buildJsonObject {
                 put("name", cat.name.trim())
                 put("display_name", cat.displayName.trim())
-                put("supplier_group", cat.supplierGroup)
-                put("purchase_price_gc", cat.purchasePriceGC)
-                put("purchase_price_mb", cat.purchasePriceMB)
+                put("brand_name", cat.brandName.trim())
+                put("purchase_price", cat.purchasePrice)
                 put("default_sell_price", cat.defaultSellPrice)
                 put("stock_available", cat.stockAvailable)
                 put("is_active", cat.isActive)
@@ -136,9 +135,8 @@ class AdminRepository {
             buildJsonObject {
                 put("name", cat.name)
                 put("display_name", cat.displayName)
-                put("supplier_group", cat.supplierGroup)
-                put("purchase_price_gc", cat.purchasePriceGC)
-                put("purchase_price_mb", cat.purchasePriceMB)
+                put("brand_name", cat.brandName)
+                put("purchase_price", cat.purchasePrice)
                 put("default_sell_price", cat.defaultSellPrice)
                 put("stock_available", cat.stockAvailable)
                 put("is_active", cat.isActive)

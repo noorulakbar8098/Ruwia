@@ -153,7 +153,7 @@ fun ProductManagementScreen(
     val activeProducts = products.filter { it.isActive }
     val averageMargin = if (activeProducts.isNotEmpty()) {
         activeProducts.map { prod ->
-            val cost = if (prod.supplierGroup == "GC") prod.purchasePriceGC else prod.purchasePriceMB
+            val cost = if (prod.purchasePrice > 0) prod.purchasePrice else prod.purchasePriceGC
             val margin = prod.defaultSellPrice - cost
             if (prod.defaultSellPrice > 0) (margin / prod.defaultSellPrice) * 100 else 0.0
         }.average()
@@ -170,7 +170,8 @@ fun ProductManagementScreen(
 
             // Search text check
             val matchesSearch = prod.displayName.contains(searchQuery, ignoreCase = true) ||
-                    prod.name.contains(searchQuery, ignoreCase = true)
+                    prod.name.contains(searchQuery, ignoreCase = true) ||
+                    prod.brandName.contains(searchQuery, ignoreCase = true)
 
             // Status check
             val matchesStatus = when (filterStatus) {
@@ -181,7 +182,7 @@ fun ProductManagementScreen(
             }
 
             // Cost price helper
-            val cost = if (prod.supplierGroup == "GC") prod.purchasePriceGC else prod.purchasePriceMB
+            val cost = if (prod.purchasePrice > 0) prod.purchasePrice else prod.purchasePriceGC
             val margin = prod.defaultSellPrice - cost
             val marginPercent = if (prod.defaultSellPrice > 0) (margin / prod.defaultSellPrice) * 100 else 0.0
 
@@ -204,11 +205,11 @@ fun ProductManagementScreen(
 
             matchesCat && matchesSearch && matchesStatus && matchesPrice && matchesMargin && matchesStock
         }.sortedWith { p1, p2 ->
-            val cost1 = if (p1.supplierGroup == "GC") p1.purchasePriceGC else p1.purchasePriceMB
+            val cost1 = if (p1.purchasePrice > 0) p1.purchasePrice else p1.purchasePriceGC
             val margin1 = p1.defaultSellPrice - cost1
             val marginPercent1 = if (p1.defaultSellPrice > 0) (margin1 / p1.defaultSellPrice) * 100 else 0.0
 
-            val cost2 = if (p2.supplierGroup == "GC") p2.purchasePriceGC else p2.purchasePriceMB
+            val cost2 = if (p2.purchasePrice > 0) p2.purchasePrice else p2.purchasePriceGC
             val margin2 = p2.defaultSellPrice - cost2
             val marginPercent2 = if (p2.defaultSellPrice > 0) (margin2 / p2.defaultSellPrice) * 100 else 0.0
 
@@ -799,7 +800,7 @@ fun ProductManagementScreen(
         updatingPriceProduct?.let { prod ->
             var newSellPrice by remember { mutableStateOf(prod.defaultSellPrice.toInt().toString()) }
             var newCostPrice by remember {
-                val currentCost = if (prod.supplierGroup == "GC") prod.purchasePriceGC else prod.purchasePriceMB
+                val currentCost = if (prod.purchasePrice > 0) prod.purchasePrice else prod.purchasePriceGC
                 mutableStateOf(currentCost.toInt().toString())
             }
 
@@ -817,9 +818,9 @@ fun ProductManagementScreen(
                             }
 
                             Column {
-                                Text("Cost Price (₹)", fontSize = 13.sp, color = NTColors.TextSecondary)
+                                Text("Purchase Price (₹)", fontSize = 13.sp, color = NTColors.TextSecondary)
                             Spacer(Modifier.height(4.dp))
-                            FormDialogInput(placeholder = "Cost Price", value = newCostPrice, onValueChange = { newCostPrice = it }, isNumeric = true)
+                            FormDialogInput(placeholder = "Purchase Price", value = newCostPrice, onValueChange = { newCostPrice = it }, isNumeric = true)
                         }
                     }
                 },
@@ -828,11 +829,7 @@ fun ProductManagementScreen(
                         onClick = {
                             val sell = newSellPrice.toDoubleOrNull() ?: prod.defaultSellPrice
                             val cost = newCostPrice.toDoubleOrNull() ?: 0.0
-                            val updated = if (prod.supplierGroup == "GC") {
-                                prod.copy(defaultSellPrice = sell, purchasePriceGC = cost)
-                            } else {
-                                prod.copy(defaultSellPrice = sell, purchasePriceMB = cost)
-                            }
+                            val updated = prod.copy(defaultSellPrice = sell, purchasePrice = cost)
                             onUpdateProduct(updated)
                             updatingPriceProduct = null
                         },
@@ -1106,14 +1103,11 @@ private fun AIInsightsSection(products: List<ProductCategory>) {
                 }
                 activeProds.isNotEmpty() -> {
                     // Try to calculate highest profit margin SKU
-                    val prodsWithMargin = activeProds.filter { it.defaultSellPrice > 0 }
-                    val bestMarginProd = if (prodsWithMargin.isNotEmpty()) {
-                        prodsWithMargin.maxByOrNull { prod ->
-                            val cost = if (prod.supplierGroup == "GC") prod.purchasePriceGC else prod.purchasePriceMB
-                            val margin = prod.defaultSellPrice - cost
-                            (margin / prod.defaultSellPrice) * 100
-                        }
-                    } else null
+                    val bestMarginProd = activeProds.filter { it.defaultSellPrice > 0 }.maxByOrNull { prod ->
+                        val cost = if (prod.purchasePrice > 0) prod.purchasePrice else prod.purchasePriceGC
+                        val margin = prod.defaultSellPrice - cost
+                        (margin / prod.defaultSellPrice) * 100
+                    }
 
                     val totalVal = activeProds.sumOf { it.stockAvailable * it.defaultSellPrice }
                     val bestValueProd = if (totalVal > 0) {
@@ -1121,22 +1115,19 @@ private fun AIInsightsSection(products: List<ProductCategory>) {
                     } else null
 
                     if (bestMarginProd != null) {
-                        val cost = if (bestMarginProd.supplierGroup == "GC") bestMarginProd.purchasePriceGC else bestMarginProd.purchasePriceMB
+                        val cost = if (bestMarginProd.purchasePrice > 0) bestMarginProd.purchasePrice else bestMarginProd.purchasePriceGC
                         val margin = bestMarginProd.defaultSellPrice - cost
                         val marginPercent = (margin / bestMarginProd.defaultSellPrice) * 100
                         val formattedPercent = ((marginPercent * 10).toInt() / 10.0).toString()
                         "OPTIMIZATION: ${bestMarginProd.displayName} offers the highest margin in the active catalog at ${formattedPercent}% (₹${margin.toInt()} profit per unit)."
                     } else if (bestValueProd != null) {
-                        val prodVal = bestValueProd.stockAvailable * bestValueProd.defaultSellPrice
-                        val percent = (prodVal / totalVal) * 100
-                        val formattedPercent = ((percent * 10).toInt() / 10.0).toString()
-                        "INVENTORY VALUE: ${bestValueProd.displayName} represents the largest share of inventory value at ₹${prodVal.toInt()} (${formattedPercent}% of total active inventory)."
-                    } else {
                         val totalCases = activeProds.sumOf { prod ->
                             val upc = prod.unitsPerCase.coerceAtLeast(1)
                             if (upc == 1) prod.stockAvailable else prod.stockAvailable / upc
                         }
                         "CATALOG STATUS: ${activeProds.size} active SKUs holding a total of $totalCases cases/cans in stock."
+                    } else {
+                        "CATALOG STATUS: ${activeProds.size} active SKUs registered."
                     }
                 }
                 else -> {
@@ -1197,7 +1188,7 @@ private fun ProductManagementCard(
     val remUnits = if (!isCan) product.stockAvailable % upc else 0
     val stockTypeLabel = if (isCan) "Cans" else "Cases"
 
-    val costPrice = if (product.supplierGroup == "GC") product.purchasePriceGC else product.purchasePriceMB
+    val costPrice = if (product.purchasePrice > 0) product.purchasePrice else product.purchasePriceGC
     val marginVal = product.defaultSellPrice - costPrice
     val marginPercent = if (product.defaultSellPrice > 0) (marginVal / product.defaultSellPrice) * 100 else 0.0
     val painter = productPainter(product.displayName)
@@ -1274,15 +1265,25 @@ private fun ProductManagementCard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = product.displayName,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (product.isActive) NTColors.TextPrimary else NTColors.TextDisabled,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = product.displayName,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (product.isActive) NTColors.TextPrimary else NTColors.TextDisabled,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (product.brandName.isNotBlank()) {
+                                Text(
+                                    text = product.brandName,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = themeColor,
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(6.dp))
 
                         // Active/Inactive Badge
@@ -1407,6 +1408,10 @@ private fun ProductManagementCard(
 
                 // Margin Column
                 Column(modifier = Modifier.weight(2f)) {
+                    val cost = if (product.purchasePrice > 0) product.purchasePrice else costPrice
+                    val margin = product.defaultSellPrice - cost
+                    val marginPct = if (product.defaultSellPrice > 0) (margin / product.defaultSellPrice) * 100 else 0.0
+                    
                     Text(
                         text = "Margin",
                         color = NTColors.TextSecondary,
@@ -1415,7 +1420,7 @@ private fun ProductManagementCard(
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "₹${marginVal.toInt()} (${marginPercent.toInt()}%)",
+                        text = "₹${margin.toInt()} (${marginPct.toInt()}%)",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = badgeTextClr
@@ -1634,18 +1639,18 @@ private fun formatNumberCompact(num: Double): String =
 // ── Add/Edit form sheet ────────────────────────────────────────────────────────
 
 @Composable
-private fun ProductFormSheet(
+fun ProductFormSheet(
     existing: ProductCategory?,
     onDismiss: () -> Unit,
     onSave: (ProductCategory) -> Unit,
     bottomInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
-    var name        by remember(existing) { mutableStateOf(existing?.name ?: "") }
-    var displayName by remember(existing) { mutableStateOf(existing?.displayName ?: "") }
-    var priceGC     by remember(existing) { mutableStateOf(existing?.purchasePriceGC?.let { if (it > 0) it.toString() else "" } ?: "") }
-    var priceMB     by remember(existing) { mutableStateOf(existing?.purchasePriceMB?.let { if (it > 0) it.toString() else "" } ?: "") }
-    var sellPrice   by remember(existing) { mutableStateOf(existing?.defaultSellPrice?.let { if (it > 0) it.toString() else "" } ?: "") }
+    var name          by remember(existing) { mutableStateOf(existing?.name ?: "") }
+    var displayName   by remember(existing) { mutableStateOf(existing?.displayName ?: "") }
+    var brandName     by remember(existing) { mutableStateOf(existing?.brandName ?: "") }
+    var purchasePrice by remember(existing) { mutableStateOf(existing?.purchasePrice?.let { if (it > 0) it.toString() else "" } ?: "") }
+    var sellPrice     by remember(existing) { mutableStateOf(existing?.defaultSellPrice?.let { if (it > 0) it.toString() else "" } ?: "") }
 
     Column(
         modifier = modifier
@@ -1666,37 +1671,46 @@ private fun ProductFormSheet(
         Box(modifier = Modifier.width(40.dp).height(4.dp).background(NTColors.Border, RoundedCornerShape(2.dp)).align(Alignment.CenterHorizontally))
         Spacer(Modifier.height(16.dp))
         Text(
-            if (existing == null) stringResource(Res.string.title_add_new_product) else stringResource(Res.string.title_edit_product),
+            if (existing == null) "Add New Product" else "Edit Product",
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             color = NTColors.TextPrimary
         )
         Spacer(Modifier.height(20.dp))
 
-        FormInput(stringResource(Res.string.hint_product_sku), name) { name = it }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Product SKU", fontSize = 13.sp, color = NTColors.TextTertiary)
+                Spacer(Modifier.height(4.dp))
+                FormInput("SKU (e.g. 500ML)", name) { name = it }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Brand Name", fontSize = 13.sp, color = NTColors.TextTertiary)
+                Spacer(Modifier.height(4.dp))
+                FormInput("Brand (e.g. Bisleri)", brandName) { brandName = it }
+            }
+        }
         Spacer(Modifier.height(12.dp))
-        FormInput(stringResource(Res.string.hint_display_name), displayName) { displayName = it }
-        Spacer(Modifier.height(12.dp))
+        
+        Text("Display Name", fontSize = 13.sp, color = NTColors.TextTertiary)
+        Spacer(Modifier.height(4.dp))
+        FormInput("Display Title (e.g. 500ML Water Bottle)", displayName) { displayName = it }
+        
+        Spacer(Modifier.height(16.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(Res.string.label_gc_purchase_price), fontSize = 13.sp, color = NTColors.TextTertiary)
+                Text("Purchase Price", fontSize = 13.sp, color = NTColors.TextTertiary)
                 Spacer(Modifier.height(4.dp))
-                PriceInput(priceGC) { priceGC = it }
+                PriceInput(purchasePrice) { purchasePrice = it }
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(Res.string.label_mb_purchase_price), fontSize = 13.sp, color = NTColors.TextTertiary)
+                Text("Selling Price", fontSize = 13.sp, color = NTColors.TextTertiary)
                 Spacer(Modifier.height(4.dp))
-                PriceInput(priceMB) { priceMB = it }
+                PriceInput(sellPrice) { sellPrice = it }
             }
         }
-        Spacer(Modifier.height(12.dp))
-        Column {
-            Text(stringResource(Res.string.label_default_sell_price), fontSize = 13.sp, color = NTColors.TextTertiary)
-            Spacer(Modifier.height(4.dp))
-            PriceInput(sellPrice) { sellPrice = it }
-        }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(24.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
@@ -1704,15 +1718,15 @@ private fun ProductFormSheet(
                 modifier = Modifier.weight(1f).height(48.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text(stringResource(Res.string.action_cancel))
+                Text("Cancel")
             }
             Button(
                 onClick = {
                     val product = (existing ?: ProductCategory(id = "", name = name, displayName = displayName)).copy(
                         name             = name.trim(),
                         displayName      = displayName.trim(),
-                        purchasePriceGC  = priceGC.toDoubleOrNull() ?: 0.0,
-                        purchasePriceMB  = priceMB.toDoubleOrNull() ?: 0.0,
+                        brandName        = brandName.trim(),
+                        purchasePrice    = purchasePrice.toDoubleOrNull() ?: 0.0,
                         defaultSellPrice = sellPrice.toDoubleOrNull() ?: 0.0,
                     )
                     onSave(product)
@@ -1724,7 +1738,7 @@ private fun ProductFormSheet(
             ) {
                 Icon(Icons.Rounded.CheckCircle, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if (existing == null) stringResource(Res.string.action_add_product) else stringResource(Res.string.action_save_changes), fontWeight = FontWeight.Bold)
+                Text(if (existing == null) "Add Product" else "Save Changes", fontWeight = FontWeight.Bold)
             }
         }
     }

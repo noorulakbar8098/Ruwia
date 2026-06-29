@@ -85,6 +85,7 @@ fun StockInventoryScreen(
     onBack: () -> Unit,
     onAddMovement: (source: String, qty: Int, type: String, shopName: String, productId: String?) -> Unit = { _, _, _, _, _ -> },
     onAddStock: () -> Unit = {},
+    onAddProduct: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val products = state.productCategories
@@ -382,6 +383,24 @@ fun StockInventoryScreen(
                     }
                     activeAdjustProduct = null
                 }
+            )
+        }
+
+        // ── Floating Action Button (FAB) ──────────────────────────────────
+        FloatingActionButton(
+            onClick = onAddProduct,
+            containerColor = SaaSColors.Primary,
+            contentColor = Color.White,
+            shape = CircleShape,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = contentPadding.calculateBottomPadding() + 16.dp)
+                .shadow(8.dp, CircleShape)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Add,
+                contentDescription = "Add Product",
+                modifier = Modifier.size(28.dp)
             )
         }
     }

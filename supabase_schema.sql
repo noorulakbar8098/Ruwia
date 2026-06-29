@@ -109,7 +109,20 @@ $$ LANGUAGE plpgsql;
 
 -- ─── 4. Operational Tables & Migration ───────────────────────
 
-CREATE TABLE IF NOT EXISTS product_categories (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, name TEXT, display_name TEXT, supplier_group TEXT, purchase_price_gc DECIMAL, purchase_price_mb DECIMAL, default_sell_price DECIMAL, stock_available INT, is_active BOOLEAN, created_at TIMESTAMPTZ);
+CREATE TABLE IF NOT EXISTS product_categories (
+    id               UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    name             TEXT NOT NULL,
+    display_name     TEXT NOT NULL,
+    brand_name       TEXT DEFAULT '',
+    supplier_group   TEXT NOT NULL DEFAULT 'GC',
+    purchase_price   DECIMAL(10,2) DEFAULT 0,
+    purchase_price_gc  DECIMAL(10,2) DEFAULT 0,
+    purchase_price_mb  DECIMAL(10,2) DEFAULT 0,
+    default_sell_price DECIMAL(10,2) DEFAULT 0,
+    stock_available  INT DEFAULT 0,
+    is_active        BOOLEAN DEFAULT true,
+    created_at       TIMESTAMPTZ DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS shop_stocks (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, name TEXT, location TEXT, total_cans INT, full_cans INT, empty_cans INT, cans_with_customers INT, is_live BOOLEAN, updated_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS suppliers (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, name TEXT, location TEXT, is_active BOOLEAN, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS customers (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, user_id UUID, name TEXT, phone TEXT, address TEXT, other_details TEXT, cans_held INT, balance DECIMAL, created_at TIMESTAMPTZ);
@@ -124,6 +137,8 @@ CREATE TABLE IF NOT EXISTS route_tasks (id UUID DEFAULT uuid_generate_v4() PRIMA
 
 -- Migrate all tables
 SELECT migrate_to_tenant_table('product_categories');
+ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS brand_name TEXT DEFAULT '';
+ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS purchase_price DECIMAL(10,2) DEFAULT 0;
 SELECT migrate_to_tenant_table('shop_stocks');
 SELECT migrate_to_tenant_table('suppliers');
 SELECT migrate_to_tenant_table('customers');

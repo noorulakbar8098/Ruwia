@@ -66,7 +66,7 @@ private data class InwardProduct(
     val id: String,
     val name: String,
     val displayName: String,
-    val purchasePriceGC: Double,
+    val purchasePrice: Double,
 )
 
 private fun getDefaultInwardQty(productName: String): Int {
@@ -94,7 +94,7 @@ fun AddStockPurchaseScreen(
     ) -> Unit,
 ) {
     val effectiveProducts  = if (products.isNotEmpty())
-        products.map { InwardProduct(it.id, it.name, it.displayName, it.purchasePriceGC) }
+        products.map { InwardProduct(it.id, it.name, it.displayName, if (it.purchasePrice > 0) it.purchasePrice else it.purchasePriceGC) }
     else emptyList<InwardProduct>()
 
     val effectiveSuppliers = suppliers.ifEmpty { fallbackSuppliers }
@@ -438,8 +438,8 @@ fun AddStockPurchaseScreen(
                             Spacer(Modifier.width(12.dp))
                             Column {
                                 Text(p.displayName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
-                                if (!isEmployee && p.purchasePriceGC > 0) {
-                                    Text("Purchase ₹${p.purchasePriceGC.fmt2}/unit", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                                if (!isEmployee && p.purchasePrice > 0) {
+                                    Text("Purchase ₹${p.purchasePrice.fmt2}/unit", fontSize = 11.sp, color = RuwiaColor.TextMuted)
                                 }
                             }
                         }
@@ -600,7 +600,7 @@ private fun InwardMultiProductSection(
             }
             InwardLineCard(
                 lineNumber   = idx + 1,
-                product      = products.getOrNull(item.productIdx) ?: products.lastOrNull() ?: InwardProduct(id = "", name = "", displayName = "", purchasePriceGC = 0.0),
+                product      = products.getOrNull(item.productIdx) ?: products.lastOrNull() ?: InwardProduct(id = "", name = "", displayName = "", purchasePrice = 0.0),
                 qty          = item.qty,
                 isEmployee   = isEmployee,
                 showRemove   = lineItems.size > 1,
@@ -727,8 +727,8 @@ private fun InwardLineCard(
         }
 
         // ── Purchase price (admin only) ────────────────────────
-        if (!isEmployee && product.purchasePriceGC > 0) {
-            val totalPrice = qty * product.purchasePriceGC
+        if (!isEmployee && product.purchasePrice > 0) {
+            val totalPrice = qty * product.purchasePrice
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier
@@ -743,12 +743,12 @@ private fun InwardLineCard(
                     Text("Purchase Rate", fontSize = 11.sp, color = RuwiaColor.Orange.copy(alpha = 0.75f), fontWeight = FontWeight.Medium)
                     if (isCase) {
                         Text(
-                            "$qty cases × ₹${product.purchasePriceGC.fmt2}",
+                            "$qty cases × ₹${product.purchasePrice.fmt2}",
                             fontSize = 9.sp, color = RuwiaColor.Orange.copy(alpha = 0.8f)
                         )
                     } else if (qty > 1) {
                         Text(
-                            "$qty cans × ₹${product.purchasePriceGC.fmt2}",
+                            "$qty cans × ₹${product.purchasePrice.fmt2}",
                             fontSize = 9.sp, color = RuwiaColor.Orange.copy(alpha = 0.8f)
                         )
                     }
@@ -879,7 +879,7 @@ private fun InwardSummaryCard(
     }
     val totalValue = lineItems.sumOf {
         val p = products.getOrNull(it.productIdx) ?: return@sumOf 0.0
-        p.purchasePriceGC * it.qty * getUnitsPerCase(p.name)
+        p.purchasePrice * it.qty * getUnitsPerCase(p.name)
     }
 
     Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(RuwiaColor.Orange)) {
