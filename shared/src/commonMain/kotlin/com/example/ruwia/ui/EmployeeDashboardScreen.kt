@@ -29,7 +29,8 @@ import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.ProductCategory
-import com.example.ruwia.domain.unitsPerCase
+import com.example.ruwia.domain.deriveShopStockTotals
+import com.example.ruwia.domain.shopMatchKey
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
@@ -65,7 +66,7 @@ private data class EntryDisplay(
 
 private fun DeliveryTask.toEntryDisplay(): EntryDisplay = EntryDisplay(
     name     = customerName,
-    detail   = "$canQty cans  ·  $etaText",
+    detail   = "$canQty Cases  ·  $etaText",
     amount   = if (status == "delivered") "+₹${canQty * 28}" else "+$canQty",
     status   = if (status == "delivered") "SOLD" else status.replace("_", " ").uppercase(),
     isInward = false,
@@ -133,6 +134,18 @@ fun EmployeeDashboardScreen(
     var selectedTab by remember { mutableStateOf(0) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var isLoggingOut by remember { mutableStateOf(false) }
+    var isSubmittingAction by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.loading, state.error) {
+        if (isSubmittingAction && !state.loading) {
+            if (state.error == null) {
+                screen = EmpScreen.Home
+                isSubmittingAction = false
+            } else {
+                isSubmittingAction = false
+            }
+        }
+    }
 
     if (isLoggingOut) {
         SaaSLoadingOverlay(message = "Signing Out")
@@ -185,14 +198,22 @@ fun EmployeeDashboardScreen(
                 AddStockPurchaseScreen(
                     stockItems = emptyList(),
                     products   = state.productCategories,
-                    suppliers  = state.suppliers,
                     onBack     = { screen = EmpScreen.Home },
                     onClose    = { screen = EmpScreen.Home },
                     isEmployee = true,
-                    onSave     = { supplier, _, quantities, empties ->
+                    onSave     = { productId, sku, brandName, purchasePrice, sellingPrice, qty, shopName, dateTimeIso, emptyCans ->
                         val shopPart = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
-                        vm.addInwardStock(supplier, quantities, shopPart, empties)
-                        screen = EmpScreen.Home
+                        isSubmittingAction = true
+                        vm.addInwardStockEntry(
+                            sku = sku,
+                            brandName = brandName,
+                            purchasePrice = purchasePrice,
+                            sellingPrice = sellingPrice,
+                            qty = qty,
+                            shopName = shopPart,
+                            createdAt = dateTimeIso,
+                            emptyCans = emptyCans
+                        )
                     },
                 )
             }
@@ -227,18 +248,17 @@ fun EmployeeDashboardScreen(
                         }
                         val lines = items.mapNotNull { item ->
                             val product = state.productCategories.getOrNull(item.productIdx) ?: return@mapNotNull null
-                            val upc = product.unitsPerCase.coerceAtLeast(1)
-                            // item.sellPriceText is now Case Price if upc > 1
-                            val sellPricePerCase = item.sellPriceText.toDoubleOrNull() ?: (product.defaultSellPrice * upc)
+                            val sellPricePerUnit = item.sellPriceText.toDoubleOrNull() ?: product.defaultSellPrice
                             com.example.ruwia.data.EmployeeRepository.SaleLine(
                                 productId            = product.id,
                                 productName          = product.displayName.ifBlank { product.name },
-                                qty                  = item.qty * upc,  // cases → units
-                                sellingPricePerUnit  = sellPricePerCase / upc,  // case price → unit price
+                                qty                  = item.qty,
+                                sellingPricePerUnit  = sellPricePerUnit,
                                 purchasePricePerUnit = if (product.purchasePrice > 0) product.purchasePrice else product.purchasePriceGC,
                             )
                         }
                         if (lines.isNotEmpty()) {
+                            isSubmittingAction = true
                             vm.addOutwardSale(
                                 customerName       = customerName,
                                 shopName           = shopPart,
@@ -247,7 +267,6 @@ fun EmployeeDashboardScreen(
                                 saleDate           = parsedSaleDate,
                             )
                         }
-                        screen = EmpScreen.Home
                     },
                 )
             }
@@ -264,11 +283,10 @@ fun EmployeeDashboardScreen(
                     todayOutward = state.todayOutward,
                     todaySales   = state.dailyEarnings,
                     customerCount = state.customers.size,
-                    supplierCount = state.suppliers.size,
+                    supplierCount = 0,
                     errorMessage  = state.error,
                     onClearError  = vm::clearError,
                     onAddCustomer = { vm.addCustomer(it) },
-                    onAddSupplier = { name, loc -> vm.addSupplier(name, loc) },
                     onBack       = {
                         // Return to whichever tab the user was on before opening Profile.
                         screen = EmpScreen.Home
@@ -321,10 +339,7 @@ fun EmployeeDashboardScreen(
                             movements      = state.shopMovements,
                             isLoading      = state.loading,
                             onRefresh      = { vm.loadDashboard() },
-                            // Restrict the view to the employee's assigned shop. The
-                            // shopInfo string carries "{shopName} · {location}" — strip
-                            // the location segment so it matches the keys in shop_stocks.
-                            shopName       = parsedShopName,
+                            shopName       = state.assignedShop,
                             contentPadding = padding,
                         )
 
@@ -383,7 +398,7 @@ private fun formatCreatedAtTime(createdAt: String?): String {
 private fun StockMovement.toHomeActivityItem(): HomeActivityItem {
     val isReturn = type == "inward" && source.trim().startsWith("Empty cans", ignoreCase = true)
     val cleanSource = if (isReturn) {
-        source.replace("Empty cans", "")
+        source.replace("Empty Cases", "")
             .replace("·", "")
             .trim()
     } else {
@@ -421,21 +436,8 @@ private fun EmployeeHomeContent(
     onTabSelected: (Int) -> Unit,
     contentPadding: PaddingValues,
 ) {
-    val parsedShopName = remember(shopInfo) { shopInfo.split("·").getOrNull(0)?.trim().orEmpty() }
-    val visibleShops = remember(state.shopStocks, parsedShopName) {
-        if (parsedShopName.isBlank()) state.shopStocks
-        else {
-            val key = shopMatchKey(parsedShopName)
-            state.shopStocks.filter { shopMatchKey(it.name) == key }.ifEmpty { state.shopStocks }
-        }
-    }
-    val visibleMovements = remember(state.shopMovements, parsedShopName) {
-        if (parsedShopName.isBlank()) state.shopMovements
-        else {
-            val key = shopMatchKey(parsedShopName)
-            state.shopMovements.filter { shopMatchKey(it.shopName) == key }
-        }
-    }
+    val visibleShops = state.shopStocks
+    val visibleMovements = state.shopMovements
     val stockItems = remember(state.productCategories) {
         state.productCategories.map { com.example.ruwia.domain.StockItem(it.id, it.name, it.stockAvailable, 0) }
     }
@@ -443,9 +445,35 @@ private fun EmployeeHomeContent(
         deriveShopStockTotals(visibleShops, visibleMovements, stockItems)
     }
 
-    val totalFull  = derivedShops.sumOf { it.fullCans }
-    val totalEmpty = derivedShops.sumOf { it.emptyCans }
-    val totalCust  = derivedShops.sumOf { it.cansWithCustomers }
+    val totalFull = remember(visibleMovements) {
+        visibleMovements
+            .filter { !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { m ->
+                when (m.type) {
+                    "inward"  ->  m.qty.toDouble()
+                    "outward" -> -m.qty.toDouble()
+                    else      ->  0.0
+                }
+            }
+            .coerceAtLeast(0.0)
+    }
+    val totalEmpty = remember(visibleMovements) {
+        visibleMovements
+            .filter { it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { m ->
+                if (m.type == "inward") m.qty.toDouble() else -m.qty.toDouble()
+            }
+            .coerceAtLeast(0.0)
+    }
+    val totalCust = remember(visibleMovements) {
+        val sales = visibleMovements
+            .filter { it.type == "outward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { it.qty.toDouble() }
+        val returns = visibleMovements
+            .filter { it.type == "inward" && it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { it.qty.toDouble() }
+        (sales - returns).coerceAtLeast(0.0)
+    }
 
     val activityItems = remember(state.recentEntries) {
         state.recentEntries.map { it.toHomeActivityItem() }.take(5)
@@ -814,7 +842,7 @@ private fun TodayStockCard(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "${formatCases(available)} cans",
+                        "${formatCases(available)} Cases",
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black,
                         color = RuwiaColor.TextPrimary
@@ -840,7 +868,7 @@ private fun TodayStockCard(
             ) {
                 StockItemSmallCol(
                     value = formatCases(empty),
-                    label = "Empty Cans",
+                    label = "Empty Cases",
                     icon = Icons.AutoMirrored.Rounded.Undo,
                     color = Color(0xFFF59E0B)
                 )
@@ -905,7 +933,7 @@ private fun QuickActionGrid(
             )
             QuickActionCard(
                 icon = Icons.Rounded.Autorenew,
-                title = "Return Cans",
+                title = "Return Cases",
                 onClick = onReturnEmptyCans,
                 modifier = Modifier.weight(1f),
                 color = Color(0xFFF59E0B)

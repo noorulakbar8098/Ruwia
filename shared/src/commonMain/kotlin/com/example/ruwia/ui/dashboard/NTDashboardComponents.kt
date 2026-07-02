@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import kotlin.math.*
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -518,9 +519,19 @@ fun NTGrowthBadge(percent: Double) {
 }
 
 private fun formatMrr(amount: Double): String = when {
-    amount >= 1_00_000 -> "₹${(amount / 1_00_000 * 10).toLong() / 10.0}L"
-    amount >= 1_000    -> "₹${amount.toLong()}"
-    else               -> "₹${amount.toLong()}"
+    amount >= 1_00_000 -> {
+        val l = amount / 1_00_000.0
+        val rounded = round(l * 100.0) / 100.0
+        val s = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+        "₹${s}L"
+    }
+    amount >= 1_000 -> {
+        val k = amount / 1_000.0
+        val rounded = round(k * 100.0) / 100.0
+        val s = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+        "₹${s}K"
+    }
+    else -> "₹${amount.toInt()}"
 }
 
 /** "+12.4%" / "-3.0%" — keeps one decimal, strips the trailing ".0" when zero. */
@@ -1004,10 +1015,9 @@ private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: (
 
 fun defaultNavTabs() = listOf(
     NTNavTab(0, "Home",      Icons.Rounded.Home),
-    NTNavTab(1, "Products",  Icons.Rounded.Category),
-    NTNavTab(2, "Stocks",    Icons.Rounded.Inventory2),
-    NTNavTab(3, "Analytics", Icons.Rounded.BarChart),
-    NTNavTab(4, "Settings",  Icons.Rounded.Settings),
+    NTNavTab(1, "Inventory", Icons.Rounded.Inventory2),
+    NTNavTab(2, "Analytics", Icons.Rounded.BarChart),
+    NTNavTab(3, "Settings",  Icons.Rounded.Settings),
 )
 
 // ── Shimmer brush ─────────────────────────────────────────────

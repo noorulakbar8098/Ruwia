@@ -330,7 +330,7 @@ private fun SupplierFormInput(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
+            .background(Color.White, RoundedCornerShape(10.dp))
             .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {

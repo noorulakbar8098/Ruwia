@@ -32,10 +32,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.deriveShopStockTotals
+import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.*
 
@@ -120,10 +121,36 @@ private fun StockDashboardContent(
         deriveShopStockTotals(shopStocks, movements, stockItems)
     }
 
-    val totalCans  = derivedShops.sumOf { it.totalCans }
-    val totalFull  = derivedShops.sumOf { it.fullCans }
-    val totalEmpty = derivedShops.sumOf { it.emptyCans }
-    val totalCust  = derivedShops.sumOf { it.cansWithCustomers }
+    val totalFull = remember(movements) {
+        movements
+            .filter { !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { m ->
+                when (m.type) {
+                    "inward"  ->  m.qty.toDouble()
+                    "outward" -> -m.qty.toDouble()
+                    else      ->  0.0
+                }
+            }
+            .coerceAtLeast(0.0)
+    }
+    val totalEmpty = remember(movements) {
+        movements
+            .filter { it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { m ->
+                if (m.type == "inward") m.qty.toDouble() else -m.qty.toDouble()
+            }
+            .coerceAtLeast(0.0)
+    }
+    val totalCust = remember(movements) {
+        val sales = movements
+            .filter { it.type == "outward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { it.qty.toDouble() }
+        val returns = movements
+            .filter { it.type == "inward" && it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { it.qty.toDouble() }
+        (sales - returns).coerceAtLeast(0.0)
+    }
+    val totalCans = totalFull + totalEmpty + totalCust
 
     val inwardByShop = movements
         .filter { it.type == "inward" }
@@ -616,24 +643,14 @@ private fun ShopStockCard(
                     val fullIn = productRows.filter { it.type == "inward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
                     val sentOut = productRows.filter { it.type == "outward" }.sumOf { it.qty }
                     val totalUnits = (fullIn - sentOut).coerceAtLeast(0)
-                    val cases = totalUnits / product.unitsPerCase
-                    val remainder = totalUnits % product.unitsPerCase
-                    
-                    if (cases > 0 || remainder > 0 || totalUnits > 0) {
+                    if (totalUnits > 0) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(product.name, fontSize = 13.sp, color = NTColors.TextSecondary)
-                            val unitLabel = if (product.unitsPerCase > 1) "cases" else "cans"
-                            val valText = buildString {
-                                append("$cases $unitLabel")
-                                if (remainder > 0 && product.unitsPerCase > 1) {
-                                    append(" + $remainder units")
-                                }
-                            }
-                            Text(valText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextPrimary)
+                            Text("$totalUnits cans", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextPrimary)
                         }
                     }
                 }
@@ -713,10 +730,8 @@ private fun ProductStockRow(item: StockItem) {
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             val capacityLabel = if (item.capacityLiters > 0) "${item.capacityLiters}L" else "—"
-            val isCan = item.unitsPerCase == 1
-            val unit = if (isCan) "can" else "case"
             Text(
-                "$capacityLabel · ₹${item.pricePerCan.toInt()}/$unit",
+                "$capacityLabel · ₹${item.pricePerCan.toInt()}/can",
                 fontSize = 11.sp, color = NTColors.TextTertiary,
             )
         }
@@ -726,11 +741,7 @@ private fun ProductStockRow(item: StockItem) {
                 .background(badgeBg)
                 .padding(horizontal = 10.dp, vertical = 4.dp),
         ) {
-            val isCan = item.unitsPerCase == 1
-            val displayCount = if (isCan) item.stockAvailable else item.stockAvailable / item.unitsPerCase.coerceAtLeast(1)
-            val remUnits     = if (!isCan) item.stockAvailable % item.unitsPerCase.coerceAtLeast(1) else 0
-            val units = if (isCan) "cans" else "cases"
-            val label = if (!isCan && remUnits > 0) "$displayCount $units +$remUnits" else "$displayCount $units"
+            val label = "${item.stockAvailable} cans"
             Text(
                 label,
                 fontSize = 11.sp, fontWeight = FontWeight.Bold,
@@ -772,7 +783,7 @@ private fun AllProductsStockCard(
                     letterSpacing = 0.8.sp, color = NTColors.Primary,
                 )
                 Text(
-                    "${items.size} SKUs · ${items.sumOf { it.stockAvailable }} cans/cases on hand",
+                    "${items.size} SKUs · ${items.sumOf { it.stockAvailable }} units on hand",
                     fontSize = 12.sp, color = NTColors.TextTertiary,
                 )
             }
@@ -897,96 +908,7 @@ private fun MovementRow(movement: StockMovement) {
  * movement log. The original metadata fields (`id`, `name`, `location`,
  * `isLive`) are preserved.
  */
-internal fun deriveShopStockTotals(
-    rawShops: List<ShopStockInfo>,
-    movements: List<StockMovement>,
-    stockItems: List<StockItem>,
-): List<ShopStockInfo> {
-    if (rawShops.isEmpty()) return emptyList()
-    val productMap = stockItems.associateBy { it.id }
 
-    return rawShops.map { shop ->
-        val key = shopMatchKey(shop.name)
-        val rows = movements.filter { shopMatchKey(it.shopName) == key }
-        
-        val productNetFull = mutableMapOf<String, Int>()
-        var unknownProductFull = 0
-        
-        rows.forEach { m ->
-            val isFullIn = m.type == "inward" && !m.source.trim().startsWith("Empty cans", ignoreCase = true)
-            val isSentOut = m.type == "outward"
-            if (isFullIn || isSentOut) {
-                val delta = if (isFullIn) m.qty else -m.qty
-                if (m.productId != null) {
-                    productNetFull[m.productId] = (productNetFull[m.productId] ?: 0) + delta
-                } else {
-                    unknownProductFull += delta
-                }
-            }
-        }
-        
-        var totalCases = unknownProductFull.toDouble().coerceAtLeast(0.0)
-        productNetFull.forEach { (pid, units) ->
-            val p = productMap[pid]
-            val actualUnits = units.coerceAtLeast(0)
-            if (p != null) {
-                totalCases += actualUnits.toDouble() / p.unitsPerCase.coerceAtLeast(1)
-            } else {
-                totalCases += actualUnits.toDouble()
-            }
-        }
-        
-        // Convert empty cans to case-equivalent units (20L & 5L cans stay as 1 = 1,
-        // but smaller sizes use their case size so the total is in consistent "case" units)
-        var emptyCases = 0.0
-        rows.filter { it.source.isEmptyCansSource() }.forEach { m ->
-            val delta = if (m.type == "inward") m.qty else -m.qty
-            if (m.productId != null) {
-                val p = productMap[m.productId]
-                if (p != null) emptyCases += delta.toDouble() / p.unitsPerCase.coerceAtLeast(1)
-                else emptyCases += delta.toDouble()
-            } else {
-                // No product linked — count each movement's qty individually.
-                emptyCases += delta.toDouble()
-            }
-        }
-        
-        // Cans with customers: increase on outward sale, decrease on inward return.
-        var withCust = 0.0
-        rows.forEach { m ->
-            val isReturn = m.source.isEmptyCansSource() && m.type == "inward"
-            val isSale   = !m.source.isEmptyCansSource() && m.type == "outward"
-            if (isReturn || isSale) {
-                val delta = if (isSale) m.qty else -m.qty
-                val p = if (m.productId != null) productMap[m.productId] else null
-                withCust += delta.toDouble() / (p?.unitsPerCase?.coerceAtLeast(1) ?: 1)
-            }
-        }
-
-        val fullCans = totalCases
-        val totalCans = fullCans + emptyCases + withCust.coerceAtLeast(0.0)
-
-        shop.copy(
-            totalCans = totalCans,
-            fullCans = fullCans,
-            emptyCans = emptyCases,
-            cansWithCustomers = withCust.coerceAtLeast(0.0),
-        )
-    }
-}
-
-/**
- * Normalises a shop name like "Shop 1 · Main" / "Shop 1" / " shop 1 " into
- * the same lowercase comparison key. Shop names entered in the employee app
- * (`shopInfo.split("·")[0].trim()`) only carry the first segment, so we
- * strip everything after the bullet so they match the seeded names.
- */
-internal fun shopMatchKey(name: String): String =
-    name.split("·", limit = 2).firstOrNull()?.trim()?.lowercase() ?: name.trim().lowercase()
-
-/** True if a movement source string represents returned empty cans. */
-private fun String.isEmptyCansSource(): Boolean =
-    trim().startsWith("Empty cans", ignoreCase = true)
 
 /** Format a Double case count for display: whole numbers as "5", fractions as "5.5" etc. */
 private fun formatCases(value: Double): String {

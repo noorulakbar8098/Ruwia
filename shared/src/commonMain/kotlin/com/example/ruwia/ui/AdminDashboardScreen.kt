@@ -40,6 +40,7 @@ import com.example.ruwia.ui.admin.ProductDetailScreen
 import com.example.ruwia.ui.admin.ProductFormSheet
 import com.example.ruwia.ui.admin.ProductManagementScreen
 import com.example.ruwia.ui.admin.ProfitDashboardScreen
+import com.example.ruwia.ui.admin.InventoryScreen
 import com.example.ruwia.ui.dashboard.*
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import kotlinx.datetime.LocalTime
@@ -62,6 +63,7 @@ fun AdminDashboardScreen(
 ) {
     val state by vm.state.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -75,13 +77,21 @@ fun AdminDashboardScreen(
         }
     }
 
+    LaunchedEffect(state.error) {
+        state.error?.let {
+            snackbarHostState.showSnackbar(message = it, duration = SnackbarDuration.Long)
+            vm.clearError()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         AdminDashboardContentSwitcher(
             state = state,
             vm = vm,
             onLogout = onLogout,
             adminName = adminName,
-            adminEmail = adminEmail
+            adminEmail = adminEmail,
+            snackbarHostState = snackbarHostState
         )
 
         if (state.loading) {
@@ -97,6 +107,7 @@ private fun AdminDashboardContentSwitcher(
     onLogout: () -> Unit,
     adminName: String,
     adminEmail: String,
+    snackbarHostState: SnackbarHostState,
 ) {
     var selectedTab       by remember { mutableStateOf(0) }
     var showAddStock      by remember { mutableStateOf(false) }
@@ -104,9 +115,9 @@ private fun AdminDashboardContentSwitcher(
     var showEmployees     by remember { mutableStateOf(false) }
     var showAddEmployee   by remember { mutableStateOf(false) }
     var showPricing       by remember { mutableStateOf(false) }
-    var showSuppliers     by remember { mutableStateOf(false) }
     var showCustomers     by remember { mutableStateOf(false) }
-    var showAddProduct   by remember { mutableStateOf(false) }
+    var productToRestock by remember { mutableStateOf<ProductCategory?>(null) }
+    var editModeStock by remember { mutableStateOf(0) }
 
     var productDetailName by remember { mutableStateOf<String?>(null) }
 
@@ -134,16 +145,7 @@ private fun AdminDashboardContentSwitcher(
         )
         return
     }
-    if (showSuppliers) {
-        SystemBackHandler { showSuppliers = false }
-        com.example.ruwia.ui.admin.SupplierManagementScreen(
-            suppliers        = state.suppliersFull,
-            onAddSupplier    = vm::addSupplier,
-            onDeleteSupplier = vm::deleteSupplier,
-            onBack           = { showSuppliers = false },
-        )
-        return
-    }
+
     if (showPricing) {
         SystemBackHandler { showPricing = false }
         ProductPricingScreen(
@@ -202,53 +204,53 @@ private fun AdminDashboardContentSwitcher(
         AddStockPurchaseScreen(
             stockItems = state.stockItems,
             products   = state.productCategories,
-            suppliers  = state.suppliers,
-            onBack     = { showAddStock = false },
-            onClose    = { showAddStock = false },
-            onSave     = { supplier, selectedShopName, quantities, _ ->
-                val actualShop = selectedShopName.ifBlank { "Shop 1" }
-                // addBulkStockMovements inserts all products sequentially in one
-                // coroutine and only refreshes state AFTER every insert is done.
-                // This fixes the race condition where loadData() ran before the
-                // DB inserts completed, showing stale counts on the dashboard.
-                vm.addBulkStockMovements(
-                    source    = supplier,
-                    shopName  = actualShop,
-                    quantities = quantities,
-                )
+            productToRestock = productToRestock,
+            currentStock = editModeStock,
+            movements  = state.recentMovements,
+            shops      = state.shopStocks
+                .filter { it.name.trim().lowercase().let { name -> name == "shop 1" || name == "shop 2" } }
+                .map { it.name to it.location },
+            onBack     = { productToRestock = null; editModeStock = 0; showAddStock = false },
+            onClose    = { productToRestock = null; editModeStock = 0; showAddStock = false },
+            onSave     = { productId, sku, brandName, purchasePrice, sellingPrice, qty, shopName, dateTimeIso, emptyCans ->
+                if (productToRestock != null) {
+                    // Edit mode: update product details + stock delta
+                    vm.updateProductWithStockDelta(
+                        productId = productToRestock!!.id,
+                        brandName = brandName,
+                        purchasePrice = purchasePrice,
+                        sellingPrice = sellingPrice,
+                        newStock = qty,
+                        previousStock = editModeStock,
+                        shopName = shopName
+                    )
+                } else {
+                    vm.addInwardStockEntry(
+                        sku = sku,
+                        brandName = brandName,
+                        purchasePrice = purchasePrice,
+                        sellingPrice = sellingPrice,
+                        qty = qty,
+                        shopName = shopName,
+                        createdAt = dateTimeIso
+                    )
+                }
+                productToRestock = null
+                editModeStock = 0
                 showAddStock = false
             }
         )
         return
     }
 
-    if (showAddProduct) {
-        SystemBackHandler { showAddProduct = false }
-        Box(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
-                    .clickable { showAddProduct = false },
-            )
-            ProductFormSheet(
-                existing = null,
-                onDismiss = { showAddProduct = false },
-                onSave = { updated: ProductCategory ->
-                    vm.addProductCategory(updated)
-                    showAddProduct = false
-                },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
-        }
-        return
-    }
+
 
 
 
     Scaffold(
         containerColor = NTColors.Background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
             NTBottomNavigation(
                 selectedTab   = selectedTab,
@@ -266,25 +268,30 @@ private fun AdminDashboardContentSwitcher(
                      contentPadding = contentPadding,
                      adminName      = adminName,
                      onLogout       = onLogout,
-                     onOpenSettings = { selectedTab = 4 },
+                     onOpenSettings = { selectedTab = 3 },
                  )
-            1 -> ProductManagementScreen(
-                     products        = state.productCategories,
-                     onAddProduct    = vm::addProductCategory,
-                     onUpdateProduct = vm::updateProductCategory,
-                     onDeleteProduct = vm::deleteProductCategory,
-                     onBack          = { selectedTab = 0 },
-                     contentPadding  = contentPadding,
-                 )
-            2 -> StockInventoryScreen(
+            1 -> InventoryScreen(
                      state          = state,
                      onBack         = { selectedTab = 0 },
-                     onAddMovement  = vm::addStockMovement,
-                     onAddStock     = { showAddStock = true },
-                     onAddProduct   = { showAddProduct = true },
+                     onAddProductRequest = {
+                         productToRestock = null
+                         showAddStock = true
+                     },
+                     onAddProductCategory = vm::addProductCategory,
+                     onUpdateProduct = vm::updateProductCategory,
+                     onDeleteProduct = vm::deleteProductCategory,
+                     onAddMovement   = vm::addStockMovement,
+                     onAddStockPurchase = { product, currentStock ->
+                          productToRestock = product
+                          editModeStock = currentStock
+                          showAddStock = true
+                      },
+                     onToggleProductStatus = { product ->
+                         vm.updateProductCategory(product.copy(isActive = !product.isActive))
+                     },
                      contentPadding = contentPadding,
                  )
-            3 -> ProfitDashboardScreen(
+            2 -> ProfitDashboardScreen(
                      state           = state,
                      onBack          = {},
                      onExpenseMonthSelected = vm::loadMonthlyExpense,
@@ -295,14 +302,13 @@ private fun AdminDashboardContentSwitcher(
                      onClearData       = vm::clearStockAndRevenue,
                      contentPadding    = contentPadding,
                  )
-            4 -> SettingsScreen(
+            3 -> SettingsScreen(
                      state                  = state,
                      adminName              = adminName,
                      adminEmail             = adminEmail,
                      onBack                 = { selectedTab = 0 },
                      onNavigateToEmployees  = { showEmployees = true },
                      onNavigateToPricing    = { showPricing = true },
-                     onNavigateToSuppliers  = { showSuppliers = true },
                      onNavigateToCustomers  = { showCustomers = true },
                      onLogout               = onLogout,
                      onDeleteAllData        = {
@@ -355,7 +361,7 @@ private fun AdminDashboardContent(
         state.toDashboardMetrics(selectedRange.toDashboardRange())
     }
 
-    val totalStock     = metrics.totalStockCases
+    val totalStock     = metrics.totalStockUnits
     val pendingOrders  = state.orders.count { it.status == "pending" }
     val deliveredToday = state.orders.count { it.status == "delivered" }
     val activeStaff    = state.employees.count { it.status != "inactive" }
@@ -488,7 +494,7 @@ private fun AdminDashboardContent(
                     val stockRawLabels = state.stockItems.map { it.name }
                     NTLineChartCard(
                         title         = "STOCK LEVELS",
-                        valueLabel    = "${formatCases(totalStock)} cases on hand",
+                        valueLabel    = "${formatCases(totalStock)} units on hand",
                         growthPercent = metrics.stockGrowthPercent ?: 0.0,
                         points        = if (stockPoints.size >= 2) stockPoints else List(7) { 0.5f },
                         labels        = state.stockItems.map { it.name.take(3).uppercase() }
@@ -859,7 +865,7 @@ private fun formatPctShort(p: Double): String {
  * red = down, neutral grey when there's no last-month baseline).
  */
 private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiItem> {
-    val totalStock = metrics.totalStockCases
+    val totalStock = metrics.totalStockUnits
 
     // ── 1. Stock on hand ─────────────────────────────────────
     val stockKpi = run {
@@ -868,7 +874,7 @@ private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiI
         NTKpiItem(
             title         = "STOCK ON HAND",
             value         = formatCases(totalStock),
-            subtitle      = "${metrics.activeSkus} Products",
+            subtitle      = "Units across all shops",
             subtitleColor = accent.text,
             icon          = Icons.Rounded.Inventory2,
             iconBg        = accent.bgLight,

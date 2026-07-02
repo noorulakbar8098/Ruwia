@@ -46,7 +46,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
-import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import org.jetbrains.compose.resources.painterResource
@@ -106,7 +105,8 @@ private fun matchesCategory(product: ProductCategory, category: String): Boolean
 @Composable
 fun ProductManagementScreen(
     products: List<ProductCategory> = emptyList(),
-    onAddProduct: (ProductCategory) -> Unit = {},
+    shops: List<com.example.ruwia.domain.ShopStockInfo> = emptyList(),
+    onAddProduct: (ProductCategory, Int, String) -> Unit = { _, _, _ -> },
     onUpdateProduct: (ProductCategory) -> Unit = {},
     onDeleteProduct: (String) -> Unit = {},
     onBack: () -> Unit,
@@ -143,9 +143,7 @@ fun ProductManagementScreen(
     val totalProducts = products.size
     val activeProductsCount = products.count { it.isActive }
     val lowStockCount = products.count { prod ->
-        val upc = prod.unitsPerCase.coerceAtLeast(1)
-        val cases = if (upc == 1) prod.stockAvailable else prod.stockAvailable / upc
-        cases <= 5
+        prod.stockAvailable <= 5
     }
     val totalInventoryValue = products.sumOf { it.stockAvailable * it.defaultSellPrice }
 
@@ -196,9 +194,8 @@ fun ProductManagementScreen(
             val marginMax = marginMaxInput.toDoubleOrNull() ?: 100.0
             val matchesMargin = marginPercent in marginMin..marginMax
 
-            // Stock range check (calculated in cases/cans)
-            val upc = prod.unitsPerCase.coerceAtLeast(1)
-            val casesCount = if (upc == 1) prod.stockAvailable else prod.stockAvailable / upc
+            // Stock range check
+            val casesCount = prod.stockAvailable
             val stockMin = stockMinInput.toIntOrNull() ?: 0
             val stockMax = stockMaxInput.toIntOrNull() ?: Int.MAX_VALUE
             val matchesStock = casesCount in stockMin..stockMax
@@ -213,10 +210,8 @@ fun ProductManagementScreen(
             val margin2 = p2.defaultSellPrice - cost2
             val marginPercent2 = if (p2.defaultSellPrice > 0) (margin2 / p2.defaultSellPrice) * 100 else 0.0
 
-            val upc1 = p1.unitsPerCase.coerceAtLeast(1)
-            val upc2 = p2.unitsPerCase.coerceAtLeast(1)
-            val c1 = if (upc1 == 1) p1.stockAvailable else p1.stockAvailable / upc1
-            val c2 = if (upc2 == 1) p2.stockAvailable else p2.stockAvailable / upc2
+            val c1 = p1.stockAvailable
+            val c2 = p2.stockAvailable
 
             when (sortBy) {
                 ProductSort.Name -> p1.displayName.compareTo(p2.displayName, ignoreCase = true)
@@ -527,13 +522,9 @@ fun ProductManagementScreen(
                                 adjustingInventoryProduct = product
                             },
                             onDuplicate = {
-                                val duplicate = product.copy(
-                                    id = "",
-                                    name = "${product.name}-COPY",
-                                    displayName = "${product.displayName} (Copy)",
-                                    stockAvailable = 0
-                                )
-                                onAddProduct(duplicate)
+                                // For now, duplication will just open the add product flow.
+                                // In a future update, we can pass the data to pre-fill the form.
+                                onAddProduct(product, 0, "shop1")
                             },
                             onToggleStatus = {
                                 onUpdateProduct(product.copy(isActive = !product.isActive))
@@ -853,11 +844,7 @@ fun ProductManagementScreen(
 
         // 4. Inventory Adjust Dialogue
         adjustingInventoryProduct?.let { prod ->
-            val upc = prod.unitsPerCase.coerceAtLeast(1)
-            val isCan = upc == 1
-            val currentCases = if (isCan) prod.stockAvailable else prod.stockAvailable / upc
-            val remUnits = if (!isCan) prod.stockAvailable % upc else 0
-            val stockTypeLabel = if (isCan) "Cans" else "Cases"
+            val currentCases = prod.stockAvailable
             var newStock by remember(prod) { mutableStateOf(currentCases.toString()) }
 
             AlertDialog(
@@ -867,19 +854,13 @@ fun ProductManagementScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(prod.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
 
-                        val currentStockText = buildString {
-                            append("Current: $currentCases $stockTypeLabel")
-                            if (!isCan && remUnits > 0) {
-                                append(" (+$remUnits loose)")
-                            }
-                        }
                         Text(
-                            text = currentStockText,
+                            text = "Current: $currentCases Cans",
                             fontSize = 12.sp, color = NTColors.TextTertiary
                         )
 
                         Column {
-                            Text("New Stock Count ($stockTypeLabel)", fontSize = 13.sp, color = NTColors.TextSecondary)
+                            Text("New Stock Count (Cans)", fontSize = 13.sp, color = NTColors.TextSecondary)
                             Spacer(Modifier.height(4.dp))
                             FormDialogInput(placeholder = "Stock Available", value = newStock, onValueChange = { newStock = it }, isNumeric = true)
                         }
@@ -889,7 +870,7 @@ fun ProductManagementScreen(
                     Button(
                         onClick = {
                             val targetCases = newStock.toIntOrNull() ?: currentCases
-                            val diff = (targetCases - currentCases) * upc
+                            val diff = targetCases - currentCases
                             val finalStock = prod.stockAvailable + diff
                             onUpdateProduct(prod.copy(stockAvailable = finalStock))
                             adjustingInventoryProduct = null
@@ -972,9 +953,14 @@ fun ProductManagementScreen(
             )
             ProductFormSheet(
                 existing = editingProduct,
+                shops = shops,
                 onDismiss = { showForm = false },
-                onSave = { updated ->
-                    if (editingProduct == null) onAddProduct(updated) else onUpdateProduct(updated)
+                onSave = { updated, openingStock, shopName ->
+                    if (editingProduct == null) {
+                        onAddProduct(updated, openingStock, shopName)
+                    } else {
+                        onUpdateProduct(updated)
+                    }
                     showForm = false
                 },
                 bottomInset = contentPadding.calculateBottomPadding(),
@@ -1083,9 +1069,7 @@ private fun AIInsightsSection(products: List<ProductCategory>) {
             val activeProds = products.filter { it.isActive }
             val outOfStockProds = activeProds.filter { it.stockAvailable == 0 }
             val criticalProds = activeProds.filter { prod ->
-                val upc = prod.unitsPerCase.coerceAtLeast(1)
-                val cases = if (upc == 1) prod.stockAvailable else prod.stockAvailable / upc
-                cases in 1..5
+                prod.stockAvailable in 1..5
             }
 
             when {
@@ -1095,9 +1079,7 @@ private fun AIInsightsSection(products: List<ProductCategory>) {
                 }
                 criticalProds.isNotEmpty() -> {
                     val details = criticalProds.joinToString { prod ->
-                        val upc = prod.unitsPerCase.coerceAtLeast(1)
-                        val cases = if (upc == 1) prod.stockAvailable else prod.stockAvailable / upc
-                        "${prod.displayName} ($cases cases)"
+                        "${prod.displayName} (${prod.stockAvailable} cans)"
                     }
                     "CRITICAL STOCK: $details running low. Restock immediately to secure customer deliveries."
                 }
@@ -1121,11 +1103,8 @@ private fun AIInsightsSection(products: List<ProductCategory>) {
                         val formattedPercent = ((marginPercent * 10).toInt() / 10.0).toString()
                         "OPTIMIZATION: ${bestMarginProd.displayName} offers the highest margin in the active catalog at ${formattedPercent}% (₹${margin.toInt()} profit per unit)."
                     } else if (bestValueProd != null) {
-                        val totalCases = activeProds.sumOf { prod ->
-                            val upc = prod.unitsPerCase.coerceAtLeast(1)
-                            if (upc == 1) prod.stockAvailable else prod.stockAvailable / upc
-                        }
-                        "CATALOG STATUS: ${activeProds.size} active SKUs holding a total of $totalCases cases/cans in stock."
+                        val totalUnits = activeProds.sumOf { prod -> prod.stockAvailable }
+                        "CATALOG STATUS: ${activeProds.size} active SKUs holding a total of $totalUnits units in stock."
                     } else {
                         "CATALOG STATUS: ${activeProds.size} active SKUs registered."
                     }
@@ -1182,11 +1161,8 @@ private fun ProductManagementCard(
     onDelete: () -> Unit
 ) {
     val themeColor = getProductColor(product.displayName)
-    val upc = product.unitsPerCase.coerceAtLeast(1)
-    val isCan = upc == 1
-    val casesCount = if (isCan) product.stockAvailable else product.stockAvailable / upc
-    val remUnits = if (!isCan) product.stockAvailable % upc else 0
-    val stockTypeLabel = if (isCan) "Cans" else "Cases"
+    val casesCount = product.stockAvailable
+    val stockTypeLabel = "Cans"
 
     val costPrice = if (product.purchasePrice > 0) product.purchasePrice else product.purchasePriceGC
     val marginVal = product.defaultSellPrice - costPrice
@@ -1305,80 +1281,94 @@ private fun ProductManagementCard(
                     Spacer(Modifier.height(4.dp))
 
                     Text(
-                        text = "SKU: ${product.name} • ${if (isCan) "Cans Category" else "Cases Category"}",
+                        text = "SKU: ${product.name} • Cans Category",
                         fontSize = 12.sp,
                         color = NTColors.TextTertiary,
                         fontWeight = FontWeight.Medium
                     )
                 }
 
-                // Action Menu Dropdown Button
-                Box {
+                // Action Menu & Delete Buttons
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
-                        onClick = { showDropdownMenu = true },
+                        onClick = onDelete,
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
-                            Icons.Rounded.MoreVert,
-                            "Actions",
-                            tint = NTColors.TextSecondary,
-                            modifier = Modifier.size(22.dp)
+                            Icons.Rounded.Delete,
+                            "Delete",
+                            tint = NTColors.Error.copy(alpha = 0.8f),
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
-                    DropdownMenu(
-                        expanded = showDropdownMenu,
-                        onDismissRequest = { showDropdownMenu = false },
-                        modifier = Modifier.background(NTColors.Surface)
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Edit Details", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = { Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(16.dp)) },
-                            onClick = {
-                                showDropdownMenu = false
-                                onEdit()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Update Price", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = { Icon(Icons.Rounded.Payment, null, modifier = Modifier.size(16.dp)) },
-                            onClick = {
-                                showDropdownMenu = false
-                                onUpdatePrice()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Adjust Inventory", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = { Icon(Icons.Rounded.Inventory2, null, modifier = Modifier.size(16.dp)) },
-                            onClick = {
-                                showDropdownMenu = false
-                                onAdjustInventory()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Duplicate SKU", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = { Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(16.dp)) },
-                            onClick = {
-                                showDropdownMenu = false
-                                onDuplicate()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(if (product.isActive) "Archive SKU" else "Activate SKU", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = { Icon(if (product.isActive) Icons.Rounded.Archive else Icons.Rounded.Unarchive, null, modifier = Modifier.size(16.dp)) },
-                            onClick = {
-                                showDropdownMenu = false
-                                onToggleStatus()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Delete Product", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = NTColors.Error) },
-                            leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = NTColors.Error, modifier = Modifier.size(16.dp)) },
-                            onClick = {
-                                showDropdownMenu = false
-                                onDelete()
-                            }
-                        )
+                    Box {
+                        IconButton(
+                            onClick = { showDropdownMenu = true },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.MoreVert,
+                                "Actions",
+                                tint = NTColors.TextSecondary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showDropdownMenu,
+                            onDismissRequest = { showDropdownMenu = false },
+                            modifier = Modifier.background(NTColors.Surface)
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Edit Details", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
+                                leadingIcon = { Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    showDropdownMenu = false
+                                    onEdit()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Update Price", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
+                                leadingIcon = { Icon(Icons.Rounded.Payment, null, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    showDropdownMenu = false
+                                    onUpdatePrice()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Adjust Inventory", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
+                                leadingIcon = { Icon(Icons.Rounded.Inventory2, null, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    showDropdownMenu = false
+                                    onAdjustInventory()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Duplicate SKU", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
+                                leadingIcon = { Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    showDropdownMenu = false
+                                    onDuplicate()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (product.isActive) "Archive SKU" else "Activate SKU", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
+                                leadingIcon = { Icon(if (product.isActive) Icons.Rounded.Archive else Icons.Rounded.Unarchive, null, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    showDropdownMenu = false
+                                    onToggleStatus()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete Product", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = NTColors.Error) },
+                                leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = NTColors.Error, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    showDropdownMenu = false
+                                    onDelete()
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -1451,16 +1441,7 @@ private fun ProductManagementCard(
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(bottom = 2.dp)
                         )
-                        if (!isCan && remUnits > 0) {
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = "(+$remUnits loose bottles)",
-                                fontSize = 11.sp,
-                                color = NTColors.TextSecondary,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(bottom = 2.dp)
-                            )
-                        }
+
                     }
                     Spacer(Modifier.height(4.dp))
 
@@ -1568,14 +1549,14 @@ private fun FormDialogInput(
         modifier = Modifier
             .fillMaxWidth()
             .height(38.dp)
-            .background(Color(0xFFF1F5F9), RoundedCornerShape(8.dp))
+            .background(NTColors.Background, RoundedCornerShape(8.dp))
             .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(modifier = Modifier.weight(1f)) {
             if (value.isEmpty()) {
-                Text(placeholder, fontSize = 12.sp, color = NTColors.TextTertiary)
+                Text(placeholder, fontSize = 12.sp, color = Color.White.copy(alpha = 0.4f))
             }
             BasicTextField(
                 value = value,
@@ -1587,7 +1568,7 @@ private fun FormDialogInput(
                 textStyle = TextStyle(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = NTColors.TextPrimary
+                    color = Color.White
                 ),
                 cursorBrush = SolidColor(NTColors.Primary),
                 keyboardOptions = if (isNumeric) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
@@ -1641,8 +1622,9 @@ private fun formatNumberCompact(num: Double): String =
 @Composable
 fun ProductFormSheet(
     existing: ProductCategory?,
+    shops: List<com.example.ruwia.domain.ShopStockInfo> = emptyList(),
     onDismiss: () -> Unit,
-    onSave: (ProductCategory) -> Unit,
+    onSave: (ProductCategory, openingStock: Int, shopName: String) -> Unit,
     bottomInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -1651,6 +1633,10 @@ fun ProductFormSheet(
     var brandName     by remember(existing) { mutableStateOf(existing?.brandName ?: "") }
     var purchasePrice by remember(existing) { mutableStateOf(existing?.purchasePrice?.let { if (it > 0) it.toString() else "" } ?: "") }
     var sellPrice     by remember(existing) { mutableStateOf(existing?.defaultSellPrice?.let { if (it > 0) it.toString() else "" } ?: "") }
+    
+    var openingStock  by remember { mutableStateOf("") }
+    var selectedShop  by remember(shops) { mutableStateOf(shops.firstOrNull()?.name ?: "Shop 1") }
+    var showShopMenu  by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -1710,6 +1696,48 @@ fun ProductFormSheet(
                 PriceInput(sellPrice) { sellPrice = it }
             }
         }
+        
+        if (existing == null) {
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Opening Stock (Units)", fontSize = 13.sp, color = NTColors.TextTertiary)
+                    Spacer(Modifier.height(4.dp))
+                    FormInput("Qty (e.g. 100)", openingStock) { if (it.all { c -> c.isDigit() }) openingStock = it }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Initial Shop", fontSize = 13.sp, color = NTColors.TextTertiary)
+                    Spacer(Modifier.height(4.dp))
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .background(NTColors.Background, RoundedCornerShape(10.dp))
+                                .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+                                .clickable { showShopMenu = true }
+                                .padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(selectedShop, fontSize = 13.sp, color = Color.White)
+                            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
+                        }
+                        DropdownMenu(expanded = showShopMenu, onDismissRequest = { showShopMenu = false }) {
+                            if (shops.isEmpty()) {
+                                DropdownMenuItem(text = { Text("Shop 1") }, onClick = { selectedShop = "Shop 1"; showShopMenu = false })
+                                DropdownMenuItem(text = { Text("Shop 2") }, onClick = { selectedShop = "Shop 2"; showShopMenu = false })
+                            } else {
+                                shops.forEach { shop ->
+                                    DropdownMenuItem(text = { Text(shop.name) }, onClick = { selectedShop = shop.name; showShopMenu = false })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         Spacer(Modifier.height(24.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1729,7 +1757,7 @@ fun ProductFormSheet(
                         purchasePrice    = purchasePrice.toDoubleOrNull() ?: 0.0,
                         defaultSellPrice = sellPrice.toDoubleOrNull() ?: 0.0,
                     )
-                    onSave(product)
+                    onSave(product, openingStock.toIntOrNull() ?: 0, selectedShop)
                 },
                 enabled  = name.isNotBlank() && displayName.isNotBlank(),
                 modifier = Modifier.weight(2f).height(48.dp),
@@ -1748,16 +1776,16 @@ fun ProductFormSheet(
 private fun FormInput(placeholder: String, value: String, onChange: (String) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth()
-            .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
+            .background(NTColors.Background, RoundedCornerShape(10.dp))
             .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(modifier = Modifier.weight(1f)) {
-            if (value.isEmpty()) Text(placeholder, fontSize = 14.sp, color = NTColors.TextDisabled)
+            if (value.isEmpty()) Text(placeholder, fontSize = 14.sp, color = Color.White.copy(alpha = 0.4f))
             BasicTextField(
                 value = value, onValueChange = onChange,
-                textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
+                textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White),
                 cursorBrush = SolidColor(NTColors.Primary), singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -1769,18 +1797,18 @@ private fun FormInput(placeholder: String, value: String, onChange: (String) -> 
 private fun PriceInput(value: String, onChange: (String) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth()
-            .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
+            .background(NTColors.Background, RoundedCornerShape(10.dp))
             .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextSecondary)
+        Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NTColors.Primary)
         Spacer(Modifier.width(4.dp))
         Box(modifier = Modifier.weight(1f)) {
-            if (value.isEmpty()) Text("0.00", fontSize = 15.sp, color = NTColors.TextDisabled)
+            if (value.isEmpty()) Text("0.00", fontSize = 15.sp, color = Color.White.copy(alpha = 0.4f))
             BasicTextField(
                 value = value, onValueChange = { if (it.all { c -> c.isDigit() || c == '.' }) onChange(it) },
-                textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary),
+                textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White),
                 cursorBrush = SolidColor(NTColors.Primary),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true, modifier = Modifier.fillMaxWidth(),

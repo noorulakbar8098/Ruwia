@@ -33,7 +33,9 @@ import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
-import com.example.ruwia.domain.unitsPerCase
+import com.example.ruwia.domain.deriveShopStockTotals
+import com.example.ruwia.domain.isEmptyCansSource
+import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.theme.RuwiaColor
 
 @Composable
@@ -47,10 +49,14 @@ fun EmployeeStockScreen(
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val visibleShops = remember(shopStocks, shopName) {
-        if (shopName.isBlank()) shopStocks
+        val filtered = shopStocks.filter {
+            val clean = it.name.trim().lowercase()
+            clean == "shop 1" || clean == "shop 2"
+        }
+        if (shopName.isBlank()) filtered
         else {
             val key = shopMatchKey(shopName)
-            shopStocks.filter { shopMatchKey(it.name) == key }.ifEmpty { shopStocks }
+            filtered.filter { shopMatchKey(it.name) == key }.ifEmpty { filtered }
         }
     }
     val visibleMovements = remember(movements, shopName) {
@@ -64,22 +70,55 @@ fun EmployeeStockScreen(
     val stockItems = remember(products) {
         products.map { com.example.ruwia.domain.StockItem(it.id, it.name, it.stockAvailable, 0) }
     }
-    val derivedShops = remember(visibleShops, visibleMovements, stockItems) {
-        deriveShopStockTotals(visibleShops, visibleMovements, stockItems)
+    val derivedShops = remember(shopStocks, movements, stockItems) {
+        deriveShopStockTotals(shopStocks, movements, stockItems)
     }
 
-    val availableUnitsMap = remember(visibleMovements, products) {
-        products.associate { product ->
-            val rows = visibleMovements.filter { it.productId == product.id }
-            val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
-            val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-            product.id to (inward - outward).coerceAtLeast(0)
+    val availableUnitsMap = remember(products, movements, shopName) {
+        products.associate { p ->
+            val sKey = if (shopName.isBlank()) null else shopMatchKey(shopName)
+            if (sKey == null) {
+                val allShops = movements.map { it.shopName }.distinct()
+                val totalAcrossShops = allShops.sumOf { sName ->
+                    val shKey = shopMatchKey(sName)
+                    val rows = movements.filter { it.productId == p.id && shopMatchKey(it.shopName) == shKey }
+                    val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
+                    val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+                    (inward - outward).coerceAtLeast(0)
+                }
+                p.id to totalAcrossShops
+            } else {
+                val rows = movements.filter {
+                    val mKey = shopMatchKey(it.shopName)
+                    it.productId == p.id && mKey == sKey
+                }
+                val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
+                val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+                p.id to (inward - outward).coerceAtLeast(0)
+            }
         }
     }
 
-    val totalFull  = derivedShops.sumOf { it.fullCans }
-    val totalEmpty = derivedShops.sumOf { it.emptyCans }
-    val totalCust  = derivedShops.sumOf { it.cansWithCustomers }
+    val totalFull = remember(availableUnitsMap) {
+        availableUnitsMap.values.sumOf { it.toDouble() }
+    }
+    val totalEmpty = remember(visibleMovements) {
+        visibleMovements
+            .filter { it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { m ->
+                if (m.type == "inward") m.qty.toDouble() else -m.qty.toDouble()
+            }
+            .coerceAtLeast(0.0)
+    }
+    val totalCust = remember(visibleMovements) {
+        val sales = visibleMovements
+            .filter { it.type == "outward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { it.qty.toDouble() }
+        val returns = visibleMovements
+            .filter { it.type == "inward" && it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .sumOf { it.qty.toDouble() }
+        (sales - returns).coerceAtLeast(0.0)
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -198,14 +237,12 @@ private fun ProductStockCard(
     availableUnits: Int,
     modifier: Modifier = Modifier
 ) {
-    val upc = product.unitsPerCase.coerceAtLeast(1)
-    val isCan = upc == 1
-    val displayStock = if (isCan) availableUnits else availableUnits / upc
+    val displayStock = availableUnits
     
     // Status Badge colors and labels
     val (statusLabel, badgeBg, badgeFg) = when {
         availableUnits <= 0 -> Triple("Out Of Stock", Color(0xFFFFE8E8), Color(0xFFCC3333))
-        availableUnits <= (2 * upc) -> Triple("Low Stock", Color(0xFFFFF3E0), Color(0xFFE65100))
+        availableUnits <= 2 -> Triple("Low Stock", Color(0xFFFFF3E0), Color(0xFFE65100))
         else -> Triple("In Stock", RuwiaColor.TealExtraLight, RuwiaColor.TealPrimary)
     }
 
@@ -230,8 +267,8 @@ private fun ProductStockCard(
                     color = RuwiaColor.TextPrimary
                 )
                 Spacer(Modifier.height(4.dp))
-                val unitLabel = if (isCan) "Can" else "Case"
-                val displayPrice = if (isCan) product.defaultSellPrice else product.defaultSellPrice * upc
+                val unitLabel = "Can"
+                val displayPrice = product.defaultSellPrice
                 Text(
                     text = "₹${displayPrice.toInt()} / $unitLabel  ·  $displayStock $unitLabel${if (displayStock != 1) "s" else ""} Available",
                     fontSize = 12.sp,
@@ -289,7 +326,7 @@ private fun TodayStockCard(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "${formatCases(available)} cans",
+                        "${formatCases(available)} Cans",
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black,
                         color = RuwiaColor.TextPrimary

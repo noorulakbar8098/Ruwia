@@ -31,7 +31,6 @@ import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.StockMovement
-import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import kotlin.time.Clock
@@ -121,12 +120,10 @@ fun SalesSummaryScreen(
     // the cross-employee view, we just bucket by month here.
     val monthMovements = stockMovements.filter { it.createdAt?.startsWith(selectedMonthKey) == true }
     val totalInwardCases = monthMovements.filter { it.type == "inward" }.sumOf { mvt ->
-        val upc = productCategories.find { it.id == mvt.productId }?.unitsPerCase ?: 1
-        mvt.qty.toDouble() / upc
+        mvt.qty.toDouble()
     }
     val totalOutwardCases = monthMovements.filter { it.type == "outward" }.sumOf { mvt ->
-        val upc = productCategories.find { it.id == mvt.productId }?.unitsPerCase ?: 1
-        mvt.qty.toDouble() / upc
+        mvt.qty.toDouble()
     }
     val inwardEntries    = monthMovements.count { it.type == "inward" }
     val outwardEntries   = monthMovements.count { it.type == "outward" }

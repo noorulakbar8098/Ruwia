@@ -36,7 +36,6 @@ import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
-import com.example.ruwia.domain.unitsPerCase
 import com.example.ruwia.theme.RuwiaColor
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
@@ -126,12 +125,11 @@ fun AddSaleScreen(
         mutableStateOf(
             if (products.isNotEmpty()) {
                 val p = products.last()
-                val upc = p.unitsPerCase.coerceAtLeast(1)
                 listOf(
                     OutwardLineItem(
                         defaultProductIdx, 1,
                         p.defaultSellPrice.let {
-                            if (it > 0) (it * upc).toInt().toString() else ""
+                            if (it > 0) it.toInt().toString() else ""
                         }
                     )
                 )
@@ -195,7 +193,7 @@ fun AddSaleScreen(
                 product.id to product.stockAvailable
             } else {
                 val rows = stockMovements.filter { it.productId == product.id }
-                val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
+                val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty Cases", ignoreCase = true) }.sumOf { it.qty }
                 val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
                 product.id to (inward - outward).coerceAtLeast(0)
             }
@@ -274,26 +272,12 @@ fun AddSaleScreen(
                         val overStockLine = lineItems.firstOrNull { item ->
                             val product = products.getOrNull(item.productIdx) ?: return@firstOrNull false
                             val availRaw = availableUnitsMap[product.id] ?: product.stockAvailable
-                            val upc = product.unitsPerCase.coerceAtLeast(1)
-                            item.qty > availRaw / upc
+                            item.qty > availRaw
                         }
                         if (overStockLine != null) {
                             val product = products.getOrNull(overStockLine.productIdx)
                             val availRaw = product?.let { availableUnitsMap[it.id] ?: it.stockAvailable } ?: 0
-                            val upc = product?.unitsPerCase?.coerceAtLeast(1) ?: 1
-                            val availCases = availRaw / upc
-                            val availRem   = availRaw % upc
-                            val availLabel = if (upc > 1) {
-                                if (availRem > 0) "$availCases cases + $availRem units" else "$availCases cases"
-                            } else {
-                                "$availRaw cans"
-                            }
-                            val sellLabel = if (upc > 1) {
-                                "${overStockLine.qty} cases"
-                            } else {
-                                "${overStockLine.qty} cans"
-                            }
-                            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: $sellLabel\nAvailable: $availLabel\n\nPlease reduce the quantity and try again."
+                            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cans\nAvailable: $availRaw Cans\n\nPlease reduce the quantity and try again."
                             return@SaleBottomBar
                         }
                         onSave(selectedCustomer!!.name, lineItems, empties, displayDate)
@@ -380,8 +364,8 @@ fun AddSaleScreen(
                 }
                 Spacer(Modifier.height(20.dp))
 
-                // ── Section 4: Empty cans collected ────────────
-                // Captures how many empty cans the employee picked up from the
+                // ── Section 4: Empty Cases collected ────────────
+                // Captures how many empty Cases the employee picked up from the
                 // customer at delivery time. Saved as an inward stock movement
                 // so the admin's stock dashboard reflects the returned empties.
                 EmptyCansSection(
@@ -438,11 +422,10 @@ fun AddSaleScreen(
                     fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary,
                 )
                 Spacer(Modifier.height(12.dp))
-                // Search bar
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(RuwiaColor.Background, RoundedCornerShape(10.dp))
+                        .background(RuwiaColor.LightGray, RoundedCornerShape(10.dp))
                         .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 ) {
@@ -475,11 +458,10 @@ fun AddSaleScreen(
                                     editingLineIdx?.let { lineIdx ->
                                         lineItems = lineItems.mapIndexed { i, item ->
                                             if (i == lineIdx) {
-                                                val upc = p.unitsPerCase.coerceAtLeast(1)
                                                 item.copy(
                                                     productIdx    = originalIdx,
                                                     sellPriceText = if (p.defaultSellPrice > 0)
-                                                        (p.defaultSellPrice * upc).toInt().toString() else "",
+                                                        p.defaultSellPrice.toInt().toString() else "",
                                                 )
                                             } else item
                                         }
@@ -511,12 +493,10 @@ fun AddSaleScreen(
                                 Spacer(Modifier.width(12.dp))
                                 Column {
                                     Text(p.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
-                                    val upc = p.unitsPerCase.coerceAtLeast(1)
                                     val limitText = availableUnitsMap[p.id]?.let {
-                                        if (upc > 1) "${it / upc} cases available" else "$it cans available"
-                                    } ?: "Available stock: ${p.stockAvailable}"
-                                    val priceLabel = if (upc > 1) "case" else "can"
-                                    Text("₹${(p.defaultSellPrice * upc).toInt()}/$priceLabel  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                                        "$it Cans available"
+                                    } ?: "Available stock: ${p.stockAvailable} Cans"
+                                    Text("₹${p.defaultSellPrice.toInt()}/Can  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
                                 }
                             }
                             if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
@@ -715,8 +695,7 @@ private fun MultiProductSection(
             // fall back to the first product instead of crashing.
             val product = products.getOrNull(item.productIdx) ?: products.first()
             val availableUnitsRaw = availableUnitsMap[product.id] ?: product.stockAvailable
-            val upc = product.unitsPerCase.coerceAtLeast(1)
-            val availableCases = availableUnitsRaw / upc
+
             if (idx > 0) {
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.5f))
@@ -766,9 +745,7 @@ private fun SaleLineCard(
     onPriceChange: (String) -> Unit,
     onRemove: () -> Unit,
 ) {
-    val upc = product.unitsPerCase.coerceAtLeast(1)
-    val availableCases = availableUnits / upc
-    val isOverStock = qty > availableCases
+    val isOverStock = qty > availableUnits
     val cardBorder  = if (isOverStock) Color(0xFFEF4444) else RuwiaColor.Divider
     val cardBg      = if (isOverStock) Color(0xFF3B1616) else RuwiaColor.Background
     Column(
@@ -863,7 +840,7 @@ private fun SaleLineCard(
                         )
                     }
                 }
-                SaleStepBtn(Icons.Rounded.Add, qty < availableCases) { onQtyChange(qty + 1) }
+                SaleStepBtn(Icons.Rounded.Add, qty < availableUnits) { onQtyChange(qty + 1) }
             }
 
             Spacer(Modifier.width(10.dp))
@@ -871,12 +848,12 @@ private fun SaleLineCard(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .background(RuwiaColor.TealExtraLight.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                    .border(1.dp, RuwiaColor.TealLight, RoundedCornerShape(10.dp))
+                    .background(RuwiaColor.LightGray, RoundedCornerShape(10.dp))
+                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TealPrimary)
+                Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
                 Spacer(Modifier.width(4.dp))
                 Box(modifier = Modifier.weight(1f)) {
                     BasicTextField(
@@ -885,26 +862,19 @@ private fun SaleLineCard(
                         textStyle = TextStyle(
                             fontSize = 16.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = RuwiaColor.TealPrimary
+                            color = RuwiaColor.TextPrimary
                         ),
+                        cursorBrush = SolidColor(RuwiaColor.TealPrimary),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                val priceLabel = if (upc > 1) "case" else "can"
-                Text("/$priceLabel", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                Text("/Can", fontSize = 11.sp, color = RuwiaColor.TextSecondary)
             }
         }
 
-        val upc = product.unitsPerCase
-        val availCases = availableUnits / upc.coerceAtLeast(1)
-        val availRem   = availableUnits % upc.coerceAtLeast(1)
-        val availLabel = if (upc > 1) {
-            if (availRem > 0) "$availCases cases + $availRem units available" else "$availCases cases available"
-        } else {
-            "$availableUnits cans available"
-        }
+        val availLabel = "$availableUnits Cans available"
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier
@@ -934,28 +904,7 @@ private fun SaleLineCard(
             }
         }
 
-        val caseHint = if (upc > 1) "1 case = $upc units" else null
 
-
-
-        if (caseHint != null) {
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .background(Color(0xFF332005), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Rounded.Info, null, tint = Color(0xFFFBBF24), modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = caseHint,
-                    fontSize = 11.sp,
-                    color = Color(0xFFFBBF24),
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
     }
 }
 
@@ -1207,8 +1156,8 @@ private fun SaleStepBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, e
     ) { Icon(icon, null, tint = if (enabled) RuwiaColor.TextSecondary else RuwiaColor.TextMuted, modifier = Modifier.size(16.dp)) }
 }
 
-// ── Empty cans section ────────────────────────────────────────────────────────
-//   Asks the employee how many empty cans they picked up from this customer at
+// ── Empty Cases section ────────────────────────────────────────────────────────
+//   Asks the employee how many empty Cases they picked up from this customer at
 //   delivery time. Stored as an `inward` stock movement so the admin's stock
 //   dashboard reflects returned empties immediately.
 
@@ -1230,7 +1179,7 @@ private fun EmptyCansSection(
                 contentAlignment = Alignment.Center,
             ) { Text("$sectionNumber", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
             Column(modifier = Modifier.weight(1f)) {
-                Text("Empty cans collected", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
+                Text("Empty Cases collected", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
                 Text("Returned by this customer at delivery", fontSize = 11.sp, color = RuwiaColor.TextMuted)
             }
         }
@@ -1239,12 +1188,12 @@ private fun EmptyCansSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(RuwiaColor.Background, RoundedCornerShape(12.dp))
+                .background(RuwiaColor.LightGray, RoundedCornerShape(12.dp))
                 .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
                 .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Rounded.Recycling, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
+            Icon(Icons.Rounded.Recycling, null, tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
             Box(modifier = Modifier.weight(1f)) {
                 if (value.isEmpty()) {
@@ -1253,14 +1202,14 @@ private fun EmptyCansSection(
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RuwiaColor.TealPrimary),
+                    textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RuwiaColor.TextPrimary),
                     cursorBrush = SolidColor(RuwiaColor.TealPrimary),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Text("cans", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+            Text("Cases", fontSize = 11.sp, color = RuwiaColor.TextSecondary)
         }
     }
 }

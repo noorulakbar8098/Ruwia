@@ -3,9 +3,12 @@ package com.example.ruwia.data
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filter
 
 // ─────────────────────────────────────────────────────────────
 //  Supabase clients
@@ -22,30 +25,45 @@ private const val SUPABASE_ANON_KEY = "sb_publishable_N3oENikhDxobWX5dcEJoMw_FMb
 //     remove this key from the client entirely.
 internal const val SUPABASE_SERVICE_KEY = "sb_secret_F8KyUwYsXLvzcdM_5TQqRg_a7IHDjEr"  // ← replace this
 
-/** Regular client — anon key, used for all user-level operations. */
-val supabase: SupabaseClient = createSupabaseClient(
-    supabaseUrl = SUPABASE_URL,
-    supabaseKey = SUPABASE_ANON_KEY,
-) {
-    install(Auth) {
-        autoLoadFromStorage = true
-        autoSaveToStorage   = true
+private var _supabase: SupabaseClient? = null
+val supabase: SupabaseClient
+    get() {
+        if (_supabase == null) {
+            initSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY)
+        }
+        return _supabase!!
     }
-    install(Postgrest)
-    install(Realtime)
-}
 
-/**
- * Admin client — service-role key.
- * Used ONLY for admin-initiated operations (e.g. creating employee accounts).
- * All reads/writes bypass Row Level Security.
- */
-val supabaseAdmin: SupabaseClient = createSupabaseClient(
-    supabaseUrl = SUPABASE_URL,
-    supabaseKey = SUPABASE_SERVICE_KEY,
-) {
-    install(Auth)
-    install(Postgrest)
+private var _supabaseAdmin: SupabaseClient? = null
+val supabaseAdmin: SupabaseClient
+    get() {
+        if (_supabaseAdmin == null) {
+            initSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY)
+        }
+        return _supabaseAdmin!!
+    }
+
+fun initSupabaseClient(url: String, anonKey: String, serviceKey: String) {
+    if (_supabase != null) return
+    _supabase = createSupabaseClient(
+        supabaseUrl = url,
+        supabaseKey = anonKey,
+    ) {
+        install(Auth) {
+            autoLoadFromStorage = true
+            autoSaveToStorage   = true
+        }
+        install(Postgrest)
+        install(Realtime)
+    }
+
+    _supabaseAdmin = createSupabaseClient(
+        supabaseUrl = url,
+        supabaseKey = serviceKey,
+    ) {
+        install(Auth)
+        install(Postgrest)
+    }
 }
 
 /**
@@ -63,4 +81,35 @@ suspend fun initAdminSession() {
             "(Supabase Dashboard → Project Settings → API → service_role)."
     }
     supabaseAdmin.auth.importAuthToken(SUPABASE_SERVICE_KEY)
+}
+
+/** Waits for Supabase Auth to resolve initialization and returns true if authenticated. */
+suspend fun awaitAuthentication(): Boolean {
+    val status = try {
+        supabase.auth.sessionStatus
+            .filter { it !is SessionStatus.Initializing }
+            .first()
+    } catch (_: Exception) {
+        return false
+    }
+
+    if (status is SessionStatus.Authenticated) {
+        return true
+    }
+
+    if (status is SessionStatus.RefreshFailure) {
+        val success = runCatching { supabase.auth.refreshCurrentSession() }.isSuccess
+        if (success) {
+            val nextStatus = try {
+                supabase.auth.sessionStatus
+                    .filter { it !is SessionStatus.Initializing }
+                    .first()
+            } catch (_: Exception) {
+                return false
+            }
+            return nextStatus is SessionStatus.Authenticated
+        }
+    }
+
+    return false
 }

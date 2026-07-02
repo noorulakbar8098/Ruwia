@@ -289,7 +289,7 @@ fun AddEmployeeScreen(
                                     if (password.isNotBlank()) NTColors.Primary.copy(alpha = 0.5f)
                                     else NTColors.Border,
                                     RoundedCornerShape(NTDp.radMd))
-                                .background(NTColors.Surface)
+                                .background(NTColors.Background)
                                 .padding(horizontal = NTDp.md),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -489,7 +489,7 @@ private fun AETextField(
                 if (value.isNotBlank()) NTColors.Primary.copy(alpha = 0.5f) else NTColors.Border,
                 RoundedCornerShape(NTDp.radMd)
             )
-            .background(NTColors.Surface)
+            .background(NTColors.Background)
             .padding(horizontal = NTDp.md),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -524,7 +524,7 @@ private fun AEChipGroup(options: List<String>, selected: String, onSelect: (Stri
             Box(
                 modifier = Modifier.weight(1f)
                     .clip(RoundedCornerShape(NTDp.radMd))
-                    .background(if (isSelected) NTColors.Primary else NTColors.SurfaceVar)
+                    .background(if (isSelected) NTColors.Primary else NTColors.Background)
                     .border(1.dp, if (isSelected) Color.Transparent else NTColors.Border,
                         RoundedCornerShape(NTDp.radMd))
                     .clickable { onSelect(option) }

@@ -224,7 +224,7 @@ private fun EmployeeCard(employee: EmployeeInfo, colorIndex: Int) {
             }
 
             // Stat
-            if (employee.todayStat > 0) {
+            if (employee.todayStat >= 0) {
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         "${employee.todayStat}",

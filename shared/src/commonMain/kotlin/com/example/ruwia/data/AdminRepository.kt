@@ -13,6 +13,7 @@ import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.Supplier
 import com.example.ruwia.domain.UserRole
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order as SortOrder
 import io.github.jan.supabase.auth.auth
 import kotlin.time.Clock
@@ -73,14 +74,12 @@ class AdminRepository {
             supabase.from("product_categories")
                 .select { 
                     filter { 
-                        eq("is_active", true)
                         eq("admin_id", adminId)
                     } 
                 }
                 .decodeList<ProductCategory>()
-                // Deduplicate by name (case-insensitive) — keeps the first occurrence.
-                // This guards against accidental duplicate rows that may already exist in the DB.
-                .distinctBy { it.name.trim().lowercase() }
+                // Deduplicate by brand name and size name together.
+                .distinctBy { "${it.brandName.trim().lowercase()}_${it.name.trim().lowercase()}" }
         } catch (e: Exception) { emptyList() }
     }
 
@@ -100,33 +99,70 @@ class AdminRepository {
         } catch (e: Exception) { emptyList() }
     }
 
-    suspend fun addProductCategory(cat: ProductCategory) {
-        // Guard: reject if a product with the same name already exists (active or inactive).
+    suspend fun getTenantAdminId(): String {
+        val uid = supabase.auth.currentUserOrNull()?.id ?: return ""
+        return try {
+            val profile = supabase.from("profiles")
+                .select { filter { eq("id", uid) } }
+                .decodeSingleOrNull<com.example.ruwia.domain.Profile>()
+            profile?.adminId ?: uid
+        } catch (e: Exception) {
+            uid
+        }
+    }
+
+    suspend fun addProductCategory(cat: ProductCategory): String {
+        val tenantAdminId = getTenantAdminId()
+        if (tenantAdminId.isBlank()) {
+            throw IllegalStateException("Your session has expired. Please log in again.")
+        }
+        
+        // 1. Guard: reject if a product with the same name (size) AND same brand exists FOR THIS ADMIN.
         val existing = try {
             supabase.from("product_categories")
-                .select { filter { ilike("name", cat.name.trim()) } }
+                .select { 
+                    filter { 
+                        ilike("name", cat.name.trim()) 
+                        ilike("brand_name", cat.brandName.trim())
+                        eq("admin_id", tenantAdminId)
+                    } 
+                }
                 .decodeList<ProductCategory>()
-        } catch (_: Exception) { emptyList() }
+        } catch (e: Exception) { 
+            println("Error checking for existing product: ${e.message}")
+            emptyList() 
+        }
 
         if (existing.isNotEmpty()) {
             throw IllegalStateException(
-                "A product named \"${cat.name.trim()}\" already exists. Please use a different SKU name."
+                "A product with size \"${cat.name.trim()}\" and brand \"${cat.brandName.trim()}\" already exists in your catalog."
             )
         }
 
-        val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: return
-        supabase.from("product_categories").insert(
-            buildJsonObject {
-                put("name", cat.name.trim())
-                put("display_name", cat.displayName.trim())
-                put("brand_name", cat.brandName.trim())
-                put("purchase_price", cat.purchasePrice)
-                put("default_sell_price", cat.defaultSellPrice)
-                put("stock_available", cat.stockAvailable)
-                put("is_active", cat.isActive)
-                put("admin_id", currentAdminId)
+        // 2. Perform the Insert
+        return try {
+            val response = supabase.from("product_categories").insert(
+                buildJsonObject {
+                    put("name", cat.name.trim())
+                    put("display_name", cat.displayName.trim())
+                    put("brand_name", cat.brandName.trim())
+                    put("purchase_price", cat.purchasePrice)
+                    put("default_sell_price", cat.defaultSellPrice)
+                    put("stock_available", cat.stockAvailable)
+                    put("is_active", cat.isActive)
+                    put("admin_id", tenantAdminId)
+                }
+            ) { select() }.decodeSingle<ProductCategory>()
+            
+            response.id
+        } catch (e: Exception) {
+            val msg = e.message ?: "Unknown database error"
+            if (msg.contains("column \"brand_name\" does not exist", ignoreCase = true) || 
+                msg.contains("column \"purchase_price\" does not exist", ignoreCase = true)) {
+                throw IllegalStateException("Database Schema Mismatch: Please run the latest SQL migration in your Supabase dashboard.")
             }
-        )
+            throw e
+        }
     }
 
     suspend fun updateProductCategory(cat: ProductCategory) {
@@ -146,8 +182,42 @@ class AdminRepository {
 
     suspend fun deleteProductCategory(id: String) {
         if (id.isBlank()) return
-        supabase.from("product_categories").update(buildJsonObject { put("is_active", false) }) {
-            filter { eq("id", id) }
+        
+        // 1. Delete associated stock movements
+        runCatching {
+            supabase.from("stock_movements").delete {
+                filter { eq("product_id", id) }
+            }
+        }
+        
+        // 2. Delete associated sale entries
+        runCatching {
+            supabase.from("sale_entries").delete {
+                filter { eq("product_id", id) }
+            }
+        }
+        
+        // 3. Delete from product_categories
+        try {
+            supabase.from("product_categories").delete {
+                filter { eq("id", id) }
+            }
+        } catch (e: Exception) {
+            // Bypass RLS using admin client if standard delete fails
+            initAdminSession()
+            runCatching {
+                supabaseAdmin.from("stock_movements").delete {
+                    filter { eq("product_id", id) }
+                }
+            }
+            runCatching {
+                supabaseAdmin.from("sale_entries").delete {
+                    filter { eq("product_id", id) }
+                }
+            }
+            supabaseAdmin.from("product_categories").delete {
+                filter { eq("id", id) }
+            }
         }
     }
 
@@ -507,7 +577,6 @@ class AdminRepository {
                 .select { 
                     filter { eq("admin_id", adminId) }
                     order("created_at", SortOrder.DESCENDING)
-                    limit(1000) 
                 }
                 .decodeList()
         } catch (e: Exception) { emptyList() }
@@ -519,6 +588,7 @@ class AdminRepository {
         type: String,
         shopName: String,
         productId: String? = null,
+        createdAt: String? = null,
     ) {
         val payload = buildJsonObject {
             put("source", source)
@@ -526,6 +596,7 @@ class AdminRepository {
             put("type", type)
             put("shop_name", shopName)
             if (productId != null) put("product_id", productId)
+            if (createdAt != null) put("created_at", createdAt)
         }
         try {
             supabase.from("stock_movements").insert(payload)
@@ -541,6 +612,7 @@ class AdminRepository {
         type: String,
         shopName: String,
         productId: String? = null,
+        createdAt: String? = null,
     ) {
         val payload = buildJsonObject {
             put("source", source)
@@ -548,6 +620,7 @@ class AdminRepository {
             put("type", type)
             put("shop_name", shopName)
             if (productId != null) put("product_id", productId)
+            if (createdAt != null) put("created_at", createdAt)
         }
         // 1. Persist the movement row itself.
         try {
@@ -570,143 +643,34 @@ class AdminRepository {
                 "adjustment" ->  qty
                 else         ->  0
             }
-            try {
-                val current = supabase.from("product_categories")
-                    .select { filter { eq("id", productId) } }
-                    .decodeSingleOrNull<ProductCategory>() ?: return
-                val newStock = (current.stockAvailable + delta).coerceAtLeast(0)
-                supabase.from("product_categories").update(
-                    buildJsonObject { put("stock_available", newStock) },
-                ) { filter { eq("id", productId) } }
-            } catch (e: Exception) {
-                println("Standard product_categories update failed, trying admin bypass: ${e.message}")
-                e.printStackTrace()
-                runCatching {
-                    initAdminSession()
-                    val current = supabaseAdmin.from("product_categories")
+            var success = false
+            var attempts = 0
+            while (!success && attempts < 10) {
+                attempts++
+                try {
+                    val current = supabase.from("product_categories")
                         .select { filter { eq("id", productId) } }
-                        .decodeSingleOrNull<ProductCategory>() ?: return
+                        .decodeSingleOrNull<ProductCategory>() ?: break
                     val newStock = (current.stockAvailable + delta).coerceAtLeast(0)
-                    supabaseAdmin.from("product_categories").update(
-                        buildJsonObject { put("stock_available", newStock) },
-                    ) { filter { eq("id", productId) } }
+                    val successResult = supabase.postgrest.rpc(
+                        "update_product_stock",
+                        buildJsonObject {
+                            put("p_id", productId)
+                            put("p_new_stock", newStock)
+                            put("p_expected_current", current.stockAvailable)
+                        }
+                    ).decodeAs<Boolean>()
+                    if (successResult) {
+                        success = true
+                    }
+                } catch (e: Exception) {
+                    // Retry
                 }
             }
         }
     }
 
-    // ── Suppliers ─────────────────────────────────────────────────────────────
 
-    suspend fun getSuppliers(): List<String> {
-        return try {
-            supabase.from("suppliers")
-                .select { filter { eq("is_active", true) } }
-                .decodeList<Supplier>()
-                .map { s -> if (s.location != null) "${s.name}  ·  ${s.location}" else s.name }
-                // De-duplicate by formatted display string — historical inserts
-                // before the unique-constraint was added can leave duplicate
-                // rows that would otherwise show up twice in the picker.
-                .distinct()
-        } catch (e: Exception) {
-            listOf(
-                "Global Creators  ·  Tiru",
-                "Multi Brands  ·  Coimbatore",
-                "Aqua Pure Plant  ·  Tiru",
-            )
-        }
-    }
-
-    /** Returns the full supplier rows (including IDs) for management screens. */
-    suspend fun getSuppliersFull(): List<Supplier> {
-        return try {
-            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
-            supabase.from("suppliers")
-                .select { 
-                    filter { 
-                        eq("is_active", true)
-                        eq("admin_id", adminId)
-                    } 
-                }
-                .decodeList<Supplier>()
-                // De-duplicate by (name, location) so legacy duplicate rows
-                // collapse into a single entry in the management UI.
-                .distinctBy { "${it.name.trim().lowercase()}|${it.location?.trim()?.lowercase() ?: ""}" }
-        } catch (e: Exception) { emptyList() }
-    }
-
-    suspend fun addSupplier(name: String, location: String?) {
-        if (name.isBlank()) return
-        val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: ""
-        // Check whether a row with the same (name, location) already exists.
-        // We do this client-side because the suppliers table may not have a
-        // unique constraint yet, and silently inserting a duplicate is exactly
-        // the bug that caused supplier names to appear twice in pickers.
-        val existing = runCatching { getSuppliersFull() }.getOrDefault(emptyList())
-        val matches = existing.any {
-            it.name.trim().equals(name.trim(), ignoreCase = true) &&
-            (it.location?.trim() ?: "").equals((location?.trim() ?: ""), ignoreCase = true)
-        }
-        if (matches) return
-
-        try {
-            supabase.from("suppliers").insert(
-                buildJsonObject {
-                    put("name", name.trim())
-                    if (!location.isNullOrBlank()) put("location", location.trim())
-                    put("is_active", true)
-                    if (currentAdminId.isNotBlank()) put("admin_id", currentAdminId)
-                }
-            )
-        } catch (e: Exception) {
-            println("Standard addSupplier failed, trying admin bypass: ${e.message}")
-            e.printStackTrace()
-            initAdminSession()
-            supabaseAdmin.from("suppliers").insert(
-                buildJsonObject {
-                    put("name", name.trim())
-                    if (!location.isNullOrBlank()) put("location", location.trim())
-                    put("is_active", true)
-                    if (currentAdminId.isNotBlank()) put("admin_id", currentAdminId)
-                }
-            )
-        }
-    }
-
-    suspend fun deleteSupplier(id: String) {
-        if (id.isBlank()) {
-            throw IllegalArgumentException("Supplier id is blank — cannot delete.")
-        }
-        // Soft-delete so historical references in stock_movements still resolve.
-        // Use `select()` so the response carries back whatever rows were
-        // actually updated. If RLS blocks the update or the id doesn't match
-        // any row, the response is empty and we surface that as an error
-        // instead of silently succeeding (which is what hid the original bug).
-        val updated = try {
-            supabase.from("suppliers").update(
-                buildJsonObject { put("is_active", false) }
-            ) {
-                filter { eq("id", id) }
-                select()
-            }.decodeList<Supplier>()
-        } catch (e: Exception) {
-            println("Standard deleteSupplier failed, trying admin bypass: ${e.message}")
-            e.printStackTrace()
-            initAdminSession()
-            supabaseAdmin.from("suppliers").update(
-                buildJsonObject { put("is_active", false) }
-            ) {
-                filter { eq("id", id) }
-                select()
-            }.decodeList<Supplier>()
-        }
-
-        if (updated.isEmpty()) {
-            throw IllegalStateException(
-                "Supplier could not be deleted. The row may not exist, or your " +
-                "account does not have permission to update suppliers."
-            )
-        }
-    }
 
     suspend fun assignEmployee(orderId: String, employeeId: String) {
         try {
@@ -779,4 +743,9 @@ class AdminRepository {
             else -> 0
         }
     }
+}
+
+fun getCurrentDateTimeIso(): String {
+    val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+    return "${now.year}-${now.monthNumber.toString().padStart(2, '0')}-${now.dayOfMonth.toString().padStart(2, '0')}T${now.hour.toString().padStart(2, '0')}:${now.minute.toString().padStart(2, '0')}:${now.second.toString().padStart(2, '0')}"
 }

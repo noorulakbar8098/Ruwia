@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.TrendingDown
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -47,7 +48,7 @@ import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 import kotlin.math.*
 
 private object SaaSColors {
@@ -68,6 +69,7 @@ private object SaaSColors {
     val PremiumCard   get() = Brush.linearGradient(listOf(NTColors.Primary, NTColors.PrimaryDark))
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfitDashboardScreen(
     state: AdminState,
@@ -167,12 +169,10 @@ fun ProfitDashboardScreen(
     // Stock Activity (Case-Wise)
     val monthMvts = state.recentMovements.filter { it.createdAt?.startsWith(selectedMonthKey) == true }
     val inward    = monthMvts.filter { it.type == "inward" }.sumOf { mvt ->
-        val upc = state.productCategories.find { it.id == mvt.productId }?.unitsPerCase ?: 1
-        mvt.qty.toDouble() / upc
+        mvt.qty.toDouble()
     }
     val outward   = monthMvts.filter { it.type == "outward" }.sumOf { mvt ->
-        val upc = state.productCategories.find { it.id == mvt.productId }?.unitsPerCase ?: 1
-        mvt.qty.toDouble() / upc
+        mvt.qty.toDouble()
     }
 
     // Top Products
@@ -550,7 +550,7 @@ private fun TopBarSection(
                         .clickable(onClick = onBack),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Rounded.ArrowBack, null, tint = SaaSColors.TextPrimary, modifier = Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = SaaSColors.TextPrimary, modifier = Modifier.size(18.dp))
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
@@ -600,9 +600,9 @@ private fun TopBarSection(
                     }
                 }
 
-                IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
-                    Icon(Icons.Rounded.DeleteSweep, "Clear Data", tint = SaaSColors.Error, modifier = Modifier.size(20.dp))
-                }
+//                IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
+//                    Icon(Icons.Rounded.DeleteSweep, "Clear Data", tint = SaaSColors.Error, modifier = Modifier.size(20.dp))
+//                }
                 Box {
                     Surface(
                         onClick = { dropdownExpanded = true },
@@ -771,7 +771,7 @@ private fun TodaySummaryCard(revenue: Double, expenses: Double, profit: Double) 
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "₹${profit.toInt()}",
+                            text = "₹${formatValue(profit)}",
                             fontSize = 32.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.White,
@@ -834,7 +834,7 @@ private fun TodaySummaryCard(revenue: Double, expenses: Double, profit: Double) 
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "₹${revenue.toInt()}",
+                            text = "₹${formatValue(revenue)}",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White
@@ -876,7 +876,7 @@ private fun TodaySummaryCard(revenue: Double, expenses: Double, profit: Double) 
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "₹${expenses.toInt()}",
+                            text = "₹${formatValue(expenses)}",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White
@@ -1911,9 +1911,22 @@ private fun SaaSPieChart(data: List<Float>, modifier: Modifier = Modifier) {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 private fun formatValue(v: Double): String = when {
-    v >= 100000 -> "${(v / 100000).toInt()}L"
-    v >= 1000   -> "${(v / 1000).toInt()}K"
-    else        -> "${v.toInt()}"
+    v >= 100000.0 -> {
+        val l = v / 100000.0
+        val rounded = round(l * 100.0) / 100.0
+        val s = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+        "${s}L"
+    }
+    v >= 1000.0 -> {
+        val k = v / 1000.0
+        val rounded = round(k * 100.0) / 100.0
+        val s = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+        "${s}K"
+    }
+    else -> {
+        val rounded = round(v * 100.0) / 100.0
+        if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+    }
 }
 
 private fun jsonEncode(list: List<CustomExpense>): String {

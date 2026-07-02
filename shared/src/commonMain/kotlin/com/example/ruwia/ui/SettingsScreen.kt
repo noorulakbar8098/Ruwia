@@ -42,7 +42,6 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onNavigateToEmployees: () -> Unit,
     onNavigateToPricing: () -> Unit,
-    onNavigateToSuppliers: () -> Unit = {},
     onNavigateToCustomers: () -> Unit = {},
     onLogout: () -> Unit,
     onDeleteAllData: () -> Unit,
@@ -284,15 +283,7 @@ fun SettingsScreen(
                             subtitle = "Manage $staffCount active team members and access controls",
                             onClick = onNavigateToEmployees
                         )
-                        SettingsDivider()
-                        SettingsNavItem(
-                            icon = Icons.Rounded.Store,
-                            iconBg = NTColors.InfoLight,
-                            iconFg = NTColors.Info,
-                            title = "Suppliers",
-                            subtitle = "${state.suppliersFull.size} active logistics and procurement sources",
-                            onClick = onNavigateToSuppliers
-                        )
+
                         SettingsDivider()
                         SettingsNavItem(
                             icon = Icons.Rounded.People,

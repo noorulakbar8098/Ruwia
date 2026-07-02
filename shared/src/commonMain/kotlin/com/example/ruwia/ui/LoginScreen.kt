@@ -1,4 +1,6 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 package com.example.ruwia.ui
+
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -39,6 +41,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.autofill.AutofillNode
+import androidx.compose.ui.autofill.AutofillType
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalAutofill
+import androidx.compose.ui.platform.LocalAutofillTree
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
@@ -360,7 +369,8 @@ private fun LoginGlassCard(
                     label = if (selectedRole == UserRole.employee && !isSignUp) "Employee ID" else "Email Address",
                     placeholder = if (selectedRole == UserRole.employee && !isSignUp) "EMP-12345" else "name@company.com",
                     icon = Icons.Outlined.Email,
-                    keyboardType = KeyboardType.Email
+                    keyboardType = KeyboardType.Email,
+                    autofillTypes = listOf(AutofillType.EmailAddress, AutofillType.Username)
                 )
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -372,7 +382,8 @@ private fun LoginGlassCard(
                         icon = Icons.Outlined.Lock,
                         isPassword = true,
                         passwordVisible = passwordVisible,
-                        onTogglePassword = onTogglePassword
+                        onTogglePassword = onTogglePassword,
+                        autofillTypes = listOf(AutofillType.Password)
                     )
                     
                     if (!isSignUp) {
@@ -559,10 +570,30 @@ private fun DroplyInput(
     isPassword: Boolean = false,
     passwordVisible: Boolean = false,
     onTogglePassword: () -> Unit = {},
-    keyboardType: KeyboardType = KeyboardType.Text
+    keyboardType: KeyboardType = KeyboardType.Text,
+    autofillTypes: List<AutofillType>? = null
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val glowAlpha by animateFloatAsState(if (isFocused) 0.15f else 0f)
+
+    // Autofill setup
+    val autofill = LocalAutofill.current
+    val autofillTree = LocalAutofillTree.current
+    
+    val autofillNode = remember(autofillTypes) {
+        if (autofillTypes != null && autofill != null) {
+            AutofillNode(
+                autofillTypes = autofillTypes,
+                onFill = onValueChange
+            )
+        } else null
+    }
+
+    if (autofillNode != null && autofillTree != null) {
+        SideEffect {
+            autofillTree += autofillNode
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -580,7 +611,19 @@ private fun DroplyInput(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp)
-                .onFocusChanged { isFocused = it.isFocused }
+                .onGloballyPositioned { coordinates ->
+                    autofillNode?.boundingBox = coordinates.boundsInWindow()
+                }
+                .onFocusChanged { focusState ->
+                    isFocused = focusState.isFocused
+                    if (autofill != null && autofillNode != null) {
+                        if (focusState.isFocused) {
+                            autofill.requestAutofillForNode(autofillNode)
+                        } else {
+                            autofill.cancelAutofillForNode(autofillNode)
+                        }
+                    }
+                }
                 .drawWithContent {
                     if (isFocused) {
                         // Focus Glow Effect
@@ -622,7 +665,10 @@ private fun DroplyInput(
                 }
             } else null,
             visualTransformation = if (isPassword && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = keyboardType,
+                imeAction = if (isPassword) ImeAction.Done else ImeAction.Next
+            ),
             singleLine = true,
             shape = RoundedCornerShape(18.dp),
             colors = OutlinedTextFieldDefaults.colors(

@@ -18,8 +18,8 @@ val appModule = module {
     single { EmployeeRepository() }
     single { AuthViewModel(get(), get()) }
     factory { UserViewModel(get(), get()) }
-    factory { AdminViewModel(get()) }
-    factory { EmployeeViewModel(get()) }
+    single { AdminViewModel(get()) }
+    single { EmployeeViewModel(get()) }
 }
 
 // Guard against double-init (iOS re-entry, Activity recreation on Android)

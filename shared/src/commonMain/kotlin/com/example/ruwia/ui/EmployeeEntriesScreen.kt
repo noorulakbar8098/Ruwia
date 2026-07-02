@@ -5,14 +5,21 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,11 +37,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
-import com.example.ruwia.domain.unitsPerCase
+
 import com.example.ruwia.theme.RuwiaColor
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.Month
+import kotlin.time.Clock
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.minus
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Employee Entries Tab
@@ -43,6 +55,7 @@ import kotlinx.datetime.toLocalDateTime
 //  employee_id, with client-side filter chips on top.
 // ─────────────────────────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmployeeEntriesScreen(
     movements: List<StockMovement>,
@@ -56,8 +69,94 @@ fun EmployeeEntriesScreen(
     onRefresh: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    val filtered = remember(movements) {
-        movements
+    var selectedFilter by remember { mutableStateOf("All") }
+    var showDatePickerStart by remember { mutableStateOf(false) }
+    var showDatePickerEnd by remember { mutableStateOf(false) }
+    var customStartDate by remember { mutableStateOf<LocalDate?>(null) }
+    var customEndDate by remember { mutableStateOf<LocalDate?>(null) }
+
+    val today = remember { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date }
+    val sevenDaysAgo = remember(today) { today.minus(7, DateTimeUnit.DAY) }
+    val thisMonthStart = remember(today) { LocalDate(today.year, today.month, 1) }
+    val lastMonthStart = remember(today) {
+        if (today.month == Month.JANUARY) LocalDate(today.year - 1, 12, 1)
+        else LocalDate(today.year, today.monthNumber - 1, 1)
+    }
+    val lastMonthEnd = remember(thisMonthStart) { thisMonthStart.minus(1, DateTimeUnit.DAY) }
+
+    val filtered = remember(movements, selectedFilter, customStartDate, customEndDate) {
+        movements.filter { mov ->
+            // Filter to only display outward transactions
+            if (mov.type != "outward") return@filter false
+            
+            val movDate = try {
+                LocalDate.parse(mov.createdAt?.take(10) ?: "")
+            } catch (_: Exception) {
+                null
+            }
+            
+            if (movDate == null) return@filter false
+            
+            when (selectedFilter) {
+                "Today" -> movDate == today
+                "Last 7 Days" -> movDate in sevenDaysAgo..today
+                "This Month" -> movDate.year == today.year && movDate.month == today.month
+                "Last Month" -> movDate.year == lastMonthStart.year && movDate.month == lastMonthStart.month
+                "Custom" -> {
+                    val start = customStartDate
+                    val end = customEndDate
+                    when {
+                        start != null && end != null -> movDate in start..end
+                        start != null -> movDate >= start
+                        end != null -> movDate <= end
+                        else -> true
+                    }
+                }
+                else -> true // "All"
+            }
+        }
+    }
+
+    if (showDatePickerStart) {
+        val dateState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showDatePickerStart = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dateState.selectedDateMillis?.let { millis ->
+                        val instant = Instant.fromEpochMilliseconds(millis)
+                        customStartDate = instant.toLocalDateTime(TimeZone.UTC).date
+                    }
+                    showDatePickerStart = false
+                }) { Text("OK", color = RuwiaColor.TealPrimary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePickerStart = false }) { Text("Cancel", color = RuwiaColor.TextMuted) }
+            }
+        ) {
+            DatePicker(state = dateState)
+        }
+    }
+
+    if (showDatePickerEnd) {
+        val dateState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showDatePickerEnd = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dateState.selectedDateMillis?.let { millis ->
+                        val instant = Instant.fromEpochMilliseconds(millis)
+                        customEndDate = instant.toLocalDateTime(TimeZone.UTC).date
+                    }
+                    showDatePickerEnd = false
+                }) { Text("OK", color = RuwiaColor.TealPrimary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePickerEnd = false }) { Text("Cancel", color = RuwiaColor.TextMuted) }
+            }
+        ) {
+            DatePicker(state = dateState)
+        }
     }
 
     LazyColumn(
@@ -80,6 +179,85 @@ fun EmployeeEntriesScreen(
                 modifier  = Modifier.padding(horizontal = 20.dp),
             )
             Spacer(Modifier.height(18.dp))
+        }
+
+        // ── Date Filter Chips ────────────────────────────────────────────────
+        item {
+            val chips = listOf("All", "Today", "Last 7 Days", "This Month", "Last Month", "Custom")
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
+                items(chips) { chip ->
+                    val isSelected = selectedFilter == chip
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                if (isSelected) RuwiaColor.TealPrimary
+                                else RuwiaColor.TealExtraLight
+                            )
+                            .clickable { selectedFilter = chip }
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = chip,
+                            color = if (isSelected) Color.White else RuwiaColor.TealPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Custom Date Pickers Row ─────────────────────────────────────────
+        if (selectedFilter == "Custom") {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
+                            .background(RuwiaColor.Surface)
+                            .clickable { showDatePickerStart = true }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = customStartDate?.toString() ?: "Start Date",
+                            color = if (customStartDate != null) RuwiaColor.TextPrimary else RuwiaColor.TextMuted,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
+                            .background(RuwiaColor.Surface)
+                            .clickable { showDatePickerEnd = true }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = customEndDate?.toString() ?: "End Date",
+                            color = if (customEndDate != null) RuwiaColor.TextPrimary else RuwiaColor.TextMuted,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
         }
 
         // ── List body ───────────────────────────────────────────────────────
@@ -239,16 +417,7 @@ private fun EntryRow(
     val sign     = if (isInward) "+"                       else "-"
     val statusLabel = if (isInward) "INWARD" else "OUTWARD"
 
-    val product = products.find { it.id == movement.productId }
-    val upc = product?.unitsPerCase?.coerceAtLeast(1) ?: 1
-    val isCaseWise = upc > 1
-    val casesCount = movement.qty / upc
-    val remUnits = movement.qty % upc
-    val displayQty = if (isCaseWise) {
-        if (remUnits > 0) "$casesCount cases + $remUnits units" else "$casesCount cases"
-    } else {
-        "${movement.qty} units"
-    }
+    val displayQty = "${movement.qty} units"
 
     Row(
         modifier = modifier
@@ -264,7 +433,7 @@ private fun EntryRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = Icons.Rounded.ArrowBack,
+                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                 contentDescription = null,
                 tint     = iconTint,
                 modifier = Modifier.size(17.dp).rotate(if (isInward) 45f else -135f),
@@ -316,20 +485,11 @@ private fun EntryRow(
         Spacer(Modifier.width(10.dp))
 
         Text(
-            text       = "$sign${if (isCaseWise) casesCount else movement.qty}",
+            text       = "$sign${movement.qty}",
             fontSize   = 15.sp,
             fontWeight = FontWeight.Bold,
             color      = amtColor,
         )
-        if (isCaseWise) {
-            Text(
-                " cs",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = amtColor.copy(alpha = 0.7f),
-                modifier = Modifier.padding(top = 2.dp)
-            )
-        }
     }
 }
 
@@ -342,7 +502,7 @@ private fun formatDateLabel(createdAt: String?): String {
         val local   = instant.toLocalDateTime(TimeZone.currentSystemDefault())
         val month   = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
             .getOrNull(local.monthNumber - 1) ?: ""
-        val day     = local.dayOfMonth.toString()
+        val day     = local.day.toString()
         val h       = local.hour
         val hh      = if (h == 0) 12 else if (h > 12) h - 12 else h
         val ampm    = if (h >= 12) "PM" else "AM"

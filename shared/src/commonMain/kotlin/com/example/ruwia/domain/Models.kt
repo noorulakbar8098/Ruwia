@@ -141,22 +141,7 @@ data class Supplier(
     @SerialName("is_active") val isActive: Boolean = true,
 )
 
-fun getUnitsPerCase(productName: String): Int {
-    val name = productName.lowercase()
-    return when {
-        name.contains("300") -> 30
-        name.contains("500") -> 24
-        name.contains("20")  -> 1
-        name.contains("10")  -> 1
-        name.contains("5")   -> 1
-        name.contains("2")   -> 9
-        name.contains("1")   -> 12
-        else                 -> 1
-    }
-}
 
-
-val StockItem.unitsPerCase: Int get() = getUnitsPerCase(name)
 
 @Serializable
 data class ProductCategory(
@@ -173,7 +158,7 @@ data class ProductCategory(
     @SerialName("is_active") val isActive: Boolean = true,
 )
 
-val ProductCategory.unitsPerCase: Int get() = getUnitsPerCase(displayName)
+
 
 @Serializable
 data class SaleEntry(
@@ -223,4 +208,98 @@ data class MonthlyExpense(
 
     val total: Double get() = shopRent + adminSalary + deliveryStaff + miscellaneous + bikeExpense + customExpensesList.sumOf { it.amount }
 }
+
+/**
+ * Normalises a shop name like "Shop 1 · Main" / "Shop 1" / " shop 1 " into
+ * the same lowercase comparison key. Shop names entered in the employee app
+ * (`shopInfo.split("·")[0].trim()`) only carry the first segment, so we
+ * strip everything after the bullet so they match the seeded names.
+ */
+fun shopMatchKey(name: String): String =
+    name.split("·", limit = 2).firstOrNull()?.trim()?.lowercase() ?: name.trim().lowercase()
+
+/** True if a movement source string represents returned empty cans. */
+fun String.isEmptyCansSource(): Boolean {
+    val clean = trim().lowercase()
+    return clean.startsWith("empty cans") || clean.startsWith("empty cases")
+}
+
+/**
+ * Returns each shop with its [ShopStockInfo] columns recomputed from the
+ * movement log. The original metadata fields (`id`, `name`, `location`,
+ * `isLive`) are preserved.
+ */
+fun deriveShopStockTotals(
+    rawShops: List<ShopStockInfo>,
+    movements: List<StockMovement>,
+    stockItems: List<StockItem>,
+): List<ShopStockInfo> {
+    if (rawShops.isEmpty()) return emptyList()
+    val productMap = stockItems.associateBy { it.id }
+
+    return rawShops.map { shop ->
+        val key = shopMatchKey(shop.name)
+        val rows = movements.filter { shopMatchKey(it.shopName) == key }
+        
+        val productNetFull = mutableMapOf<String, Int>()
+        var unknownProductFull = 0
+        
+        rows.forEach { m ->
+            val isFullIn = m.type == "inward" && !m.source.trim().startsWith("Empty cans", ignoreCase = true)
+            val isSentOut = m.type == "outward"
+            if (isFullIn || isSentOut) {
+                val delta = if (isFullIn) m.qty else -m.qty
+                if (m.productId != null) {
+                    productNetFull[m.productId] = (productNetFull[m.productId] ?: 0) + delta
+                } else {
+                    unknownProductFull += delta
+                }
+            }
+        }
+        
+        var totalCases = unknownProductFull.toDouble().coerceAtLeast(0.0)
+        productNetFull.forEach { (pid, units) ->
+            val p = productMap[pid]
+            val actualUnits = units.coerceAtLeast(0)
+            if (p != null) {
+                totalCases += actualUnits.toDouble()
+            } else {
+                totalCases += actualUnits.toDouble()
+            }
+        }
+        
+        var emptyCases = 0.0
+        rows.filter { it.source.isEmptyCansSource() }.forEach { m ->
+            val delta = if (m.type == "inward") m.qty else -m.qty
+            if (m.productId != null) {
+                val p = productMap[m.productId]
+                if (p != null) emptyCases += delta.toDouble()
+                else emptyCases += delta.toDouble()
+            } else {
+                emptyCases += delta.toDouble()
+            }
+        }
+        
+        var withCust = 0.0
+        rows.forEach { m ->
+            val isReturn = m.source.isEmptyCansSource() && m.type == "inward"
+            val isSale   = !m.source.isEmptyCansSource() && m.type == "outward"
+            if (isReturn || isSale) {
+                val delta = if (isSale) m.qty else -m.qty
+                withCust += delta.toDouble()
+            }
+        }
+
+        val fullCans = totalCases
+        val totalCans = fullCans + emptyCases + withCust.coerceAtLeast(0.0)
+
+        shop.copy(
+            totalCans = totalCans,
+            fullCans = fullCans,
+            emptyCans = emptyCases,
+            cansWithCustomers = withCust.coerceAtLeast(0.0),
+        )
+    }
+}
+
 

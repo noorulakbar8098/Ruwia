@@ -3,6 +3,8 @@ package com.example.ruwia.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ruwia.data.AdminRepository
+import com.example.ruwia.data.awaitAuthentication
+import kotlinx.coroutines.Job
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.MonthlyExpense
@@ -13,6 +15,7 @@ import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.Supplier
+import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.util.sanitizeError
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,9 +61,7 @@ data class AdminState(
     val currentMonthExpense: MonthlyExpense? = null,
     val lastMonthExpense: MonthlyExpense? = null,
     val monthlyExpenses: Map<String, MonthlyExpense> = emptyMap(),
-    val suppliers: List<String> = emptyList(),
-    /** Typed supplier rows including IDs — for the management screen. */
-    val suppliersFull: List<Supplier> = emptyList(),
+
     val employeeCreation: EmployeeCreationState = EmployeeCreationState.Idle,
     /** "YYYY-MM" — set in [AdminViewModel.loadData]. Empty until first load. */
     val currentMonth: String = "",
@@ -73,15 +74,19 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     private val _state = MutableStateFlow(AdminState())
     val state: StateFlow<AdminState> = _state.asStateFlow()
 
+    private var refreshJob: Job? = null
+
     init {
         loadData()
         startPeriodicRefresh()
     }
 
-    private fun startPeriodicRefresh() {
-        viewModelScope.launch {
+    fun startPeriodicRefresh() {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
             while (true) {
                 delay(15_000L) // Poll every 15 seconds
+                if (!awaitAuthentication()) continue
                 runCatching {
                     // Cross-app freshness: customers / suppliers / products /
                     // stock numbers all change when an employee logs activity,
@@ -89,28 +94,42 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                     val shopStocks = repo.getShopStocks()
                     val movements  = repo.getRecentMovements()
                     val customers  = repo.getAllCustomers()
-                    val suppliers     = repo.getSuppliers()
-                    val suppliersFull = repo.getSuppliersFull()
                     val products      = repo.getProductCategories()
                     val stockItems    = repo.getStockSummaryList()
                     val saleEntries   = repo.getSaleEntries()
-                    _state.value = _state.value.copy(
-                        shopStocks        = shopStocks,
-                        recentMovements   = movements,
-                        customers         = customers,
-                        suppliers         = suppliers,
-                        suppliersFull     = suppliersFull,
-                        productCategories = products,
-                        stockItems        = stockItems,
-                        saleEntries       = saleEntries,
-                    )
+                    
+                    // Prevent replacing valid cached data with empty lists if RLS returned empty lists due to a race
+                    if (products.isNotEmpty() || movements.isNotEmpty() || _state.value.productCategories.isEmpty()) {
+                        _state.value = _state.value.copy(
+                            shopStocks        = shopStocks,
+                            recentMovements   = movements,
+                            customers         = customers,
+                            productCategories = products,
+                            stockItems        = stockItems,
+                            saleEntries       = saleEntries,
+                        ).deriveStockFromMovements()
+                    }
                 }
             }
         }
     }
 
+    fun stopPeriodicRefresh() {
+        refreshJob?.cancel()
+        refreshJob = null
+    }
+
+    fun clearState() {
+        stopPeriodicRefresh()
+        _state.value = AdminState()
+    }
+
     fun loadData() = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
+        if (!awaitAuthentication()) {
+            _state.value = _state.value.copy(loading = false, error = "Not authenticated")
+            return@launch
+        }
         runCatching {
             val mrr              = repo.getMRR()
             val csat             = repo.getCSAT()
@@ -128,8 +147,6 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             val previousMonth    = previousYearMonth()
             val expense          = repo.getMonthlyExpense(currentMonth)
             val lastExpense      = repo.getMonthlyExpense(previousMonth)
-            val suppliers        = repo.getSuppliers()
-            val suppliersFull    = repo.getSuppliersFull()
             AdminState(
                 loading              = false,
                 mrr                  = mrr,
@@ -149,13 +166,11 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 currentMonthExpense  = expense,
                 lastMonthExpense     = lastExpense,
                 monthlyExpenses      = listOfNotNull(expense, lastExpense).associateBy { it.month },
-                suppliers            = suppliers,
-                suppliersFull        = suppliersFull,
                 currentMonth         = currentMonth,
                 previousMonth        = previousMonth,
             )
         }.onSuccess { newState ->
-            _state.value = newState
+            _state.value = newState.deriveStockFromMovements()
         }.onFailure {
             _state.value = _state.value.copy(
                 loading = false,
@@ -166,14 +181,27 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
 
     // ── Product categories ────────────────────────────────────────────────────
 
-    fun addProductCategory(cat: ProductCategory) = viewModelScope.launch {
+    fun addProductCategory(cat: ProductCategory, openingStock: Int = 0, shopName: String = "Shop 1") = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
-        runCatching { repo.addProductCategory(cat) }
-            .onSuccess {
-                val updated = repo.getProductCategories()
-                _state.value = _state.value.copy(productCategories = updated, loading = false)
+        runCatching { 
+            val savedId = repo.addProductCategory(cat) 
+            if (openingStock > 0 && savedId.isNotBlank()) {
+                repo.addRawStockMovement(
+                    source = "Opening Stock",
+                    qty = openingStock,
+                    type = "inward",
+                    shopName = shopName,
+                    productId = savedId
+                )
             }
-            .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
+        }
+            .onSuccess {
+                loadData()
+            }
+            .onFailure {
+                it.printStackTrace()
+                _state.value = _state.value.copy(error = "Database Error: ${it.message}", loading = false) 
+            }
     }
 
     fun updateProductCategory(cat: ProductCategory) = viewModelScope.launch {
@@ -288,7 +316,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                     shopStocks        = shopStocks,
                     productCategories = productCats,
                     loading           = false
-                )
+                ).deriveStockFromMovements()
             }
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
     }
@@ -336,7 +364,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 productCategories = productCats,
                 error             = anyError,
                 loading           = false
-            )
+            ).deriveStockFromMovements()
         }.onFailure {
             _state.value = _state.value.copy(
                 error   = it.message ?: anyError,
@@ -431,43 +459,148 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         _state.value = _state.value.copy(employeeCreation = EmployeeCreationState.Idle)
     }
 
+    fun addStockForProduct(
+        productId: String,
+        purchasePrice: Double,
+        sellingPrice: Double,
+        qty: Int,
+        shopName: String,
+        createdAt: String,
+    ) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching {
+            // 1. Add stock movement
+            repo.addStockMovement(
+                source = "Restock",
+                qty = qty,
+                type = "inward",
+                shopName = shopName,
+                productId = productId
+            )
+
+            // 2. Check if prices need to be updated
+            val product = _state.value.productCategories.find { it.id == productId }
+            if (product != null && (product.purchasePrice != purchasePrice || product.defaultSellPrice != sellingPrice)) {
+                val updatedProduct = product.copy(
+                    purchasePrice = purchasePrice,
+                    defaultSellPrice = sellingPrice
+                )
+                repo.updateProductCategory(updatedProduct)
+            }
+        }.onSuccess {
+            loadData() // Refresh all data
+        }.onFailure {
+            _state.value = _state.value.copy(error = it.message, loading = false)
+        }
+    }
+
     fun assignOrderToEmployee(orderId: String, employeeId: String) = viewModelScope.launch {
         repo.assignEmployee(orderId, employeeId)
         loadData()
     }
 
-    // ── Suppliers ─────────────────────────────────────────────────────────────
+    // ── Inward Stock Entry ────────────────────────────────────────────────────
 
-    fun addSupplier(name: String, location: String?) = viewModelScope.launch {
+    fun addInwardStockEntry(
+        sku: String,
+        brandName: String,
+        purchasePrice: Double,
+        sellingPrice: Double,
+        qty: Int,
+        shopName: String,
+        createdAt: String,
+    ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
-        runCatching { repo.addSupplier(name, location) }
-            .onSuccess {
-                // Refresh both list views — the picker (string) and the
-                // management screen (typed) are kept in sync.
-                val full     = repo.getSuppliersFull()
-                val display  = repo.getSuppliers()
-                _state.value = _state.value.copy(
-                    suppliersFull = full,
-                    suppliers     = display,
-                    loading       = false
+        runCatching {
+            val skuClean = sku.trim()
+            val brandClean = brandName.trim()
+            var product = _state.value.productCategories.find {
+                it.name.equals(skuClean, ignoreCase = true) &&
+                it.brandName.equals(brandClean, ignoreCase = true)
+            }
+
+            if (product != null) {
+                throw IllegalStateException(
+                    "Product with size '$skuClean' already exists under brand '$brandClean'. Cannot add duplicate product."
                 )
             }
-            .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
+
+            // Product does not exist, create it
+            val displayName = if (brandClean.isNotBlank()) "$brandClean - $skuClean" else skuClean
+            val newProduct = ProductCategory(
+                id = "",
+                name = skuClean,
+                displayName = displayName,
+                brandName = brandClean,
+                supplierGroup = shopName.trim(), // Store assigned shop name
+                purchasePrice = purchasePrice,
+                defaultSellPrice = sellingPrice,
+                stockAvailable = 0, // will be updated by the movement
+                isActive = true
+            )
+            val productId = repo.addProductCategory(newProduct)
+
+            // Add stock movement
+            val totalUnits = qty
+            repo.addStockMovement(
+                source = "Inward Purchase",
+                qty = totalUnits,
+                type = "inward",
+                shopName = shopName,
+                productId = productId,
+                createdAt = createdAt
+            )
+        }.onSuccess {
+            loadData()
+        }.onFailure {
+            _state.value = _state.value.copy(error = it.message ?: "Failed to save stock purchase", loading = false)
+        }
     }
 
-    fun deleteSupplier(id: String) = viewModelScope.launch {
+    /** Edit mode: update product details and only adjust stock if qty changed. */
+    fun updateProductWithStockDelta(
+        productId: String,
+        brandName: String,
+        purchasePrice: Double,
+        sellingPrice: Double,
+        newStock: Int,
+        previousStock: Int,
+        shopName: String,
+    ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
-        runCatching { repo.deleteSupplier(id) }
-            .onSuccess {
-                val full     = repo.getSuppliersFull()
-                val display  = repo.getSuppliers()
-                _state.value = _state.value.copy(
-                    suppliersFull = full,
-                    suppliers     = display,
-                    loading       = false
+        runCatching {
+            val product = _state.value.productCategories.find { it.id == productId }
+                ?: throw IllegalStateException("Product not found")
+
+            // Update product details (brand, prices)
+            val displayName = if (brandName.isNotBlank()) "$brandName - ${product.name}" else product.name
+            val updatedProduct = product.copy(
+                brandName = brandName.trim(),
+                displayName = displayName,
+                supplierGroup = shopName.trim(),
+                purchasePrice = purchasePrice,
+                defaultSellPrice = sellingPrice
+            )
+            repo.updateProductCategory(updatedProduct)
+
+            // Only adjust stock if quantity changed
+            val delta = newStock - previousStock
+            if (delta != 0) {
+                val type = if (delta > 0) "inward" else "outward"
+                val absQty = kotlin.math.abs(delta)
+                repo.addStockMovement(
+                    source = "Stock Adjustment (Edit)",
+                    qty = absQty,
+                    type = type,
+                    shopName = shopName,
+                    productId = productId
                 )
             }
-            .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
+        }.onSuccess {
+            loadData()
+        }.onFailure {
+            _state.value = _state.value.copy(error = it.message ?: "Failed to update product", loading = false)
+        }
     }
 
     fun clearStockAndRevenue() = viewModelScope.launch {
@@ -489,6 +622,10 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun AdminState.deriveStockFromMovements(): AdminState {
+        return this
+    }
 
     private fun currentYearMonth(): String {
         return try {

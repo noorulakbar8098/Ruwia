@@ -30,8 +30,16 @@ END $$;
 -- Defined AFTER profiles table exists.
 CREATE OR REPLACE FUNCTION public.get_admin_id()
 RETURNS UUID AS $$
-    SELECT admin_id FROM public.profiles WHERE id = auth.uid();
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
+DECLARE
+    res UUID;
+BEGIN
+    SELECT admin_id INTO res FROM public.profiles WHERE id = auth.uid();
+    IF res IS NULL OR res = auth.uid() THEN
+        SELECT admin_id INTO res FROM public.employees WHERE id = auth.uid();
+    END IF;
+    RETURN COALESCE(res, auth.uid());
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 -- Trigger to handle new user signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -79,25 +87,41 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Migration helper: Add admin_id column and trigger to existing tables
 CREATE OR REPLACE FUNCTION migrate_to_tenant_table(t_name TEXT)
 RETURNS VOID AS $$
+DECLARE
+    tg_name TEXT;
 BEGIN
-    -- 1. Add admin_id column if missing
+    -- 1. Drop all other triggers on the table to clean up legacy multipliers
+    FOR tg_name IN (
+        SELECT tgname
+        FROM pg_trigger
+        JOIN pg_class ON pg_class.oid = tgrelid
+        JOIN pg_namespace ON pg_namespace.oid = relnamespace
+        WHERE relname = t_name
+          AND nspname = 'public'
+          AND tgname != 'trigger_inject_admin_id'
+          AND tgisinternal = false
+    ) LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I CASCADE', tg_name, t_name);
+    END LOOP;
+
+    -- 2. Add admin_id column if missing
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS admin_id UUID REFERENCES auth.users(id)', t_name);
 
-    -- 2. Add the injection trigger
+    -- 3. Add the injection trigger
     EXECUTE format('DROP TRIGGER IF EXISTS trigger_inject_admin_id ON %I', t_name);
     EXECUTE format('CREATE TRIGGER trigger_inject_admin_id BEFORE INSERT ON %I FOR EACH ROW EXECUTE FUNCTION public.inject_admin_id()', t_name);
 
-    -- 3. Enable RLS
+    -- 4. Enable RLS
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t_name);
 
-    -- 4. Clean up ALL old policies
+    -- 5. Clean up ALL old policies
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t_name || '_rw', t_name);
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t_name || '_multi_tenant', t_name);
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t_name || '_read', t_name);
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t_name || '_admin', t_name);
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t_name || '_isolation', t_name);
 
-    -- 5. Create strict isolation policy
+    -- 6. Create strict isolation policy
     EXECUTE format(
         'CREATE POLICY %I ON %I FOR ALL TO authenticated
          USING (admin_id = public.get_admin_id())
@@ -166,3 +190,25 @@ CREATE POLICY "profiles_update_self" ON profiles FOR UPDATE TO authenticated
 ALTER TABLE monthly_expenses DROP CONSTRAINT IF EXISTS monthly_expenses_month_shop_id_key;
 ALTER TABLE monthly_expenses DROP CONSTRAINT IF EXISTS monthly_expenses_month_shop_id_admin_id_key;
 ALTER TABLE monthly_expenses ADD CONSTRAINT monthly_expenses_month_shop_id_admin_id_key UNIQUE (month, shop_id, admin_id);
+
+-- ─── 5. Auxiliary Safe RPCs ──────────────────────────────────
+-- Safe stock adjustment function that works with RLS and resolves JSON parsing EOF errors
+CREATE OR REPLACE FUNCTION public.update_product_stock(
+    p_id UUID,
+    p_new_stock INT,
+    p_expected_current INT
+) RETURNS BOOLEAN AS $$
+DECLARE
+    v_updated_rows INT;
+BEGIN
+    UPDATE public.product_categories
+    SET stock_available = p_new_stock
+    WHERE id = p_id 
+      AND stock_available = p_expected_current 
+      AND admin_id = public.get_admin_id();
+      
+    GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+    RETURN v_updated_rows > 0;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+

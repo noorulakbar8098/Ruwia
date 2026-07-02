@@ -197,7 +197,7 @@ fun CustomerPickerRow(
                     .joinToString("  ·  ")
                 if (sub.isNotEmpty()) {
                     Spacer(Modifier.height(2.dp))
-                    Text(sub, fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                    Text(sub, fontSize = 11.sp, color = RuwiaColor.TextSecondary)
                 }
             } else {
                 Text("Select or add customer", fontSize = 14.sp, color = RuwiaColor.TextMuted)
@@ -259,12 +259,12 @@ private fun ColumnScope.PickContent(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 6.dp)
-            .background(RuwiaColor.Background, RoundedCornerShape(12.dp))
+            .background(RuwiaColor.LightGray, RoundedCornerShape(12.dp))
             .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.Search, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(18.dp))
+        Icon(Icons.Rounded.Search, null, tint = RuwiaColor.TextSecondary, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(10.dp))
         Box(modifier = Modifier.weight(1f)) {
             if (search.isEmpty()) {
@@ -283,7 +283,7 @@ private fun ColumnScope.PickContent(
             Spacer(Modifier.width(8.dp))
             Icon(
                 Icons.Rounded.Close, null,
-                tint     = RuwiaColor.TextMuted,
+                tint     = RuwiaColor.TextSecondary,
                 modifier = Modifier.size(16.dp).clickable { onSearchChange("") },
             )
         }
@@ -527,7 +527,7 @@ private fun AddCustomerField(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(RuwiaColor.Background, RoundedCornerShape(12.dp))
+                .background(RuwiaColor.LightGray, RoundedCornerShape(12.dp))
                 .border(
                     width = 1.dp,
                     color = if (value.isNotEmpty()) RuwiaColor.TealLight else RuwiaColor.Divider,
@@ -541,7 +541,7 @@ private fun AddCustomerField(
         ) {
             Icon(
                 icon, null,
-                tint     = RuwiaColor.TealPrimary,
+                tint     = RuwiaColor.TextPrimary,
                 modifier = Modifier
                     .size(16.dp)
                     .let { if (multiline) it.padding(top = 2.dp) else it },

@@ -9,6 +9,7 @@ import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.Supplier
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order as SortOrder
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
@@ -70,7 +71,22 @@ class EmployeeRepository {
             val profile = supabase.from("profiles")
                 .select { filter { eq("id", userId) } }
                 .decodeSingleOrNull<com.example.ruwia.domain.Profile>()
-            profile?.adminId
+            if (profile != null && profile.adminId != null && profile.adminId != userId) {
+                return profile.adminId
+            }
+            
+            // Fallback to employees table lookup
+            val empJson = supabase.from("employees")
+                .select { filter { eq("id", userId) } }
+                .decodeSingleOrNull<kotlinx.serialization.json.JsonObject>()
+            val empAdminId = empJson?.get("admin_id")?.let {
+                if (it is kotlinx.serialization.json.JsonPrimitive) it.content else null
+            }
+            if (empAdminId != null && empAdminId.isNotBlank() && empAdminId != userId) {
+                return empAdminId
+            }
+            
+            null
         } catch (e: Exception) { null }
     }
 
@@ -277,64 +293,6 @@ class EmployeeRepository {
         } catch (e: Exception) { emptyList() }
     }
 
-    // ── Suppliers ─────────────────────────────────────────────────────────────
-
-    suspend fun getSuppliers(): List<String> {
-        return try {
-            val uid = currentUserId() ?: return emptyList()
-            val adminId = getAdminIdForUser(uid)
-            supabase.from("suppliers")
-                .select { 
-                    filter { 
-                        eq("is_active", true) 
-                        if (adminId != null) eq("admin_id", adminId)
-                    } 
-                }
-                .decodeList<Supplier>()
-                .map { s -> if (s.location != null) "${s.name}  ·  ${s.location}" else s.name }
-                // Defensive — historic dupes before the unique constraint was
-                // added would otherwise show the same supplier twice in the
-                // employee's Add Inward picker.
-                .distinct()
-        } catch (e: Exception) {
-            listOf(
-                "Global Creators  ·  Tiru",
-                "Multi Brands  ·  Coimbatore",
-                "Aqua Pure Plant  ·  Tiru",
-            )
-        }
-    }
-
-    /**
-     * Adds a supplier from the employee app. RLS already permits authenticated
-     * users to insert into `suppliers`, so the new row is immediately visible
-     * to the admin and every other employee on their next dashboard refresh.
-     *
-     * No-ops silently if a supplier with the same (name, location) is already
-     * active — matches [AdminRepository.addSupplier]'s de-duplication so the
-     * picker can't accumulate duplicate entries.
-     */
-    suspend fun addSupplier(name: String, location: String?) {
-        if (name.isBlank()) return
-        val existing = runCatching {
-            supabase.from("suppliers")
-                .select { filter { eq("is_active", true) } }
-                .decodeList<Supplier>()
-        }.getOrDefault(emptyList())
-        val matches = existing.any {
-            it.name.trim().equals(name.trim(), ignoreCase = true) &&
-            (it.location?.trim() ?: "").equals((location?.trim() ?: ""), ignoreCase = true)
-        }
-        if (matches) return
-
-        supabase.from("suppliers").insert(
-            buildJsonObject {
-                put("name", name.trim())
-                if (!location.isNullOrBlank()) put("location", location.trim())
-                put("is_active", true)
-            }
-        )
-    }
 
     // ── Recent stock entries ───────────────────────────────────
 
@@ -362,7 +320,6 @@ class EmployeeRepository {
      * regardless of which colleague logged it.
      */
     suspend fun getShopMovements(shopName: String): List<StockMovement> {
-        if (shopName.isBlank()) return emptyList()
         return try {
             val uid = currentUserId() ?: return emptyList()
             val adminId = getAdminIdForUser(uid)
@@ -370,16 +327,18 @@ class EmployeeRepository {
                 .select {
                     if (adminId != null) filter { eq("admin_id", adminId) }
                     order("created_at", SortOrder.DESCENDING)
-                    limit(500)
                 }
                 .decodeList<StockMovement>()
-                // Filter client-side so we can normalise shop names the same
-                // way the dashboards do ("Shop 1" / "shop 1" / " Shop 1 ·
-                // Saibaba" all match the same key).
-                .filter { mov ->
-                    val a = mov.shopName.trim().lowercase().substringBefore("·").trim()
-                    val b = shopName.trim().lowercase().substringBefore("·").trim()
-                    a == b
+                .let { list ->
+                    if (shopName.isBlank() || shopName.equals("All Shops", ignoreCase = true)) {
+                        list
+                    } else {
+                        val b = shopName.trim().lowercase().substringBefore("·").trim()
+                        list.filter { mov ->
+                            val a = mov.shopName.trim().lowercase().substringBefore("·").trim()
+                            a == b
+                        }
+                    }
                 }
         } catch (e: Exception) { emptyList() }
     }
@@ -392,8 +351,51 @@ class EmployeeRepository {
         type: String,
         shopName: String,
         productId: String? = null,
+        createdAt: String? = null,
     ) {
         val employeeId = currentUserId()
+        
+        // 1. Validate and perform atomic stock update
+        if (productId != null && productId.isNotBlank()) {
+            var success = false
+            var attempts = 0
+            while (!success && attempts < 10) {
+                attempts++
+                val cur = supabase.from("product_categories")
+                    .select { filter { eq("id", productId) } }
+                    .decodeSingleOrNull<ProductCategory>() ?: break
+                val delta = when (type) {
+                    "inward"     ->  qty
+                    "outward"    -> -qty
+                    "adjustment" ->  qty
+                    else         ->  0
+                }
+                val newStock = (cur.stockAvailable + delta).coerceAtLeast(0)
+                if (type == "outward" && cur.stockAvailable < qty) {
+                    throw IllegalStateException("Insufficient stock. Only ${cur.stockAvailable} units available for ${cur.displayName}.")
+                }
+                try {
+                    val successResult = supabase.postgrest.rpc(
+                        "update_product_stock",
+                        buildJsonObject {
+                            put("p_id", productId)
+                            put("p_new_stock", newStock)
+                            put("p_expected_current", cur.stockAvailable)
+                        }
+                    ).decodeAs<Boolean>()
+                    if (successResult) {
+                        success = true
+                    }
+                } catch (e: Exception) {
+                    // Retry
+                }
+            }
+            if (attempts >= 10 && !success) {
+                throw IllegalStateException("Failed to update stock due to concurrent updates. Please try again.")
+            }
+        }
+
+        // 2. Insert stock movement row
         supabase.from("stock_movements").insert(
             buildJsonObject {
                 put("source", source)
@@ -402,28 +404,9 @@ class EmployeeRepository {
                 put("shop_name", shopName)
                 if (productId != null) put("product_id", productId)
                 if (employeeId != null) put("employee_id", employeeId)
+                if (createdAt != null) put("created_at", createdAt)
             }
         )
-
-        // Mirror the running stock count on product_categories so the admin's
-        // Products screen reflects the change in real time.
-        if (productId != null && productId.isNotBlank()) {
-            runCatching {
-                val cur = supabase.from("product_categories")
-                    .select { filter { eq("id", productId) } }
-                    .decodeSingleOrNull<ProductCategory>() ?: return@runCatching
-                val delta = when (type) {
-                    "inward"     ->  qty
-                    "outward"    -> -qty
-                    "adjustment" ->  qty
-                    else         ->  0
-                }
-                val newStock = (cur.stockAvailable + delta).coerceAtLeast(0)
-                supabase.from("product_categories").update(
-                    buildJsonObject { put("stock_available", newStock) },
-                ) { filter { eq("id", productId) } }
-            }
-        }
     }
 
     // ── Record outward sale (one row per product line item) ──────────────────
@@ -447,50 +430,87 @@ class EmployeeRepository {
         val employeeId = currentUserId()
         val effectiveDate = saleDate?.takeIf { it.isNotBlank() } ?: today()
 
+        // 1. Perform atomic stock update for all lines first to ensure atomic check & deduction.
+        var lastError: Exception? = null
         lines.forEach { line ->
-            // 1) Persist the sale entry — drives revenue & profit reports.
-            runCatching {
-                supabase.from("sale_entries").insert(
-                    buildJsonObject {
-                        put("date", effectiveDate)
-                        put("customer_name", customerName)
-                        put("product_id", line.productId)
-                        put("product_name", line.productName)
-                        put("qty", line.qty)
-                        put("purchase_price_per_unit", line.purchasePricePerUnit)
-                        put("selling_price_per_unit", line.sellingPricePerUnit)
-                        put("sales_margin_per_unit", line.sellingPricePerUnit - line.purchasePricePerUnit)
-                        put("total_selling", line.sellingPricePerUnit * line.qty)
-                        put("total_margin", (line.sellingPricePerUnit - line.purchasePricePerUnit) * line.qty)
-                        put("shop_id", shopName.ifBlank { "shop1" })
-                        if (employeeId != null) put("employee_id", employeeId)
+            var success = false
+            var attempts = 0
+            while (!success && attempts < 10) {
+                attempts++
+                val cur = supabase.from("product_categories")
+                    .select { filter { eq("id", line.productId) } }
+                    .decodeSingleOrNull<ProductCategory>() ?: throw IllegalStateException("Product ${line.productName} not found")
+                
+                val newStock = cur.stockAvailable - line.qty
+                if (newStock < 0) {
+                    throw IllegalStateException("Insufficient stock. Only ${cur.stockAvailable} units available for ${cur.displayName}.")
+                }
+                try {
+                    val successResult = supabase.postgrest.rpc(
+                        "update_product_stock",
+                        buildJsonObject {
+                            put("p_id", line.productId)
+                            put("p_new_stock", newStock)
+                            put("p_expected_current", cur.stockAvailable)
+                        }
+                    ).decodeAs<Boolean>()
+                    if (successResult) {
+                        success = true
                     }
-                )
+                } catch (e: Exception) {
+                    lastError = e
+                    println("DEBUG_ERROR: Update stock failed: ${e.message}")
+                    e.printStackTrace()
+                    // Retry
+                }
             }
-
-            // 2) Mirror as an outward stock_movement so the dashboards update.
-            runCatching {
-                addStockMovement(
-                    source    = "Sale · $customerName",
-                    qty       = line.qty,
-                    type      = "outward",
-                    shopName  = shopName,
-                    productId = line.productId,
-                )
+            if (!success) {
+                throw IllegalStateException("Failed to update stock: ${lastError?.message ?: "Unknown database error"}")
             }
         }
 
-        // 3) Empties picked up at delivery time → inward movement.
+        // 2. Persist the sales entries and stock movements
+        lines.forEach { line ->
+            supabase.from("sale_entries").insert(
+                buildJsonObject {
+                    put("date", effectiveDate)
+                    put("customer_name", customerName)
+                    put("product_id", line.productId)
+                    put("product_name", line.productName)
+                    put("qty", line.qty)
+                    put("purchase_price_per_unit", line.purchasePricePerUnit)
+                    put("selling_price_per_unit", line.sellingPricePerUnit)
+                    put("sales_margin_per_unit", line.sellingPricePerUnit - line.purchasePricePerUnit)
+                    put("total_selling", line.sellingPricePerUnit * line.qty)
+                    put("total_margin", (line.sellingPricePerUnit - line.purchasePricePerUnit) * line.qty)
+                    put("shop_id", shopName.ifBlank { "shop1" })
+                    if (employeeId != null) put("employee_id", employeeId)
+                }
+            )
+
+            supabase.from("stock_movements").insert(
+                buildJsonObject {
+                    put("source", "Sale · $customerName")
+                    put("qty", line.qty)
+                    put("type", "outward")
+                    put("shop_name", shopName)
+                    put("product_id", line.productId)
+                    if (employeeId != null) put("employee_id", employeeId)
+                }
+            )
+        }
+
+        // 3. Empties picked up at delivery time → inward movement.
         if (emptyCansCollected > 0) {
-            runCatching {
-                addStockMovement(
-                    source    = "Empty cans · $customerName",
-                    qty       = emptyCansCollected,
-                    type      = "inward",
-                    shopName  = shopName,
-                    productId = null,
-                )
-            }
+            supabase.from("stock_movements").insert(
+                buildJsonObject {
+                    put("source", "Empty cans · $customerName")
+                    put("qty", emptyCansCollected)
+                    put("type", "inward")
+                    put("shop_name", shopName)
+                    if (employeeId != null) put("employee_id", employeeId)
+                }
+            )
         }
     }
 
@@ -502,6 +522,32 @@ class EmployeeRepository {
         val sellingPricePerUnit: Double,
         val purchasePricePerUnit: Double = 0.0,
     )
+
+    suspend fun addProductCategory(cat: ProductCategory): ProductCategory {
+        val uid = currentUserId() ?: ""
+        val tenantAdminId = getAdminIdForUser(uid) ?: uid
+        return supabase.from("product_categories").insert(
+            buildJsonObject {
+                put("name", cat.name.trim())
+                put("display_name", cat.displayName.trim())
+                put("brand_name", cat.brandName.trim())
+                put("purchase_price", cat.purchasePrice)
+                put("default_sell_price", cat.defaultSellPrice)
+                put("stock_available", cat.stockAvailable)
+                put("is_active", cat.isActive)
+                put("admin_id", tenantAdminId)
+            }
+        ) { select() }.decodeSingle()
+    }
+
+    suspend fun updateProductCategory(cat: ProductCategory) {
+        supabase.from("product_categories").update(
+            buildJsonObject {
+                put("purchase_price", cat.purchasePrice)
+                put("default_sell_price", cat.defaultSellPrice)
+            }
+        ) { filter { eq("id", cat.id) } }
+    }
 }
 
 private fun String.isEmptyCansSource(): Boolean =

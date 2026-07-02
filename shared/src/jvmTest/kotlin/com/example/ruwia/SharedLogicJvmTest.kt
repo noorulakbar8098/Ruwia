@@ -1,6 +1,7 @@
 package com.example.ruwia
 
 import com.example.ruwia.domain.getUnitsPerCase
+import com.example.ruwia.presentation.toDashboardMetrics
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.runBlocking
@@ -10,45 +11,46 @@ class SharedLogicJvmTest {
 
     @Test
     fun testGetUnitsPerCase() {
-        // 300ml -> 30
-        assertEquals(30, getUnitsPerCase("300ml"))
-        assertEquals(30, getUnitsPerCase("300ML Water Can"))
+        // All should return 1 as they are considered single items
+        // 300ml -> 1
+        assertEquals(1, getUnitsPerCase("300ml"))
+        assertEquals(1, getUnitsPerCase("300ML Water Can"))
 
-        // 500ml -> 24
-        assertEquals(24, getUnitsPerCase("500ml"))
-        assertEquals(24, getUnitsPerCase("500ML Water Can"))
+        // 500ml -> 1
+        assertEquals(1, getUnitsPerCase("500ml"))
+        assertEquals(1, getUnitsPerCase("500ML Water Can"))
 
-        // 1 Litre / 1L / 1lt -> 12
-        assertEquals(12, getUnitsPerCase("1 Litre"))
-        assertEquals(12, getUnitsPerCase("1 - Litre"))
-        assertEquals(12, getUnitsPerCase("1 Litre Water Can"))
-        assertEquals(12, getUnitsPerCase("1 Litres"))
-        assertEquals(12, getUnitsPerCase("1L"))
-        assertEquals(12, getUnitsPerCase("1 l"))
-        assertEquals(12, getUnitsPerCase("1lt"))
-        assertEquals(12, getUnitsPerCase("1 lt"))
-        assertEquals(12, getUnitsPerCase("Kinley 1 Litre"))
-        assertEquals(12, getUnitsPerCase("Kinley 1L"))
+        // 1 Litre / 1L / 1lt -> 1
+        assertEquals(1, getUnitsPerCase("1 Litre"))
+        assertEquals(1, getUnitsPerCase("1 - Litre"))
+        assertEquals(1, getUnitsPerCase("1 Litre Water Can"))
+        assertEquals(1, getUnitsPerCase("1 Litres"))
+        assertEquals(1, getUnitsPerCase("1L"))
+        assertEquals(1, getUnitsPerCase("1 l"))
+        assertEquals(1, getUnitsPerCase("1lt"))
+        assertEquals(1, getUnitsPerCase("1 lt"))
+        assertEquals(1, getUnitsPerCase("Kinley 1 Litre"))
+        assertEquals(1, getUnitsPerCase("Kinley 1L"))
 
-        // 2 Litre / 2L / 2lt -> 9
-        assertEquals(9, getUnitsPerCase("2 Litre"))
-        assertEquals(9, getUnitsPerCase("2 - Litre"))
-        assertEquals(9, getUnitsPerCase("2 Litre Water Can"))
-        assertEquals(9, getUnitsPerCase("2 Litres"))
-        assertEquals(9, getUnitsPerCase("2L"))
-        assertEquals(9, getUnitsPerCase("2 l"))
-        assertEquals(9, getUnitsPerCase("2lt"))
-        assertEquals(9, getUnitsPerCase("2 lt"))
-        assertEquals(9, getUnitsPerCase("Kinley 2 Litre"))
-        assertEquals(9, getUnitsPerCase("Kinley 2L"))
+        // 2 Litre / 2L / 2lt -> 1
+        assertEquals(1, getUnitsPerCase("2 Litre"))
+        assertEquals(1, getUnitsPerCase("2 - Litre"))
+        assertEquals(1, getUnitsPerCase("2 Litre Water Can"))
+        assertEquals(1, getUnitsPerCase("2 Litres"))
+        assertEquals(1, getUnitsPerCase("2L"))
+        assertEquals(1, getUnitsPerCase("2 l"))
+        assertEquals(1, getUnitsPerCase("2lt"))
+        assertEquals(1, getUnitsPerCase("2 lt"))
+        assertEquals(1, getUnitsPerCase("Kinley 2 Litre"))
+        assertEquals(1, getUnitsPerCase("Kinley 2L"))
 
-        // 5 Litre -> 1 (cans)
+        // 5 Litre -> 1
         assertEquals(1, getUnitsPerCase("5 Litre"))
         assertEquals(1, getUnitsPerCase("5 - litre"))
         assertEquals(1, getUnitsPerCase("5 Litre Water Can"))
         assertEquals(1, getUnitsPerCase("5L"))
 
-        // 20 Litre -> 1 (cans)
+        // 20 Litre -> 1
         assertEquals(1, getUnitsPerCase("20 Litre"))
         assertEquals(1, getUnitsPerCase("20 - litre"))
         assertEquals(1, getUnitsPerCase("20L Water Can"))
@@ -100,7 +102,20 @@ class SharedLogicJvmTest {
         assertEquals(50.0, derived[0].emptyCans)
     }
 
-
+    @Test
+    fun testDashboardMetricsTotalStockCases() {
+        val state = com.example.ruwia.presentation.AdminState(
+            productCategories = listOf(
+                com.example.ruwia.domain.ProductCategory(id = "p1", name = "500ML", displayName = "Neerthuli - 500ML", stockAvailable = 20),
+                com.example.ruwia.domain.ProductCategory(id = "p2", name = "1L", displayName = "Droply - 1L", stockAvailable = 10),
+                com.example.ruwia.domain.ProductCategory(id = "p3", name = "20L", displayName = "Bisleri - 20L", stockAvailable = 20)
+            )
+        )
+        val metrics = state.toDashboardMetrics()
+        // Verify that the total stock is the direct sum of the available stocks (20 + 10 + 20 = 50.0)
+        // and is not divided by any case size logic (which would make it ~37.5 cases in the old code)
+        assertEquals(50.0, metrics.totalStockUnits)
+    }
 }
 
 

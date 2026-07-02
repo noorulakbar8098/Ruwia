@@ -34,7 +34,19 @@ fun App() {
     MaterialTheme {
         var screen by remember { mutableStateOf<Screen>(Screen.Splash) }
         val authVm = koinInject<AuthViewModel>()
+        val adminVm = koinInject<AdminViewModel>()
+        val employeeVm = koinInject<EmployeeViewModel>()
         val authState by authVm.state.collectAsState()
+
+        val lifecycleState by rememberLifecycleObserver()
+
+        LaunchedEffect(lifecycleState) {
+            if (lifecycleState == LifecycleState.ON_RESUME) {
+                authVm.checkSession()
+                adminVm.loadData()
+                employeeVm.startPeriodicRefresh()
+            }
+        }
 
         val connectivityObserver = remember { getConnectivityObserver() }
         val isConnected by connectivityObserver.isConnected.collectAsState()
@@ -114,12 +126,16 @@ fun App() {
                 }
 
                 Screen.UserHome -> {
-                    val vm = koinInject<EmployeeViewModel>()
                     NTTheme {
                         RuwiaTheme {
                             EmployeeDashboardScreen(
-                                vm           = vm,
-                                onLogout     = { authVm.logout(); screen = Screen.Login },
+                                vm           = employeeVm,
+                                onLogout     = {
+                                    adminVm.clearState()
+                                    employeeVm.clearState()
+                                    authVm.logout()
+                                    screen = Screen.Login
+                                },
                                 employeeName = authState.displayName.ifEmpty { "User" },
                                 userEmail    = authState.email,
                             )
@@ -128,11 +144,15 @@ fun App() {
                 }
 
                 Screen.AdminHome -> {
-                    val vm = koinInject<AdminViewModel>()
                     NTTheme {
                         AdminDashboardScreen(
-                            vm           = vm,
-                            onLogout     = { authVm.logout(); screen = Screen.Login },
+                            vm           = adminVm,
+                            onLogout     = {
+                                adminVm.clearState()
+                                employeeVm.clearState()
+                                authVm.logout()
+                                screen = Screen.Login
+                            },
                             adminName    = authState.displayName.ifEmpty { "Admin" },
                             adminEmail   = authState.email,
                         )
@@ -140,12 +160,16 @@ fun App() {
                 }
 
                 Screen.EmployeeHome -> {
-                    val vm = koinInject<EmployeeViewModel>()
                     NTTheme {
                         RuwiaTheme {
                             EmployeeDashboardScreen(
-                                vm           = vm,
-                                onLogout     = { authVm.logout(); screen = Screen.Login },
+                                vm           = employeeVm,
+                                onLogout     = {
+                                    adminVm.clearState()
+                                    employeeVm.clearState()
+                                    authVm.logout()
+                                    screen = Screen.Login
+                                },
                                 employeeName = authState.displayName.ifEmpty { "Employee" },
                                 userEmail    = authState.email,
                             )
