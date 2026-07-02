@@ -1,8 +1,7 @@
 package com.example.ruwia.ui.admin
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -138,12 +137,13 @@ fun SupplierManagementScreen(
             AlertDialog(
                 onDismissRequest = { deletingSupplier = null },
                 icon  = { Icon(Icons.Rounded.Delete, null, tint = NTColors.Error) },
-                title = { Text("Remove ${sup.name}?", fontWeight = FontWeight.Bold) },
+                title = { Text("Remove ${sup.name}?", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
                 text  = {
                     Text(
                         "This supplier will no longer appear in pickers. Existing stock movements " +
                         "that reference them keep working.",
                         fontSize = 13.sp,
+                        color = NTColors.TextSecondary
                     )
                 },
                 confirmButton = {
@@ -152,11 +152,15 @@ fun SupplierManagementScreen(
                             sup.id?.let(onDeleteSupplier)
                             deletingSupplier = null
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error),
+                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error, contentColor = Color.White),
                     ) { Text("Remove", fontWeight = FontWeight.Bold) }
                 },
                 dismissButton = {
-                    OutlinedButton(onClick = { deletingSupplier = null }) { Text("Cancel") }
+                    OutlinedButton(
+                        onClick = { deletingSupplier = null },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                        border = BorderStroke(1.dp, NTColors.Border)
+                    ) { Text("Cancel") }
                 },
                 containerColor = NTColors.Surface,
             )

@@ -158,8 +158,8 @@ fun EmployeeDashboardScreen(
     if (showLogoutDialog) {
         AlertDialog(
             onDismissRequest = { showLogoutDialog = false },
-            title   = { Text("Logout?") },
-            text    = { Text("Are you sure you want to log out of your account?") },
+            title   = { Text("Logout?", fontWeight = FontWeight.Bold, color = Color.White) },
+            text    = { Text("Are you sure you want to log out of your account?", color = Color.White.copy(alpha = 0.7f)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -170,8 +170,12 @@ fun EmployeeDashboardScreen(
                 ) { Text("Logout", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel") }
+                TextButton(
+                    onClick = { showLogoutDialog = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color.White.copy(alpha = 0.6f))
+                ) { Text("Cancel") }
             },
+            containerColor = Color(0xFF111C1F), // Match Employee App background
             shape = RoundedCornerShape(20.dp),
         )
     }

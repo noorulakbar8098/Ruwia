@@ -107,12 +107,13 @@ fun AddSaleScreen(
         AlertDialog(
             onDismissRequest = { errorDialogText = null; onClearError() },
             title = { Text("Database Error", fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary) },
-            text = { Text(errorDialogText ?: "") },
+            text = { Text(errorDialogText ?: "", color = RuwiaColor.TextSecondary) },
             confirmButton = {
                 TextButton(onClick = { errorDialogText = null; onClearError() }) {
-                    Text("OK", fontWeight = FontWeight.Bold, color = RuwiaColor.TealDark)
+                    Text("OK", fontWeight = FontWeight.Bold, color = RuwiaColor.TealPrimary)
                 }
             },
+            containerColor = RuwiaColor.Surface,
             shape = RoundedCornerShape(20.dp),
         )
     }

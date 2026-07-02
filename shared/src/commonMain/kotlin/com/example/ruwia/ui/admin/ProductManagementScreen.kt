@@ -670,7 +670,7 @@ fun ProductManagementScreen(
                         Text("Close", color = NTColors.TextSecondary)
                     }
                 },
-                containerColor = Color.White
+                containerColor = NTColors.Surface
             )
         }
 
@@ -690,7 +690,7 @@ fun ProductManagementScreen(
                             Spacer(Modifier.height(6.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth().height(40.dp)
-                                    .background(Color(0xFFF1F5F9), RoundedCornerShape(8.dp))
+                                    .background(NTColors.Background, RoundedCornerShape(8.dp))
                                     .padding(2.dp)
                             ) {
                                 listOf("All", "Active", "Inactive", "Out of Stock").forEach { status ->
@@ -783,7 +783,7 @@ fun ProductManagementScreen(
                         Text("Clear All", color = NTColors.Error)
                     }
                 },
-                containerColor = Color.White
+                containerColor = NTColors.Surface
             )
         }
 
@@ -833,12 +833,14 @@ fun ProductManagementScreen(
                 dismissButton = {
                     OutlinedButton(
                         onClick = { updatingPriceProduct = null },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                        border = BorderStroke(1.dp, NTColors.Border)
                     ) {
                         Text("Cancel")
                     }
                 },
-                containerColor = Color.White
+                containerColor = NTColors.Surface
             )
         }
 
@@ -884,12 +886,14 @@ fun ProductManagementScreen(
                 dismissButton = {
                     OutlinedButton(
                         onClick = { adjustingInventoryProduct = null },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                        border = BorderStroke(1.dp, NTColors.Border)
                     ) {
                         Text("Cancel")
                     }
                 },
-                containerColor = Color.White
+                containerColor = NTColors.Surface
             )
         }
 
@@ -914,7 +918,7 @@ fun ProductManagementScreen(
                         Text("Okay", fontWeight = FontWeight.Bold)
                     }
                 },
-                containerColor = Color.White
+                containerColor = NTColors.Surface
             )
         }
 
@@ -923,23 +927,28 @@ fun ProductManagementScreen(
             AlertDialog(
                 onDismissRequest = { deletingProduct = null },
                 icon = { Icon(Icons.Rounded.Delete, null, tint = NTColors.Error) },
-                title = { Text(stringResource(Res.string.delete_product_confirm, p.displayName), fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(Res.string.delete_product_confirm, p.displayName), fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
                 text = {
                     Text(
                         stringResource(Res.string.delete_product_warning),
                         fontSize = 13.sp,
+                        color = NTColors.TextSecondary
                     )
                 },
                 confirmButton = {
                     Button(
                         onClick = { onDeleteProduct(p.id); deletingProduct = null },
-                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error),
+                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error, contentColor = Color.White),
                     ) { Text(stringResource(Res.string.action_delete), fontWeight = FontWeight.Bold) }
                 },
                 dismissButton = {
-                    OutlinedButton(onClick = { deletingProduct = null }) { Text(stringResource(Res.string.action_cancel)) }
+                    OutlinedButton(
+                        onClick = { deletingProduct = null },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                        border = BorderStroke(1.dp, NTColors.Border)
+                    ) { Text(stringResource(Res.string.action_cancel)) }
                 },
-                containerColor = Color.White,
+                containerColor = NTColors.Surface,
             )
         }
 

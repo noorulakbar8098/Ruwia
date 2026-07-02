@@ -59,13 +59,6 @@ fun EmployeeStockScreen(
             filtered.filter { shopMatchKey(it.name) == key }.ifEmpty { filtered }
         }
     }
-    val visibleMovements = remember(movements, shopName) {
-        if (shopName.isBlank()) movements
-        else {
-            val key = shopMatchKey(shopName)
-            movements.filter { shopMatchKey(it.shopName) == key }
-        }
-    }
 
     val stockItems = remember(products) {
         products.map { com.example.ruwia.domain.StockItem(it.id, it.name, it.stockAvailable, 0) }
@@ -74,47 +67,38 @@ fun EmployeeStockScreen(
         deriveShopStockTotals(shopStocks, movements, stockItems)
     }
 
-    val availableUnitsMap = remember(products, movements, shopName) {
+    val availableUnitsMap = remember(products, movements) {
         products.associate { p ->
-            val sKey = if (shopName.isBlank()) null else shopMatchKey(shopName)
-            if (sKey == null) {
-                val allShops = movements.map { it.shopName }.distinct()
-                val totalAcrossShops = allShops.sumOf { sName ->
-                    val shKey = shopMatchKey(sName)
-                    val rows = movements.filter { it.productId == p.id && shopMatchKey(it.shopName) == shKey }
-                    val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
-                    val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-                    (inward - outward).coerceAtLeast(0)
-                }
-                p.id to totalAcrossShops
-            } else {
-                val rows = movements.filter {
-                    val mKey = shopMatchKey(it.shopName)
-                    it.productId == p.id && mKey == sKey
-                }
+            // In the Stock screen, employees must see GLOBAL inventory across all shops.
+            // We ignore the individual shopName filter here to provide full visibility.
+            val allShops = movements.map { it.shopName }.distinct()
+            val totalAcrossShops = allShops.sumOf { sName ->
+                val shKey = shopMatchKey(sName)
+                val rows = movements.filter { it.productId == p.id && shopMatchKey(it.shopName) == shKey }
                 val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
                 val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-                p.id to (inward - outward).coerceAtLeast(0)
+                (inward - outward).coerceAtLeast(0)
             }
+            p.id to totalAcrossShops
         }
     }
 
     val totalFull = remember(availableUnitsMap) {
         availableUnitsMap.values.sumOf { it.toDouble() }
     }
-    val totalEmpty = remember(visibleMovements) {
-        visibleMovements
+    val totalEmpty = remember(movements) {
+        movements
             .filter { it.source.trim().startsWith("Empty cans", ignoreCase = true) }
             .sumOf { m ->
                 if (m.type == "inward") m.qty.toDouble() else -m.qty.toDouble()
             }
             .coerceAtLeast(0.0)
     }
-    val totalCust = remember(visibleMovements) {
-        val sales = visibleMovements
+    val totalCust = remember(movements) {
+        val sales = movements
             .filter { it.type == "outward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
             .sumOf { it.qty.toDouble() }
-        val returns = visibleMovements
+        val returns = movements
             .filter { it.type == "inward" && it.source.trim().startsWith("Empty cans", ignoreCase = true) }
             .sumOf { it.qty.toDouble() }
         (sales - returns).coerceAtLeast(0.0)

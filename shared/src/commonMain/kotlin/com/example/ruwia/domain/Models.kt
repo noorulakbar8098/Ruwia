@@ -156,6 +156,7 @@ data class ProductCategory(
     @SerialName("default_sell_price") val defaultSellPrice: Double = 0.0,
     @SerialName("stock_available") val stockAvailable: Int = 0,
     @SerialName("is_active") val isActive: Boolean = true,
+    @SerialName("is_deleted") val isDeleted: Boolean = false,
 )
 
 

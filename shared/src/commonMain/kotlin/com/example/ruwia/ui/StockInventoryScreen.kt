@@ -21,11 +21,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
@@ -332,18 +330,7 @@ fun StockInventoryScreen(
                 items(filteredSortedProducts, key = { it.id }) { product ->
                     val units = effectiveStockMap[product.id] ?: 0
                     val assignedShop = remember(product, movements) {
-                        val group = product.supplierGroup.trim()
-                        if (group.isNotBlank() && group != "GC" && group != "MB") {
-                            group
-                        } else {
-                            val firstMov = movements.firstOrNull { it.productId == product.id }
-                            if (firstMov != null) {
-                                val sName = firstMov.shopName.split("·", limit = 2).firstOrNull()?.trim() ?: "Shop 1"
-                                if (sName.contains("2", ignoreCase = true)) "Shop 2" else "Shop 1"
-                            } else {
-                                "Shop 1"
-                            }
-                        }
+                        getAssignedShop(product, movements)
                     }
                     ProductBreakdownCard(
                         product = product,
@@ -398,7 +385,7 @@ fun StockInventoryScreen(
 
         activeAdjustProduct?.let { product ->
             val targetShopName = if (selectedShopName == "All Shops") {
-                product.supplierGroup.trim().ifBlank { "Shop 1" }
+                getAssignedShop(product, movements)
             } else {
                 selectedShopName
             }
@@ -432,21 +419,26 @@ fun StockInventoryScreen(
             AlertDialog(
                 onDismissRequest = { deletingProduct = null },
                 icon = { Icon(Icons.Rounded.Delete, null, tint = SaaSColors.Critical) },
-                title = { Text(stringResource(Res.string.delete_product_confirm, p.displayName), fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(Res.string.delete_product_confirm, p.displayName), fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary) },
                 text = {
                     Text(
                         stringResource(Res.string.delete_product_warning),
                         fontSize = 13.sp,
+                        color = SaaSColors.TextSecondary
                     )
                 },
                 confirmButton = {
                     Button(
                         onClick = { onDeleteProduct(p.id); deletingProduct = null },
-                        colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Critical),
-                    ) { Text(stringResource(Res.string.action_delete), fontWeight = FontWeight.Bold, color = Color.White) }
+                        colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Critical, contentColor = Color.White),
+                    ) { Text(stringResource(Res.string.action_delete), fontWeight = FontWeight.Bold) }
                 },
                 dismissButton = {
-                    OutlinedButton(onClick = { deletingProduct = null }) { Text(stringResource(Res.string.action_cancel)) }
+                    OutlinedButton(
+                        onClick = { deletingProduct = null },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SaaSColors.TextSecondary),
+                        border = BorderStroke(1.dp, SaaSColors.Border)
+                    ) { Text(stringResource(Res.string.action_cancel)) }
                 },
                 containerColor = SaaSColors.Surface,
             )
@@ -819,41 +811,21 @@ private fun ShopSummaryCard(
 
             Spacer(Modifier.height(16.dp))
 
-            // Canvas Mini Sparkline Graph
-            Canvas(
+            // Premium Animated Water Bottle Inventory Visualization
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(36.dp)
+                    .height(110.dp),
+                contentAlignment = Alignment.Center
             ) {
-                val width = size.width
-                val height = size.height
-                val points = listOf(0.2f, 0.4f, 0.35f, 0.6f, 0.55f, 0.8f, 0.95f) // visual upward trend
-                val path = Path()
-                
-                points.forEachIndexed { idx, value ->
-                    val x = idx * (width / (points.size - 1))
-                    val y = height - (value * height * 0.8f) - (height * 0.1f)
-                    if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                // We use a dynamic scale: if stock is very low, max is small.
+                // This ensures "2 Units" still looks meaningful in the bottle.
+                val maxCapacity = remember(totalInventory) { 
+                    max(10.0, totalInventory * 1.2).coerceAtMost(100.0) 
                 }
-
-                drawPath(
-                    path = path,
-                    color = SaaSColors.Primary,
-                    style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-                )
-
-                // Draw filled gradient underneath
-                val fillPath = Path().apply {
-                    addPath(path)
-                    lineTo(width, height)
-                    lineTo(0f, height)
-                    close()
-                }
-                drawPath(
-                    path = fillPath,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(SaaSColors.Primary.copy(alpha = 0.15f), Color.Transparent)
-                    )
+                PremiumWaterBottle(
+                    level = (totalInventory / maxCapacity).coerceIn(0.0, 1.0).toFloat(),
+                    modifier = Modifier.fillMaxWidth().height(90.dp)
                 )
             }
 
@@ -1047,6 +1019,7 @@ private fun AnalyticTile(
     Box(
         modifier = Modifier
             .width(140.dp)
+            .height(115.dp) // Fixed height for uniformity in horizontal scroll
             .clip(RoundedCornerShape(16.dp))
             .background(SaaSColors.Surface)
             .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
@@ -2085,5 +2058,219 @@ private fun formatCases(value: Double): String {
         } else {
             rounded.toString()
         }
+    }
+}
+
+private fun getAssignedShop(product: ProductCategory, movements: List<StockMovement>): String {
+    val group = product.supplierGroup.trim()
+    return if (group.isNotBlank() && group != "GC" && group != "MB") {
+        group
+    } else {
+        val firstMov = movements.firstOrNull { it.productId == product.id }
+        if (firstMov != null) {
+            val sName = firstMov.shopName.split("·", limit = 2).firstOrNull()?.trim() ?: "Shop 1"
+            if (sName.contains("2", ignoreCase = true)) "Shop 2" else "Shop 1"
+        } else {
+            "Shop 1"
+        }
+    }
+}
+
+@Composable
+private fun PremiumWaterBottle(
+    level: Float, // 0.0 to 1.0
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition()
+    
+    val waveOffset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 2 * PI.toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(2500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        )
+    )
+
+    val animatedLevel by animateFloatAsState(
+        targetValue = level.coerceIn(0f, 1f),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow)
+    )
+
+    Canvas(modifier = modifier) {
+        val width = size.width
+        val height = size.height
+        
+        // Horizontal Bottle Dimensions
+        val bottleWidth = width * 0.75f
+        val bottleHeight = height * 0.7f
+        val left = (width - bottleWidth - 40.dp.toPx()) / 2
+        val top = (height - bottleHeight) / 2
+        
+        val neckWidth = 20.dp.toPx()
+        val neckHeight = bottleHeight * 0.45f
+        val capWidth = 10.dp.toPx()
+        val capHeight = neckHeight * 1.1f
+        
+        // Single organic bottle path
+        val bottlePath = Path().apply {
+            val corner = 14.dp.toPx()
+            // Body
+            moveTo(left + corner, top)
+            lineTo(left + bottleWidth - corner * 2, top)
+            // Taper to neck
+            quadraticTo(
+                left + bottleWidth - corner, top,
+                left + bottleWidth, top + (bottleHeight - neckHeight) / 2
+            )
+            // Neck
+            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight - neckHeight) / 2)
+            // Cap
+            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight - capHeight) / 2)
+            lineTo(left + bottleWidth + neckWidth + capWidth, top + (bottleHeight - capHeight) / 2)
+            lineTo(left + bottleWidth + neckWidth + capWidth, top + (bottleHeight + capHeight) / 2)
+            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight + capHeight) / 2)
+            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight + neckHeight) / 2)
+            // Back to body
+            lineTo(left + bottleWidth, top + (bottleHeight + neckHeight) / 2)
+            quadraticTo(
+                left + bottleWidth - corner, top + bottleHeight,
+                left + bottleWidth - corner * 2, top + bottleHeight
+            )
+            lineTo(left + corner, top + bottleHeight)
+            // Left rounded end
+            quadraticTo(left, top + bottleHeight, left, top + bottleHeight - corner)
+            lineTo(left, top + corner)
+            quadraticTo(left, top, left + corner, top)
+            close()
+        }
+
+        // 1. Outer Bloom/Glow (#3EF7F5)
+        drawPath(
+            path = bottlePath,
+            color = Color(0xFF3EF7F5).copy(alpha = 0.15f),
+            style = Stroke(width = 12.dp.toPx())
+        )
+
+        // 2. Glass Base Tint
+        drawPath(
+            path = bottlePath,
+            color = Color(0xFFFFFFFF).copy(alpha = 0.05f)
+        )
+
+        // 3. Water Rendering
+        clipPath(bottlePath) {
+            val effectiveLevel = animatedLevel.coerceIn(0.01f, 0.99f)
+            val baseWaterY = top + bottleHeight - (bottleHeight * effectiveLevel)
+            
+            // Background Wave (slightly different phase and darker)
+            val backWavePath = Path()
+            backWavePath.moveTo(left - 50f, top + bottleHeight + 50f)
+            backWavePath.lineTo(left + bottleWidth + 100f, top + bottleHeight + 50f)
+            for (i in 0..100) {
+                val x = left + bottleWidth + 100f - (i.toFloat() / 100) * (bottleWidth + 150f)
+                val relX = i.toFloat() / 100
+                val y = baseWaterY + 3.dp.toPx() * sin(relX * 2 * PI.toFloat() + waveOffset * 0.8f + 0.5f)
+                backWavePath.lineTo(x, y.toFloat())
+            }
+            backWavePath.close()
+            drawPath(backWavePath, Color(0xFF16A5B2).copy(alpha = 0.4f))
+
+            // Middle Wave (Highlight streak)
+            val midWavePath = Path()
+            midWavePath.moveTo(left - 50f, top + bottleHeight + 50f)
+            midWavePath.lineTo(left + bottleWidth + 100f, top + bottleHeight + 50f)
+            for (i in 0..100) {
+                val x = left + bottleWidth + 100f - (i.toFloat() / 100) * (bottleWidth + 150f)
+                val relX = i.toFloat() / 100
+                val y = baseWaterY + 2.dp.toPx() * sin(relX * 2.5 * PI.toFloat() + waveOffset * 1.2f)
+                midWavePath.lineTo(x, y.toFloat())
+            }
+            midWavePath.close()
+            drawPath(midWavePath, Color(0xFF59F3F0).copy(alpha = 0.2f))
+
+            // Main Liquid Gradient
+            val waterPath = Path()
+            waterPath.moveTo(left - 50f, top + bottleHeight + 50f)
+            waterPath.lineTo(left + bottleWidth + 100f, top + bottleHeight + 50f)
+            for (i in 0..100) {
+                val x = left + bottleWidth + 100f - (i.toFloat() / 100) * (bottleWidth + 150f)
+                val relX = i.toFloat() / 100
+                val amplitude = 5.dp.toPx() * (1f - abs(effectiveLevel - 0.5f))
+                val y = baseWaterY + amplitude * sin(relX * 1.8 * PI.toFloat() + waveOffset)
+                waterPath.lineTo(x, y.toFloat())
+            }
+            waterPath.close()
+
+            drawPath(
+                path = waterPath,
+                brush = Brush.verticalGradient(
+                    0.0f to Color(0xFF59F3F0).copy(alpha = 0.9f),
+                    0.4f to Color(0xFF2ED8D3).copy(alpha = 0.95f),
+                    1.0f to Color(0xFF0E7F94),
+                    startY = baseWaterY - 10.dp.toPx(),
+                    endY = top + bottleHeight
+                )
+            )
+
+            // Surface Reflection Line
+            drawPath(
+                path = waterPath,
+                color = Color(0xFFBFFFFF).copy(alpha = 0.5f),
+                style = Stroke(width = 1.5.dp.toPx())
+            )
+
+            // Bubbles (Submerged and Surface)
+            val bubbleRandom = kotlin.random.Random(42)
+            repeat(15) { i ->
+                val bRelX = bubbleRandom.nextFloat()
+                val bX = left + bottleWidth * bRelX
+                val bY = top + bottleHeight - (bottleHeight * effectiveLevel * bubbleRandom.nextFloat())
+                
+                // Only draw if submerged enough
+                if (bY > baseWaterY - 5.dp.toPx()) {
+                    val size = (1f + bubbleRandom.nextFloat() * 2f).dp.toPx()
+                    val alpha = 0.2f + 0.3f * sin(waveOffset + i).coerceAtLeast(0f)
+                    drawCircle(
+                        color = Color(0xFFBFFFFF).copy(alpha = alpha),
+                        radius = size,
+                        center = Offset(bX, bY)
+                    )
+                    // Tiny glow for bubbles
+                    drawCircle(
+                        color = Color(0xFF59F3F0).copy(alpha = alpha * 0.5f),
+                        radius = size * 2,
+                        center = Offset(bX, bY)
+                    )
+                }
+            }
+        }
+
+        // 4. Glass Detail
+        // Thick edges
+        drawPath(
+            path = bottlePath,
+            color = Color(0xFF6EEEF4).copy(alpha = 0.25f),
+            style = Stroke(width = 2.5.dp.toPx())
+        )
+        // Internal highlight
+        drawPath(
+            path = bottlePath,
+            color = Color(0xFFC8FFFF).copy(alpha = 0.1f),
+            style = Stroke(width = 0.8.dp.toPx())
+        )
+
+        // Top Glossy Reflection
+        val glossPath = Path().apply {
+            moveTo(left + 20.dp.toPx(), top + 4.dp.toPx())
+            lineTo(left + bottleWidth - 40.dp.toPx(), top + 4.dp.toPx())
+        }
+        drawPath(
+            path = glossPath,
+            brush = Brush.horizontalGradient(
+                listOf(Color.Transparent, Color(0xFFC8FFFF).copy(alpha = 0.3f), Color.Transparent)
+            ),
+            style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+        )
     }
 }

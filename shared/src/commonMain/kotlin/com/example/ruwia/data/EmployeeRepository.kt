@@ -262,6 +262,7 @@ class EmployeeRepository {
                 .select { 
                     filter { 
                         eq("is_active", true)
+                        eq("is_deleted", false)
                         if (adminId != null) eq("admin_id", adminId)
                     } 
                 }
@@ -302,11 +303,10 @@ class EmployeeRepository {
             supabase.from("stock_movements")
                 .select {
                     filter { 
-                        eq("employee_id", employeeId) 
                         if (adminId != null) eq("admin_id", adminId)
                     }
                     order("created_at", SortOrder.DESCENDING)
-                    limit(20)
+                    limit(100)
                 }
                 .decodeList()
         } catch (e: Exception) { emptyList() }

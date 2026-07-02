@@ -369,7 +369,20 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun EmployeeState.deriveStockFromMovements(): EmployeeState {
-        return this
+        if (shopMovements.isEmpty()) return this
+        
+        // Group movements by product ID to calculate total global stock
+        val productNetStock = shopMovements.groupBy { it.productId }.mapValues { (_, movements) ->
+            val inward = movements.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
+            val outward = movements.filter { it.type == "outward" }.sumOf { it.qty }
+            (inward - outward).coerceAtLeast(0)
+        }
+
+        val updatedProducts = productCategories.map { p ->
+            p.copy(stockAvailable = productNetStock[p.id] ?: 0)
+        }
+        
+        return this.copy(productCategories = updatedProducts)
     }
 
     private fun formattedToday(): String {

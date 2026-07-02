@@ -184,7 +184,10 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     fun addProductCategory(cat: ProductCategory, openingStock: Int = 0, shopName: String = "Shop 1") = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching { 
-            val savedId = repo.addProductCategory(cat) 
+            // We store the assigned shop in supplierGroup so All Shops view can correctly 
+            // identify which shop this product belongs to for stock adjustments.
+            val productWithShop = cat.copy(supplierGroup = shopName)
+            val savedId = repo.addProductCategory(productWithShop)
             if (openingStock > 0 && savedId.isNotBlank()) {
                 repo.addRawStockMovement(
                     source = "Opening Stock",
@@ -624,7 +627,16 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun AdminState.deriveStockFromMovements(): AdminState {
-        return this
+        if (recentMovements.isEmpty()) return this
+        
+        val updatedProducts = productCategories.map { p ->
+            val rows = recentMovements.filter { it.productId == p.id }
+            val inward = rows.filter { it.type == "inward" }.sumOf { it.qty }
+            val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+            p.copy(stockAvailable = (inward - outward).coerceAtLeast(0))
+        }
+        
+        return this.copy(productCategories = updatedProducts)
     }
 
     private fun currentYearMonth(): String {

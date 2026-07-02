@@ -1,8 +1,6 @@
 package com.example.ruwia.ui.admin
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -232,12 +230,17 @@ fun CustomerManagementScreen(
                             c.id?.let(onDeleteCustomer)
                             deletingCustomer = null
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error),
+                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error, contentColor = Color.White),
                     ) { Text("Delete", fontWeight = FontWeight.Bold) }
                 },
                 dismissButton = {
-                    OutlinedButton(onClick = { deletingCustomer = null }) { Text("Cancel") }
+                    OutlinedButton(
+                        onClick = { deletingCustomer = null },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                        border = BorderStroke(1.dp, NTColors.Border)
+                    ) { Text("Cancel") }
                 },
+                containerColor = NTColors.Surface,
                 shape = RoundedCornerShape(20.dp),
             )
         }
@@ -451,7 +454,8 @@ private fun CustomerFormFieldLabel(text: String) {
     Text(
         text,
         fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-        color = NTColors.TextTertiary, letterSpacing = 0.4.sp,
+        color = Color(0xFF4A5568), // Dark Gray for white bg fields
+        letterSpacing = 0.4.sp,
     )
     Spacer(Modifier.height(6.dp))
 }
@@ -467,17 +471,17 @@ private fun CustomerFormInput(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White, RoundedCornerShape(10.dp))
-            .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(10.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         if (value.isEmpty()) {
-            Text(placeholder, fontSize = 14.sp, color = NTColors.TextDisabled)
+            Text(placeholder, fontSize = 14.sp, color = Color.Gray)
         }
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
-            cursorBrush = SolidColor(NTColors.Primary),
+            textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.Black),
+            cursorBrush = SolidColor(Color.Black),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             modifier = Modifier.fillMaxWidth(),

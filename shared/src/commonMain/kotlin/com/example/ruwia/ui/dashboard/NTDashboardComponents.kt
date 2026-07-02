@@ -565,10 +565,19 @@ fun NTKpiGrid(items: List<NTKpiItem>, modifier: Modifier = Modifier) {
         Spacer(modifier = Modifier.height(NTDp.md))
         items.chunked(2).forEach { row ->
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Max),
                 horizontalArrangement = Arrangement.spacedBy(NTDp.md),
             ) {
-                row.forEach { item -> NTKpiCard(item = item, modifier = Modifier.weight(1f)) }
+                row.forEach { item ->
+                    NTKpiCard(
+                        item = item,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                    )
+                }
                 if (row.size == 1) Spacer(modifier = Modifier.weight(1f))
             }
             Spacer(modifier = Modifier.height(NTDp.md))
@@ -823,14 +832,18 @@ fun NTQuickActionsRow(
         Spacer(modifier = Modifier.height(NTDp.md))
         actions.chunked(3).forEach { row ->
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Max),
                 horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
             ) {
                 row.forEach { action ->
                     NTActionTile(
                         action  = action,
                         onClick = { onActionClick(action) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
                     )
                 }
                 repeat(3 - row.size) { Spacer(modifier = Modifier.weight(1f)) }

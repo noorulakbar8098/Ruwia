@@ -556,13 +556,18 @@ fun AddStockPurchaseScreen(
         if (showErrorAlert != null) {
             AlertDialog(
                 onDismissRequest = { showErrorAlert = null },
-                title = { Text("Validation Error", fontWeight = FontWeight.Bold) },
-                text = { Text(showErrorAlert ?: "An unknown error occurred.") },
+                title = { Text("Validation Error", fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary) },
+                text = { Text(showErrorAlert ?: "An unknown error occurred.", color = RuwiaColor.TextSecondary) },
                 confirmButton = {
-                    Button(onClick = { showErrorAlert = null }) {
-                        Text("OK")
+                    Button(
+                        onClick = { showErrorAlert = null },
+                        colors = ButtonDefaults.buttonColors(containerColor = RuwiaColor.TealPrimary)
+                    ) {
+                        Text("OK", color = Color.White)
                     }
-                }
+                },
+                containerColor = RuwiaColor.Surface,
+                shape = RoundedCornerShape(20.dp)
             )
         }
     }

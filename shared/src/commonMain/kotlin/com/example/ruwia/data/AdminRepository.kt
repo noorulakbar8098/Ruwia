@@ -75,6 +75,7 @@ class AdminRepository {
                 .select { 
                     filter { 
                         eq("admin_id", adminId)
+                        eq("is_deleted", false)
                     } 
                 }
                 .decodeList<ProductCategory>()
@@ -125,6 +126,7 @@ class AdminRepository {
                         ilike("name", cat.name.trim()) 
                         ilike("brand_name", cat.brandName.trim())
                         eq("admin_id", tenantAdminId)
+                        eq("is_deleted", false)
                     } 
                 }
                 .decodeList<ProductCategory>()
@@ -146,6 +148,7 @@ class AdminRepository {
                     put("name", cat.name.trim())
                     put("display_name", cat.displayName.trim())
                     put("brand_name", cat.brandName.trim())
+                    put("supplier_group", cat.supplierGroup.trim())
                     put("purchase_price", cat.purchasePrice)
                     put("default_sell_price", cat.defaultSellPrice)
                     put("stock_available", cat.stockAvailable)
@@ -172,6 +175,7 @@ class AdminRepository {
                 put("name", cat.name)
                 put("display_name", cat.displayName)
                 put("brand_name", cat.brandName)
+                put("supplier_group", cat.supplierGroup)
                 put("purchase_price", cat.purchasePrice)
                 put("default_sell_price", cat.defaultSellPrice)
                 put("stock_available", cat.stockAvailable)
@@ -183,39 +187,24 @@ class AdminRepository {
     suspend fun deleteProductCategory(id: String) {
         if (id.isBlank()) return
         
-        // 1. Delete associated stock movements
-        runCatching {
-            supabase.from("stock_movements").delete {
-                filter { eq("product_id", id) }
-            }
-        }
-        
-        // 2. Delete associated sale entries
-        runCatching {
-            supabase.from("sale_entries").delete {
-                filter { eq("product_id", id) }
-            }
-        }
-        
-        // 3. Delete from product_categories
+        // SOFT DELETE: We no longer delete associated records or the product itself.
+        // Instead, we mark the product as deleted so historical data is preserved.
         try {
-            supabase.from("product_categories").delete {
+            supabase.from("product_categories").update(
+                buildJsonObject {
+                    put("is_deleted", true)
+                }
+            ) {
                 filter { eq("id", id) }
             }
         } catch (e: Exception) {
-            // Bypass RLS using admin client if standard delete fails
+            // Bypass RLS using admin client if standard update fails
             initAdminSession()
-            runCatching {
-                supabaseAdmin.from("stock_movements").delete {
-                    filter { eq("product_id", id) }
+            supabaseAdmin.from("product_categories").update(
+                buildJsonObject {
+                    put("is_deleted", true)
                 }
-            }
-            runCatching {
-                supabaseAdmin.from("sale_entries").delete {
-                    filter { eq("product_id", id) }
-                }
-            }
-            supabaseAdmin.from("product_categories").delete {
+            ) {
                 filter { eq("id", id) }
             }
         }
@@ -577,6 +566,7 @@ class AdminRepository {
                 .select { 
                     filter { eq("admin_id", adminId) }
                     order("created_at", SortOrder.DESCENDING)
+                    limit(5000)
                 }
                 .decodeList()
         } catch (e: Exception) { emptyList() }
