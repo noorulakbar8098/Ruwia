@@ -11,7 +11,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-
+        // Koin is started in RuwiaApp.onCreate() — no need to call initKoin() here
         setContent {
             App()
         }
