@@ -589,6 +589,7 @@ fun NTKpiGrid(items: List<NTKpiItem>, modifier: Modifier = Modifier) {
 fun NTKpiCard(item: NTKpiItem, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
+
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
             .clip(RoundedCornerShape(NTDp.radLg)),

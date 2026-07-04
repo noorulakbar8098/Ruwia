@@ -27,6 +27,29 @@ android {
     namespace = "com.example.ruwia"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
+    val localProperties = Properties().apply {
+        val file = rootProject.file("local.properties")
+        if (file.exists()) {
+            FileInputStream(file).use { load(it) }
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            val storeFileVal = localProperties.getProperty("signing.storeFile")
+            val storePasswordVal = localProperties.getProperty("signing.storePassword")
+            val keyAliasVal = localProperties.getProperty("signing.keyAlias")
+            val keyPasswordVal = localProperties.getProperty("signing.keyPassword")
+
+            if (storeFileVal != null && storePasswordVal != null && keyAliasVal != null && keyPasswordVal != null) {
+                storeFile = file(storeFileVal)
+                storePassword = storePasswordVal
+                keyAlias = keyAliasVal
+                keyPassword = keyPasswordVal
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.example.ruwia"
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -43,6 +66,7 @@ android {
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
@@ -52,13 +76,6 @@ android {
 
     buildFeatures {
         buildConfig = true
-    }
-
-    val localProperties = Properties().apply {
-        val file = rootProject.file("local.properties")
-        if (file.exists()) {
-            FileInputStream(file).use { load(it) }
-        }
     }
 
     val devUrl = localProperties.getProperty("supabase.url.dev") ?: "https://srvertclbjcvlfdectsl.supabase.co"
