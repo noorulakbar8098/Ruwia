@@ -136,12 +136,7 @@ private fun ProductDetailTopBar(productName: String, onBack: () -> Unit) {
                 Text(productName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
                 val now = remember { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()) }
                 val monthLabel = remember(now) {
-                    val m = when (now.monthNumber) {
-                        1 -> "Jan"; 2 -> "Feb"; 3 -> "Mar"; 4 -> "Apr"
-                        5 -> "May"; 6 -> "Jun"; 7 -> "Jul"; 8 -> "Aug"
-                        9 -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; else -> "Dec"
-                    }
-                    "$m ${now.year}"
+                    "${com.example.ruwia.util.monthName(now.monthNumber).take(3)} ${now.year}"
                 }
                 Text(monthLabel, fontSize = 11.sp, color = NTColors.TextTertiary)
             }
@@ -286,13 +281,5 @@ private fun TransactionTotalRow(
     }
 }
 
-private fun formatDateString(dateStr: String): String {
-    val parts = dateStr.split("-")
-    if (parts.size == 3) {
-        val y = parts[0].takeLast(2)
-        val m = parts[1]
-        val d = parts[2]
-        return "$d/$m/$y"
-    }
-    return dateStr
-}
+private fun formatDateString(dateStr: String): String =
+    com.example.ruwia.util.dbToDisplayDate(dateStr)

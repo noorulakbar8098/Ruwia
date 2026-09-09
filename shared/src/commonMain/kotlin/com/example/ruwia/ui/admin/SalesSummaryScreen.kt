@@ -31,6 +31,7 @@ import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import kotlin.time.Clock
@@ -118,15 +119,18 @@ fun SalesSummaryScreen(
     // ── Stock movement aggregate (inward + outward) for the selected month ───
     // The admin sees movements logged by every employee — RLS already exposes
     // the cross-employee view, we just bucket by month here.
+    // Empty-can/case movements (customer returns, direct entries) are NOT stock
+    // in/out — they are tracked by the separate "Empty Cases" figure — so they
+    // are excluded to keep the case-wise counts accurate.
     val monthMovements = stockMovements.filter { it.createdAt?.startsWith(selectedMonthKey) == true }
-    val totalInwardCases = monthMovements.filter { it.type == "inward" }.sumOf { mvt ->
+    val totalInwardCases = monthMovements.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { mvt ->
         mvt.qty.toDouble()
     }
-    val totalOutwardCases = monthMovements.filter { it.type == "outward" }.sumOf { mvt ->
+    val totalOutwardCases = monthMovements.filter { it.type == "outward" && !it.source.isEmptyCansSource() }.sumOf { mvt ->
         mvt.qty.toDouble()
     }
-    val inwardEntries    = monthMovements.count { it.type == "inward" }
-    val outwardEntries   = monthMovements.count { it.type == "outward" }
+    val inwardEntries    = monthMovements.count { it.type == "inward" && !it.source.isEmptyCansSource() }
+    val outwardEntries   = monthMovements.count { it.type == "outward" && !it.source.isEmptyCansSource() }
     val netStockChangeCases = totalInwardCases - totalOutwardCases
 
     Scaffold(

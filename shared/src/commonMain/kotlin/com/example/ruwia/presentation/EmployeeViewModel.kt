@@ -10,7 +10,7 @@ import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
-import com.example.ruwia.domain.isEmptyCansSource
+import com.example.ruwia.domain.netStockPerProduct
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,9 +42,13 @@ data class EmployeeState(
     /** Shop-level can balances mirrored from shop_stocks. */
     val shopStocks: List<ShopStockInfo> = emptyList(),
     val currentDate: String = "",
-    /** "Shop 1" / "Shop 2" — extracted from the auth-layer shopInfo so we can
-     *  filter shop-scoped data in repo calls. */
+    /** Running total of empty cans this employee has collected (all-time). */
+    val emptyCansTotal: Int = 0,
+    /** Custom shop name from AdminSettings, used as fallback when employee's
+     *  database shop name is blank. */
     val assignedShop: String = "",
+    /** Global baseline subtracted from the live "Empty Cases" figure. */
+    val emptyCansBaseline: Int = 0,
 )
 
 class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
@@ -88,6 +92,8 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                     var todayOutward = _state.value.todayOutward
                     var todayEmptyCans = _state.value.todayEmptyCans
                     var dailyEarnings = _state.value.dailyEarnings
+                    var emptyCansTotal = _state.value.emptyCansTotal
+                    val emptyCansBaseline = repo.getEmptyCansBaseline()
                     
                     if (currentEmployeeId.isNotBlank()) {
                         recentEntries = repo.getRecentEntries(currentEmployeeId)
@@ -96,6 +102,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                         todayOutward = cans.outward
                         todayEmptyCans = cans.emptyReturned
                         dailyEarnings = repo.getDailyEarningsSummary(currentEmployeeId)
+                        emptyCansTotal = repo.getEmployeeEmptyCansTotal(currentEmployeeId)
                     }
                     
                     // Prevent replacing valid cached data with empty lists if RLS returned empty lists due to a race
@@ -110,6 +117,8 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                             todayOutward      = todayOutward,
                             todayEmptyCans    = todayEmptyCans,
                             dailyEarnings     = dailyEarnings,
+                            emptyCansTotal    = emptyCansTotal,
+                            emptyCansBaseline = if (emptyCansBaseline >= 0) emptyCansBaseline else _state.value.emptyCansBaseline,
                         ).deriveStockFromMovements()
                     }
                 }
@@ -165,16 +174,28 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         }
         runCatching {
             val dbShop = repo.getEmployeeShopName(empId)
-            val assignedShopName = if (dbShop.isNotBlank()) dbShop else currentShopName.ifBlank { "Shop 1" }
+            val shopStocks = repo.getShopStocks()
+            // Prefer the saved shop assignment on the employee record; fall back
+            // to the auth-layer shop info, then to the first configured shop so
+            // an unassigned employee lands on a real shop instead of a made-up
+            // label.
+            val assignedShopName = if (dbShop.isNotBlank()) {
+                dbShop
+            } else {
+                currentShopName
+                    .ifBlank { shopStocks.firstOrNull()?.name.orEmpty() }
+                    .ifBlank { "" }
+            }
             currentShopName = assignedShopName
 
             val tasks            = if (empId.isNotBlank()) repo.getTodayRouteTasks(empId) else emptyList()
             val earnings         = if (empId.isNotBlank()) repo.getDailyEarningsSummary(empId) else 0.0
             val cans             = if (empId.isNotBlank()) repo.getDailyCansSummary(empId) else com.example.ruwia.data.DailyCansSummary(0, 0, 0)
             val recentEntries    = if (empId.isNotBlank()) repo.getRecentEntries(empId) else emptyList()
+            val emptyCansTotal   = if (empId.isNotBlank()) repo.getEmployeeEmptyCansTotal(empId) else 0
+            val emptyCansBaseline = repo.getEmptyCansBaseline()
             val productCategories = repo.getProductCategories()
             val customers        = repo.getCustomers()
-            val shopStocks       = repo.getShopStocks()
             val shopMovements    = repo.getShopMovements("All Shops")
             val currentDate      = formattedToday()
             EmployeeState(
@@ -185,12 +206,14 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                 todayOutward      = cans.outward,
                 todayEmptyCans    = cans.emptyReturned,
                 recentEntries     = recentEntries,
+                emptyCansTotal    = emptyCansTotal,
                 shopMovements     = shopMovements,
                 productCategories = productCategories,
                 customers         = customers,
                 shopStocks        = shopStocks,
                 currentDate       = currentDate,
                 assignedShop      = assignedShopName,
+                emptyCansBaseline = if (emptyCansBaseline >= 0) emptyCansBaseline else 0,
             )
         }.onSuccess { newState ->
             _state.value = newState.deriveStockFromMovements()
@@ -315,10 +338,13 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
             )
 
             if (emptyCans > 0) {
+                // Returned empties come INTO the shop, so this is an inward
+                // movement — recording it as outward would subtract from the
+                // live Empty Cases figure whenever an inward purchase happened.
                 repo.addStockMovement(
                     source = "Empty cans · Inward Purchase",
                     qty = emptyCans,
-                    type = "outward",
+                    type = "inward",
                     shopName = shopName,
                     productId = null,
                     createdAt = createdAt
@@ -329,6 +355,22 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         }.onFailure {
             _state.value = _state.value.copy(error = it.message ?: "Failed to save stock purchase", loading = false)
         }
+    }
+
+    // ── Empty-cases direct entry ──────────────────────────────────────────────
+
+    /** Records a manual inward "Empty cans" movement so the live Empty Cases
+     *  figure can be bumped straight from the home screen. */
+    fun addEmptyCases(qty: Int) = viewModelScope.launch {
+        if (qty <= 0) return@launch
+        _state.value = _state.value.copy(loading = false, error = null)
+        val shop = currentShopName.takeIf { it.isNotBlank() } ?: _state.value.assignedShop
+        runCatching { repo.addEmptyCases(qty, shop.ifBlank { "Shop 1" }) }
+            .onSuccess { loadDashboard(currentEmployeeId) }
+            .onFailure {
+                it.printStackTrace()
+                _state.value = _state.value.copy(error = it.message ?: "Failed to add empty cases", loading = false)
+            }
     }
 
     /**
@@ -370,32 +412,18 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
 
     private fun EmployeeState.deriveStockFromMovements(): EmployeeState {
         if (shopMovements.isEmpty()) return this
-        
-        // Group movements by product ID to calculate total global stock
-        val productNetStock = shopMovements.groupBy { it.productId }.mapValues { (_, movements) ->
-            val inward = movements.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
-            val outward = movements.filter { it.type == "outward" }.sumOf { it.qty }
-            (inward - outward).coerceAtLeast(0)
+
+        val net = netStockPerProduct(shopMovements)
+        val updatedProducts = productCategories.map { p ->
+            p.copy(stockAvailable = net[p.id] ?: 0)
         }
 
-        val updatedProducts = productCategories.map { p ->
-            p.copy(stockAvailable = productNetStock[p.id] ?: 0)
-        }
-        
         return this.copy(productCategories = updatedProducts)
     }
 
     private fun formattedToday(): String {
         return try {
-            val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-            val day = now.dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
-            val m   = now.monthNumber
-            val monthName = when (m) {
-                1  -> "Jan"; 2  -> "Feb"; 3  -> "Mar"; 4  -> "Apr"
-                5  -> "May"; 6  -> "Jun"; 7  -> "Jul"; 8  -> "Aug"
-                9  -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; else -> "Dec"
-            }
-            "$day, ${now.dayOfMonth} $monthName ${now.year}"
+            com.example.ruwia.util.toDisplayDate(Clock.System.now())
         } catch (_: Exception) { "" }
     }
 }

@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -25,14 +26,11 @@ import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
-import com.example.ruwia.domain.isEmptyCansSource
+import com.example.ruwia.domain.netStockPerProductInShop
+import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.data.getCurrentDateTimeIso
 import com.example.ruwia.theme.RuwiaColor
-
-private val fallbackShops = listOf(
-    "Shop 1" to "SAIBABA",
-    "Shop 2" to "RS PURAM",
-)
+import com.example.ruwia.util.capitalizeWords
 
 private val skuSuggestions = listOf("20L", "2L", "1L", "500ml", "250ml")
 
@@ -45,7 +43,7 @@ fun AddStockPurchaseScreen(
     currentStock: Int = 0,
     movements: List<StockMovement> = emptyList(),
     suppliers: List<String> = emptyList(),
-    shops: List<Pair<String, String>> = fallbackShops,
+    shops: List<Pair<String, String>> = emptyList(),
     onBack: () -> Unit,
     onClose: () -> Unit,
     isEmployee: Boolean = false,
@@ -62,9 +60,9 @@ fun AddStockPurchaseScreen(
     ) -> Unit,
 ) {
     val isEditMode = productToRestock != null
-    val effectiveShops = shops.ifEmpty { fallbackShops }
-
-    var selectedShop by remember { mutableStateOf(effectiveShops.firstOrNull()?.first ?: "Shop 1") }
+    val effectiveShops = shops
+    val shopNameFromState = effectiveShops.firstOrNull()?.first ?: ""
+    var selectedShop by remember { mutableStateOf(shopNameFromState) }
     var brandName by remember { mutableStateOf("") }
     var sku by remember { mutableStateOf("") }
     var purchasePriceStr by remember { mutableStateOf("") }
@@ -97,14 +95,7 @@ fun AddStockPurchaseScreen(
             sellingPriceStr = productToRestock.defaultSellPrice.toString()
             
             // Dynamically calculate stock for the selected shop
-            val shopKeyVal = selectedShop.split("·", limit = 2).firstOrNull()?.trim()?.lowercase() ?: selectedShop.trim().lowercase()
-            val rows = movements.filter {
-                val itemShopKey = it.shopName.split("·", limit = 2).firstOrNull()?.trim()?.lowercase() ?: it.shopName.trim().lowercase()
-                it.productId == productToRestock.id && itemShopKey == shopKeyVal
-            }
-            val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
-            val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-            qty = (inward - outward).coerceAtLeast(0)
+            qty = netStockPerProductInShop(movements, shopMatchKey(selectedShop))[productToRestock.id] ?: 0
         }
     }
 
@@ -272,9 +263,10 @@ fun AddStockPurchaseScreen(
                     Spacer(Modifier.height(6.dp))
                     OutlinedTextField(
                         value = brandName,
-                        onValueChange = { brandName = it },
+                        onValueChange = { brandName = capitalizeWords(it) },
                         placeholder = { Text("e.g. Kinley, Aquafina", color = RuwiaColor.TextMuted) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = RuwiaColor.TealPrimary,
                             unfocusedBorderColor = RuwiaColor.Divider,
@@ -462,7 +454,7 @@ fun AddStockPurchaseScreen(
                     ) {
                         Column {
                             Text(
-                                text = "Empty Cans Returned",
+                                text = "Empty Cases Returned",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = RuwiaColor.TextPrimary

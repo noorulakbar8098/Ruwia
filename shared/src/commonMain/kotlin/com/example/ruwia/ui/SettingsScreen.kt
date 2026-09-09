@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -19,6 +21,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,6 +33,7 @@ import ruwia.shared.generated.resources.Res
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import com.example.ruwia.ui.dashboard.*
+import com.example.ruwia.util.capitalizeWords
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -45,6 +50,8 @@ fun SettingsScreen(
     onNavigateToCustomers: () -> Unit = {},
     onLogout: () -> Unit,
     onDeleteAllData: () -> Unit,
+    onResetEmptyCases: () -> Unit = {},
+    onShopNameChange: (Int, String) -> Unit = { _, _ -> },
     contentPadding: PaddingValues = PaddingValues()
 ) {
     // Toggle states
@@ -53,8 +60,13 @@ fun SettingsScreen(
     var autoBackup   by remember { mutableStateOf(true) }
     var darkMode     by remember { mutableStateOf(NTColors.isDarkMode) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showResetDialog  by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
-    var isLoggingOut by remember { mutableStateOf(false) }
+    var isLoggingOut   by remember { mutableStateOf(false) }
+    var shopOneName    by remember { mutableStateOf(state.shopNames.getOrNull(0).orEmpty()) }
+    var shopTwoName    by remember { mutableStateOf(state.shopNames.getOrNull(1).orEmpty()) }
+    var editingShopIndex by remember { mutableStateOf<Int?>(null) }
+    var editingShopName  by remember { mutableStateOf("") }
 
     if (isLoggingOut) {
         SaaSLoadingOverlay(message = "Signing Out")
@@ -65,7 +77,7 @@ fun SettingsScreen(
     }
 
     val shopCount  = state.shopStocks.size.coerceAtLeast(2)
-    val staffCount = state.employees.size
+    val staffCount = state.employees.count { it.status != "inactive" }
     val custCount  = state.customers.size
 
     if (showDeleteDialog) {
@@ -86,6 +98,31 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel", color = NTColors.TextSecondary)
+                }
+            },
+            containerColor = NTColors.Surface
+        )
+    }
+
+    if (showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            title = { Text("Reset Empty Cases?", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+            text = { Text("This sets the live Empty Cases figure to 0 business-wide, shown on the Stock tab and dashboards. Movement history is preserved. This cannot be undone.", color = NTColors.TextSecondary) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetDialog = false
+                        onResetEmptyCases()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = NTColors.Error)
+                ) {
+                    Text("Reset Empty Cases", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDialog = false }) {
                     Text("Cancel", color = NTColors.TextSecondary)
                 }
             },
@@ -115,6 +152,24 @@ fun SettingsScreen(
                 }
             },
             containerColor = NTColors.Surface
+        )
+    }
+
+    editingShopIndex?.let { index ->
+        val editingTitle = (if (index == 0) shopOneName else shopTwoName).ifBlank { "Shop" }
+        ShopNameDialog(
+            title = "Rename $editingTitle",
+            value = editingShopName,
+            onValueChange = { editingShopName = it },
+            onDismiss = { editingShopIndex = null },
+            onConfirm = {
+                val clean = editingShopName.trim()
+                if (clean.isNotBlank()) {
+                    if (index == 0) shopOneName = clean else shopTwoName = clean
+                    onShopNameChange(index, clean)
+                }
+                editingShopIndex = null
+            }
         )
     }
 
@@ -293,6 +348,15 @@ fun SettingsScreen(
                             subtitle = "$custCount registered distribution clients",
                             onClick = onNavigateToCustomers
                         )
+                        SettingsDivider()
+                        SettingsNavItem(
+                            icon = Icons.Rounded.Undo,
+                            iconBg = NTColors.ErrorLight,
+                            iconFg = NTColors.Error,
+                            title = "Reset Empty Cases",
+                            subtitle = "Zero out the live Empty Cases figure business-wide",
+                            onClick = { showResetDialog = true }
+                        )
                     }
                 }
 
@@ -319,6 +383,32 @@ fun SettingsScreen(
                             onToggle = { 
                                 darkMode = it
                                 NTColors.isDarkMode = it
+                            }
+                        )
+                        SettingsDivider()
+                        SettingsShopNameItem(
+                            icon = Icons.Rounded.Edit,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextPrimary,
+                            title = "Rename Shop",
+                            subtitle = "Current: ${shopOneName.ifBlank { "Not set" }}",
+                            value = shopOneName,
+                            onClick = {
+                                editingShopIndex = 0
+                                editingShopName = shopOneName
+                            }
+                        )
+                        SettingsDivider()
+                        SettingsShopNameItem(
+                            icon = Icons.Rounded.Edit,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextPrimary,
+                            title = "Rename Shop",
+                            subtitle = "Current: ${shopTwoName.ifBlank { "Not set" }}",
+                            value = shopTwoName,
+                            onClick = {
+                                editingShopIndex = 1
+                                editingShopName = shopTwoName
                             }
                         )
                     }
@@ -529,4 +619,104 @@ private fun SettingsToggleItem(
             )
         )
     }
+}
+
+@Composable
+private fun SettingsShopNameItem(
+    icon: ImageVector,
+    iconBg: Color,
+    iconFg: Color,
+    title: String,
+    subtitle: String,
+    value: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(iconBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = iconFg, modifier = Modifier.size(18.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = NTColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            if (subtitle.isNotEmpty()) {
+                Text(
+                    subtitle,
+                    color = NTColors.TextTertiary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Icon(
+            imageVector = Icons.Rounded.ChevronRight,
+            contentDescription = null,
+            tint = NTColors.TextTertiary,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+@Composable
+private fun ShopNameDialog(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+        text = {
+            Column {
+                Text(
+                    "Set the display name for this shop. It will update on the inventory and employee screens.",
+                    color = NTColors.TextSecondary,
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(14.dp))
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { onValueChange(capitalizeWords(it)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Shop name", color = NTColors.TextTertiary, fontSize = 12.sp) },
+                    placeholder = { Text("e.g. Main Outlet", color = NTColors.TextTertiary) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = ImeAction.Done,
+                        capitalization = KeyboardCapitalization.Words,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { onConfirm() })
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(contentColor = NTColors.Primary)
+            ) {
+                Text("Save", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = NTColors.TextSecondary)
+            }
+        },
+        containerColor = NTColors.Surface
+    )
 }

@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS monthly_expenses (id UUID DEFAULT uuid_generate_v4() 
 CREATE TABLE IF NOT EXISTS outward (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, order_id UUID, customer_id UUID, qty_delivered INT, qty_empty_returned INT, rate DECIMAL, employee_id UUID, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS payments (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, customer_id UUID, amount DECIMAL, mode TEXT, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS route_tasks (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, customer_name TEXT, phone TEXT, address TEXT, can_qty INT, eta_text TEXT, status TEXT, employee_id UUID, order_id UUID, scheduled_date DATE, created_at TIMESTAMPTZ);
+CREATE TABLE IF NOT EXISTS app_settings (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, settings_key TEXT NOT NULL, settings_value TEXT, updated_at TIMESTAMPTZ);
 
 -- Migrate all tables
 SELECT migrate_to_tenant_table('product_categories');
@@ -176,6 +177,7 @@ SELECT migrate_to_tenant_table('monthly_expenses');
 SELECT migrate_to_tenant_table('outward');
 SELECT migrate_to_tenant_table('payments');
 SELECT migrate_to_tenant_table('route_tasks');
+SELECT migrate_to_tenant_table('app_settings');
 
 -- Special case: Profiles RLS
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;

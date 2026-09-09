@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -27,6 +28,8 @@ import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
+import com.example.ruwia.util.capitalizeWords
+import com.example.ruwia.util.isTextField
 
 /**
  * Admin-side customer directory. Lists every customer in the system and lets
@@ -39,12 +42,14 @@ fun CustomerManagementScreen(
     customers: List<Customer>,
     errorMessage: String? = null,
     onAddCustomer: (Customer) -> Unit,
+    onUpdateCustomer: (Customer) -> Unit = {},
     onDeleteCustomer: (String) -> Unit = {},
     onClearError: () -> Unit = {},
     onBack: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     var showAddSheet by remember { mutableStateOf(false) }
+    var editingCustomer by remember { mutableStateOf<Customer?>(null) }
     var deletingCustomer by remember { mutableStateOf<Customer?>(null) }
     var search by remember { mutableStateOf("") }
 
@@ -173,7 +178,11 @@ fun CustomerManagementScreen(
                             }
                         }
                         items(filtered, key = { it.id ?: it.name.hashCode().toString() }) { c ->
-                            CustomerRow(c, onDelete = { deletingCustomer = c })
+                            CustomerRow(
+                                customer = c,
+                                onEdit   = { editingCustomer = c },
+                                onDelete = { deletingCustomer = c },
+                            )
                         }
                         item {
                             Spacer(Modifier.height(contentPadding.calculateBottomPadding() + 80.dp))
@@ -209,6 +218,25 @@ fun CustomerManagementScreen(
                         )
                     )
                     showAddSheet = false
+                },
+            )
+        }
+
+        editingCustomer?.let { c ->
+            CustomerFormDialog(
+                title   = "Edit customer",
+                initial = c,
+                onDismiss = { editingCustomer = null },
+                onSave    = { name, phone, address, other ->
+                    onUpdateCustomer(
+                        c.copy(
+                            name         = name,
+                            phone        = phone,
+                            address      = address,
+                            otherDetails = other,
+                        )
+                    )
+                    editingCustomer = null
                 },
             )
         }
@@ -289,7 +317,7 @@ private fun CustomerTopBar(onBack: () -> Unit, count: Int) {
 }
 
 @Composable
-private fun CustomerRow(customer: Customer, onDelete: () -> Unit) {
+private fun CustomerRow(customer: Customer, onEdit: () -> Unit, onDelete: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -350,6 +378,17 @@ private fun CustomerRow(customer: Customer, onDelete: () -> Unit) {
             modifier = Modifier
                 .size(34.dp)
                 .clip(RoundedCornerShape(8.dp))
+                .background(NTColors.SurfaceVar)
+                .clickable(onClick = onEdit),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Rounded.Edit, "Edit", tint = NTColors.TextSecondary, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(8.dp))
                 .background(NTColors.ErrorLight)
                 .clickable(onClick = onDelete),
             contentAlignment = Alignment.Center,
@@ -363,11 +402,13 @@ private fun CustomerRow(customer: Customer, onDelete: () -> Unit) {
 private fun CustomerFormDialog(
     onDismiss: () -> Unit,
     onSave: (name: String, phone: String?, address: String?, other: String?) -> Unit,
+    title: String = "Add customer",
+    initial: Customer? = null,
 ) {
-    var name    by remember { mutableStateOf("") }
-    var phone   by remember { mutableStateOf("") }
-    var address by remember { mutableStateOf("") }
-    var other   by remember { mutableStateOf("") }
+    var name    by remember { mutableStateOf(initial?.name ?: "") }
+    var phone   by remember { mutableStateOf(initial?.phone ?: "") }
+    var address by remember { mutableStateOf(initial?.address ?: "") }
+    var other   by remember { mutableStateOf(initial?.otherDetails ?: "") }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -377,7 +418,7 @@ private fun CustomerFormDialog(
                 .padding(24.dp),
         ) {
             Text(
-                "Add customer",
+                title,
                 fontSize = 17.sp, fontWeight = FontWeight.Bold,
                 color = NTColors.TextPrimary,
             )
@@ -454,7 +495,7 @@ private fun CustomerFormFieldLabel(text: String) {
     Text(
         text,
         fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-        color = Color(0xFF4A5568), // Dark Gray for white bg fields
+        color = NTColors.TextSecondary,
         letterSpacing = 0.4.sp,
     )
     Spacer(Modifier.height(6.dp))
@@ -470,20 +511,23 @@ private fun CustomerFormInput(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(10.dp))
-            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(10.dp))
+            .background(NTColors.Surface, RoundedCornerShape(10.dp))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         if (value.isEmpty()) {
-            Text(placeholder, fontSize = 14.sp, color = Color.Gray)
+            Text(placeholder, fontSize = 14.sp, color = NTColors.TextTertiary)
         }
         BasicTextField(
             value = value,
-            onValueChange = onValueChange,
-            textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.Black),
-            cursorBrush = SolidColor(Color.Black),
+            onValueChange = if (keyboardType.isTextField()) { { v -> onValueChange(capitalizeWords(v)) } } else onValueChange,
+            textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
+            cursorBrush = SolidColor(NTColors.Primary),
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = keyboardType,
+                capitalization = if (keyboardType.isTextField()) KeyboardCapitalization.Words else KeyboardCapitalization.None,
+            ),
             modifier = Modifier.fillMaxWidth(),
         )
     }

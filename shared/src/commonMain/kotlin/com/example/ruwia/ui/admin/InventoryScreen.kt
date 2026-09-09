@@ -23,6 +23,7 @@ fun InventoryScreen(
     onAddMovement: (source: String, qty: Int, type: String, shopName: String, productId: String?) -> Unit,
     onAddStockPurchase: (product: ProductCategory?, currentStock: Int) -> Unit,
     onToggleProductStatus: (ProductCategory) -> Unit = {},
+    onOpenStockHistory: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     Box(modifier = Modifier.fillMaxSize().background(InvColors.Background)) {
@@ -34,6 +35,7 @@ fun InventoryScreen(
             onAddProduct = onAddProductRequest,
             onDeleteProduct = onDeleteProduct,
             onToggleProductStatus = onToggleProductStatus,
+            onOpenStockHistory = onOpenStockHistory,
             contentPadding = contentPadding
         )
     }

@@ -166,12 +166,16 @@ fun ProfitDashboardScreen(
         if (totalRevenue > 0) 100.0 else 0.0
     }
 
-    // Stock Activity (Case-Wise)
+    // Stock Activity (Case-Wise).
+    // Empty-can/case movements (customer returns, "Empty cases · Direct Entry",
+    // plant exchanges) are NOT stock coming in or going out — they are tracked
+    // separately by the "Empty Cases" figure — so they are excluded here to
+    // keep the case-wise inward/outward counts accurate.
     val monthMvts = state.recentMovements.filter { it.createdAt?.startsWith(selectedMonthKey) == true }
-    val inward    = monthMvts.filter { it.type == "inward" }.sumOf { mvt ->
+    val inward    = monthMvts.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { mvt ->
         mvt.qty.toDouble()
     }
-    val outward   = monthMvts.filter { it.type == "outward" }.sumOf { mvt ->
+    val outward   = monthMvts.filter { it.type == "outward" && !it.source.isEmptyCansSource() }.sumOf { mvt ->
         mvt.qty.toDouble()
     }
 
@@ -362,6 +366,26 @@ fun ProfitDashboardScreen(
                             "bike"          -> selectedExpense.bikeExpense.toInt().toString()
                             else -> ""
                         }
+                    },
+                    onDeleteField = { field ->
+                        val updated = when (field) {
+                            "shopRent"      -> selectedExpense.copy(shopRent = 0.0)
+                            "adminSalary"   -> selectedExpense.copy(adminSalary = 0.0)
+                            "deliveryStaff" -> selectedExpense.copy(deliveryStaff = 0.0)
+                            "misc"          -> selectedExpense.copy(miscellaneous = 0.0)
+                            "bike"          -> selectedExpense.copy(bikeExpense = 0.0)
+                            else -> {
+                                val idx = field.substringAfter("custom_").toIntOrNull()
+                                val list = selectedExpense.customExpensesList.toMutableList()
+                                if (idx != null && idx in list.indices) {
+                                    list.removeAt(idx)
+                                    selectedExpense.copy(customExpenses = jsonEncode(list))
+                                } else {
+                                    selectedExpense
+                                }
+                            }
+                        }
+                        if (updated != selectedExpense) onExpenseSave(updated)
                     }
                 )
                 Spacer(Modifier.height(24.dp))
@@ -371,6 +395,7 @@ fun ProfitDashboardScreen(
             item {
                 ReportSummarySection(
                     sales = monthSales,
+                    employees = state.employees,
                     viewMode = reportViewMode,
                     onViewModeChange = { reportViewMode = it },
                     sortOrder = transactionSortOrder,
@@ -1300,7 +1325,11 @@ private fun LowStockAlertSection(items: List<StockItem>) {
 }
 
 @Composable
-private fun ExpenseAnalyticsSection(expense: MonthlyExpense, onCategoryTap: (String) -> Unit) {
+private fun ExpenseAnalyticsSection(
+    expense: MonthlyExpense,
+    onCategoryTap: (String) -> Unit,
+    onDeleteField: (String) -> Unit
+) {
     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
         Text("Expense Analytics", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
         Spacer(Modifier.height(16.dp))
@@ -1331,14 +1360,14 @@ private fun ExpenseAnalyticsSection(expense: MonthlyExpense, onCategoryTap: (Str
                 
                 Spacer(Modifier.height(20.dp))
                 
-                ExpenseCategoryRow("Shop Rent",      expense.shopRent,      Color(0xFF6366F1), onClick = { onCategoryTap("shopRent") })
-                ExpenseCategoryRow("Admin Salary",   expense.adminSalary,   Color(0xFF8B5CF6), onClick = { onCategoryTap("adminSalary") })
-                ExpenseCategoryRow("Delivery Staff", expense.deliveryStaff, SaaSColors.Primary, onClick = { onCategoryTap("deliveryStaff") })
-                ExpenseCategoryRow("Bike Expense",   expense.bikeExpense,   Color(0xFFF59E0B), onClick = { onCategoryTap("bike") })
-                ExpenseCategoryRow("Miscellaneous",  expense.miscellaneous, Color(0xFF94A3B8), onClick = { onCategoryTap("misc") })
+                ExpenseCategoryRow("Shop Rent",      expense.shopRent,      Color(0xFF6366F1), onClick = { onCategoryTap("shopRent") },       onDelete = { onDeleteField("shopRent") })
+                ExpenseCategoryRow("Admin Salary",   expense.adminSalary,   Color(0xFF8B5CF6), onClick = { onCategoryTap("adminSalary") },   onDelete = { onDeleteField("adminSalary") })
+                ExpenseCategoryRow("Delivery Staff", expense.deliveryStaff, SaaSColors.Primary, onClick = { onCategoryTap("deliveryStaff") }, onDelete = { onDeleteField("deliveryStaff") })
+                ExpenseCategoryRow("Bike Expense",   expense.bikeExpense,   Color(0xFFF59E0B), onClick = { onCategoryTap("bike") },       onDelete = { onDeleteField("bike") })
+                ExpenseCategoryRow("Miscellaneous",  expense.miscellaneous, Color(0xFF94A3B8), onClick = { onCategoryTap("misc") },       onDelete = { onDeleteField("misc") })
 
                 expense.customExpensesList.forEachIndexed { index, custom ->
-                    ExpenseCategoryRow(custom.name, custom.amount, Color(0xFF475569), onClick = { onCategoryTap("custom_$index") })
+                    ExpenseCategoryRow(custom.name, custom.amount, Color(0xFF475569), onClick = { onCategoryTap("custom_$index") }, onDelete = { onDeleteField("custom_$index") })
                 }
             }
         }
@@ -1346,7 +1375,13 @@ private fun ExpenseAnalyticsSection(expense: MonthlyExpense, onCategoryTap: (Str
 }
 
 @Composable
-private fun ExpenseCategoryRow(label: String, amount: Double, color: Color, onClick: () -> Unit) {
+private fun ExpenseCategoryRow(
+    label: String,
+    amount: Double,
+    color: Color,
+    onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1360,12 +1395,30 @@ private fun ExpenseCategoryRow(label: String, amount: Double, color: Color, onCl
         Text("₹${amount.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
         Spacer(Modifier.width(4.dp))
         Icon(Icons.Rounded.Edit, null, tint = SaaSColors.TextMuted, modifier = Modifier.size(12.dp))
+        if (onDelete != null) {
+            Spacer(Modifier.width(10.dp))
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onDelete),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Rounded.Delete,
+                    null,
+                    tint = SaaSColors.Error,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun ReportSummarySection(
     sales: List<SaleEntry>,
+    employees: List<EmployeeInfo>,
     viewMode: String,
     onViewModeChange: (String) -> Unit,
     sortOrder: String,
@@ -1450,9 +1503,16 @@ private fun ReportSummarySection(
                         border = BorderStroke(1.dp, SaaSColors.Border)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
+                            val productMargin = if (p.sell > 0) (p.profit / p.sell) * 100.0 else 0.0
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(p.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-                                Text("${p.qty} sold", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Primary)
+                                Text(p.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary,
+                                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Spacer(Modifier.width(8.dp))
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("${p.qty} sold", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Primary)
+                                    Text(if (productMargin > 0) "${formatMarginPct(productMargin)} margin" else "—",
+                                        fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.Success)
+                                }
                             }
                             Spacer(Modifier.height(12.dp))
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1529,60 +1589,81 @@ private fun ReportSummarySection(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
                 )
             } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(SaaSColors.SurfaceVar, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .weight(1.0f)
-                            .clickable {
-                                val nextOrder = if (sortOrder == "newest") "oldest" else "newest"
-                                onSortOrderChange(nextOrder)
-                            },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Date", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextMuted)
-                        Spacer(Modifier.width(2.dp))
-                        Icon(
-                            imageVector = if (sortOrder == "newest") Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward,
-                            contentDescription = null,
-                            tint = SaaSColors.TextMuted,
-                            modifier = Modifier.size(10.dp)
-                        )
-                    }
-                    Text("Customer", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextMuted, modifier = Modifier.weight(1.5f))
-                    Text("Product", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextMuted, modifier = Modifier.weight(1.5f))
-                    Text("Qty", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextMuted, textAlign = TextAlign.End, modifier = Modifier.weight(0.6f))
-                    Text("Margin", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextMuted, textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
-                }
-                
+                val employeeById = remember(employees) { employees.associateBy { it.id } }
                 sortedSales.forEach { tx ->
-                    val marginColor = when {
+                    val emp = employeeById[tx.employeeId]
+                    val shop = when {
+                        tx.shopId.isNotBlank() && !tx.shopId.equals("shop1", ignoreCase = true) -> tx.shopId
+                        emp?.shopName?.isNotBlank() == true -> emp.shopName
+                        else -> tx.shopId.ifBlank { "—" }
+                    }
+val marginColor = when {
                         tx.totalMargin > 100 -> SaaSColors.Success
                         tx.totalMargin > 0   -> SaaSColors.Primary
                         else                 -> SaaSColors.Error
                     }
-                    Row(
+                    val marginPct = if (tx.totalSelling > 0) (tx.totalMargin / tx.totalSelling) * 100.0 else 0.0
+                    val cost = tx.purchasePricePerUnit * tx.qty
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(SaaSColors.Surface)
-                            .border(BorderStroke(0.5.dp, SaaSColors.Border.copy(alpha = 0.5f)))
-                            .padding(horizontal = 12.dp, vertical = 11.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .padding(bottom = 10.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = SaaSColors.Surface,
+                        border = BorderStroke(1.dp, SaaSColors.Border)
                     ) {
-                        Text(formatDateString(tx.date), fontSize = 11.sp, color = SaaSColors.TextMuted, modifier = Modifier.weight(1.0f))
-                        Text(tx.customerName, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = SaaSColors.TextPrimary,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.5f))
-                        Text(tx.productName, fontSize = 11.sp, color = SaaSColors.TextSecondary,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.5f))
-                        Text("${tx.qty}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary,
-                            textAlign = TextAlign.End, modifier = Modifier.weight(0.6f))
-                        Text("₹${tx.totalMargin.toInt()}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = marginColor,
-                            textAlign = TextAlign.End, modifier = Modifier.weight(0.9f))
+                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(formatDateString(tx.date), fontSize = 11.sp, color = SaaSColors.TextMuted)
+                                Spacer(Modifier.weight(1f))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(marginColor.copy(alpha = 0.12f))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text("${formatMarginPct(marginPct)} margin", fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold, color = marginColor)
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(tx.customerName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(2.dp))
+                            Text("${tx.productName} · ${tx.qty} ${if (tx.qty == 1) "unit" else "units"}",
+                                fontSize = 12.sp, color = SaaSColors.TextSecondary,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(12.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column {
+                                    Text("Cost", fontSize = 10.sp, color = SaaSColors.TextMuted)
+                                    Text("₹${cost.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.TextSecondary)
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("Sales", fontSize = 10.sp, color = SaaSColors.TextMuted)
+                                    Text("₹${tx.totalSelling.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.TextSecondary)
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("Profit", fontSize = 10.sp, color = SaaSColors.TextMuted)
+                                    Text("₹${tx.totalMargin.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = marginColor)
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            HorizontalDivider(color = SaaSColors.Border.copy(alpha = 0.5f))
+                            Spacer(Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Rounded.Person, null, tint = SaaSColors.TextMuted, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(emp?.name ?: "—", fontSize = 11.sp, color = SaaSColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Rounded.Storefront, null, tint = SaaSColors.TextMuted, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(shop, fontSize = 11.sp, color = SaaSColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1910,6 +1991,11 @@ private fun SaaSPieChart(data: List<Float>, modifier: Modifier = Modifier) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+private fun formatMarginPct(v: Double): String {
+    val rounded = round(v * 100.0) / 100.0
+    return if (rounded % 1.0 == 0.0) "${rounded.toInt()}%" else "${rounded}%"
+}
+
 private fun formatValue(v: Double): String = when {
     v >= 100000.0 -> {
         val l = v / 100000.0
@@ -1933,16 +2019,8 @@ private fun jsonEncode(list: List<CustomExpense>): String {
     return "[" + list.joinToString(",") { "{\"name\":\"${it.name}\",\"amount\":${it.amount}}" } + "]"
 }
 
-private fun formatDateString(dateStr: String): String {
-    val parts = dateStr.split("-")
-    if (parts.size == 3) {
-        val y = parts[0].takeLast(2)
-        val m = parts[1]
-        val d = parts[2]
-        return "$d/$m/$y"
-    }
-    return dateStr
-}
+private fun formatDateString(dateStr: String): String =
+    com.example.ruwia.util.dbToDisplayDate(dateStr)
 
 private data class ProductRank(val name: String, val qty: Int, val revenue: Double, val profit: Double)
 private data class ProductSummary(val id: String, val name: String, val qty: Int, val cost: Double, val sell: Double, val profit: Double)

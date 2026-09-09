@@ -120,6 +120,7 @@ private fun AdminDashboardContentSwitcher(
     var editModeStock by remember { mutableStateOf(0) }
 
     var productDetailName by remember { mutableStateOf<String?>(null) }
+    var showStockHistory by remember { mutableStateOf(false) }
 
     // ── Full-screen overlays ──────────────────────────────────
     productDetailName?.let { pName ->
@@ -132,6 +133,15 @@ private fun AdminDashboardContentSwitcher(
         return
     }
 
+    if (showStockHistory) {
+        SystemBackHandler { showStockHistory = false }
+        com.example.ruwia.ui.StockHistoryScreen(
+            state  = state,
+            onBack = { showStockHistory = false },
+        )
+        return
+    }
+
     // ── Deepest level ─────────────────────────────────────────
     if (showCustomers) {
         SystemBackHandler { showCustomers = false }
@@ -139,6 +149,7 @@ private fun AdminDashboardContentSwitcher(
             customers        = state.customers,
             errorMessage     = state.error,
             onAddCustomer    = vm::addCustomer,
+            onUpdateCustomer = vm::updateCustomer,
             onDeleteCustomer = vm::deleteCustomer,
             onClearError     = vm::clearError,
             onBack           = { showCustomers = false },
@@ -178,6 +189,7 @@ private fun AdminDashboardContentSwitcher(
         AddEmployeeScreen(
             isSaving   = creation is EmployeeCreationState.Loading,
             saveError  = (creation as? EmployeeCreationState.Error)?.message,
+            shops      = state.shopNames,
             onBack     = { vm.clearEmployeeCreation(); showAddEmployee = false },
             onClose    = { vm.clearEmployeeCreation(); showAddEmployee = false; showEmployees = false },
             onSave     = { name, phone, role, shop, salary, email, password ->
@@ -189,9 +201,12 @@ private fun AdminDashboardContentSwitcher(
     if (showEmployees) {
         SystemBackHandler { showEmployees = false }
         EmployeesScreen(
-            employees     = state.employees,
-            onBack        = { showEmployees = false },
-            onAddEmployee = { showAddEmployee = true }
+            employees      = state.employees,
+            shops          = state.shopNames,
+            onBack         = { showEmployees = false },
+            onAddEmployee  = { showAddEmployee = true },
+            onUpdateEmployee = vm::updateEmployee,
+            onDeleteEmployee = vm::deleteEmployee,
         )
         return
     }
@@ -207,9 +222,11 @@ private fun AdminDashboardContentSwitcher(
             productToRestock = productToRestock,
             currentStock = editModeStock,
             movements  = state.recentMovements,
-            shops      = state.shopStocks
-                .filter { it.name.trim().lowercase().let { name -> name == "shop 1" || name == "shop 2" } }
-                .map { it.name to it.location },
+            shops      = state.shopNames.take(2).mapIndexed { index, name ->
+                val location = state.shopStocks.getOrNull(index)?.location
+                    ?: if (index == 0) "Primary Shop" else "Secondary Shop"
+                name to location
+            },
             onBack     = { productToRestock = null; editModeStock = 0; showAddStock = false },
             onClose    = { productToRestock = null; editModeStock = 0; showAddStock = false },
             onSave     = { productId, sku, brandName, purchasePrice, sellingPrice, qty, shopName, dateTimeIso, emptyCans ->
@@ -232,7 +249,8 @@ private fun AdminDashboardContentSwitcher(
                         sellingPrice = sellingPrice,
                         qty = qty,
                         shopName = shopName,
-                        createdAt = dateTimeIso
+                        createdAt = dateTimeIso,
+                        emptyCans = emptyCans
                     )
                 }
                 productToRestock = null
@@ -289,6 +307,7 @@ private fun AdminDashboardContentSwitcher(
                      onToggleProductStatus = { product ->
                          vm.updateProductCategory(product.copy(isActive = !product.isActive))
                      },
+                     onOpenStockHistory = { showStockHistory = true },
                      contentPadding = contentPadding,
                  )
             2 -> ProfitDashboardScreen(
@@ -315,6 +334,8 @@ private fun AdminDashboardContentSwitcher(
                          vm.deleteAllData()
                          selectedTab = 0
                      },
+                     onResetEmptyCases      = { vm.resetEmptyCases() },
+                     onShopNameChange       = { index, name -> vm.updateShopName(index, name) },
                      contentPadding         = contentPadding
                  )
         }
@@ -339,7 +360,14 @@ private fun AdminHomeTab(
             onRetry  = vm::loadData,
             contentPadding = contentPadding
         )
-        else -> AdminDashboardContent(state, contentPadding, adminName, onLogout, onOpenSettings)
+        else -> AdminDashboardContent(
+            state,
+            contentPadding,
+            adminName,
+            onLogout,
+            onOpenSettings,
+            onAddEmptyCases = vm::addEmptyCases,
+        )
     }
 }
 
@@ -350,11 +378,14 @@ private fun AdminDashboardContent(
     adminName: String,
     @Suppress("UNUSED_PARAMETER") onLogout: () -> Unit,
     onOpenSettings: () -> Unit = {},
+    onAddEmptyCases: (Int) -> Unit = {},
 ) {
     // ── Range picker state — drives BOTH the hero chart and the
     // analytics chart below it. Defaults to MONTH so the home screen
     // opens on the most useful "current month" view.
     var selectedRange by remember { mutableStateOf(NTDateRange.MONTHLY) }
+
+    var showAddEmptyCasesDialog by remember { mutableStateOf(false) }
 
     // Recompute metrics whenever state OR the selected range changes.
     val metrics = remember(state, selectedRange) {
@@ -400,6 +431,8 @@ private fun AdminDashboardContent(
         else                           -> metrics.weeklyGrowthPercent  // best non-month proxy
     }
 
+    val displayShopName = state.shopNames.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Neer Thuli"
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -412,7 +445,7 @@ private fun AdminDashboardContent(
         // Header
         item {
             NTDashboardHeader(
-                shopName            = "Neer Thuli",
+                shopName            = displayShopName,
                 adminName           = adminName.ifBlank { "Admin" },
                 notificationCount   = pendingOrders,
                 onAvatarClick       = onOpenSettings, // tap avatar → Settings
@@ -430,7 +463,7 @@ private fun AdminDashboardContent(
         // all swap when the range picker below the KPI grid changes.
         item {
             NTRevenueHeroCard(
-                shopName       = "Neer Thuli",
+                shopName       = displayShopName,
                 headlineLabel  = headlineLabel,
                 headlineValue  = headlineValue,
                 lastMonthValue = lastValue,
@@ -451,6 +484,17 @@ private fun AdminDashboardContent(
         // KPI grid
         item {
             NTKpiGrid(items = kpiItems)
+        }
+
+        // Quick-add Empty Cases — dedicated button on the home screen.
+        item {
+            Spacer(modifier = Modifier.height(NTDp.lg))
+        }
+        item {
+            EmptyCasesQuickCard(
+                currentCount = metrics.emptyCansAtShop,
+                onAdd        = { showAddEmptyCasesDialog = true },
+            )
         }
 
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
@@ -533,6 +577,83 @@ private fun AdminDashboardContent(
 //            }
 //            item { Spacer(modifier = Modifier.height(NTDp.sm)) }
 //        }
+    }
+
+    if (showAddEmptyCasesDialog) {
+        EmptyCasesStepperDialog(
+            currentCount = metrics.emptyCansAtShop,
+            onDismiss    = { showAddEmptyCasesDialog = false },
+            onConfirm    = { qty ->
+                showAddEmptyCasesDialog = false
+                onAddEmptyCases(qty)
+            },
+        )
+    }
+}
+
+// ── Quick-add Empty Cases card ────────────────────────────────
+//   Dedicated home-screen control to bump the live Empty Cases
+//   figure without navigating into a full entry form.
+
+@Composable
+private fun EmptyCasesQuickCard(
+    currentCount: Int,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = NTDp.screenPad)
+            .clip(RoundedCornerShape(20.dp))
+            .background(NTColors.Surface)
+            .border(1.dp, NTColors.Border, RoundedCornerShape(20.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(NTColors.Warning.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.AutoMirrored.Rounded.Undo,
+                null,
+                tint = NTColors.Warning,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "EMPTY CASES",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp,
+                color = NTColors.TextTertiary,
+            )
+            Text(
+                text = "$currentCount available",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = NTColors.TextPrimary,
+            )
+        }
+        Button(
+            onClick = onAdd,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = NTColors.Warning,
+                contentColor = NTColors.TextOnPrimary,
+            ),
+            shape = RoundedCornerShape(14.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Icon(Icons.Rounded.Add, null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Add", fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -632,7 +753,7 @@ private fun NTOrderCard(order: Order, @Suppress("UNUSED_PARAMETER") onAssign: (S
             Column(modifier = Modifier.weight(1f)) {
                 Text("Order #${order.id?.take(6) ?: "—"}", color = NTColors.TextPrimary,
                     fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text("Qty: ${order.qty} cans · ${order.createdAt?.take(10) ?: ""}",
+                Text("Qty: ${order.qty} cases · ${order.createdAt?.let { com.example.ruwia.util.isoToDisplayDate(it) } ?: ""}",
                     color = NTColors.TextTertiary, fontSize = 12.sp)
             }
             Box(
@@ -909,7 +1030,7 @@ private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiI
 
     // ── 3. Empty cans (live derivation from movements) ──
     val cansKpi = NTKpiItem(
-        title         = "EMPTY CANS",
+        title         = "EMPTY CASES",
         value         = "${metrics.emptyCansAtShop}",
         subtitle      = "Available at shop",
         subtitleColor = NTColors.TextSecondary,

@@ -19,7 +19,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,7 +39,8 @@ import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.deriveShopStockTotals
 import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.shopMatchKey
-import com.example.ruwia.theme.RuwiaColor
+import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
 
 @Composable
 fun EmployeeStockScreen(
@@ -46,68 +50,64 @@ fun EmployeeStockScreen(
     isLoading: Boolean,
     onRefresh: () -> Unit,
     shopName: String = "",
+    customerCount: Int = 0,
+    emptyCansBaseline: Int = 0,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    val visibleShops = remember(shopStocks, shopName) {
-        val filtered = shopStocks.filter {
-            val clean = it.name.trim().lowercase()
-            clean == "shop 1" || clean == "shop 2"
-        }
-        if (shopName.isBlank()) filtered
-        else {
-            val key = shopMatchKey(shopName)
-            filtered.filter { shopMatchKey(it.name) == key }.ifEmpty { filtered }
-        }
+    // All shops for this business (deduplicated by their canonical key).
+    val allShops = remember(shopStocks) {
+        shopStocks.distinctBy { shopMatchKey(it.name) }
+    }
+
+    // Shop selection state: empty means "All shops".
+    var selectedShop by remember { mutableStateOf("") }
+    val selectedShopKey = remember(selectedShop) {
+        if (selectedShop.isBlank()) "" else shopMatchKey(selectedShop)
+    }
+
+    // Filter the movement set that backs every number below.
+    val scopedMovements = remember(selectedShopKey, movements) {
+        if (selectedShopKey.isBlank()) movements
+        else movements.filter { shopMatchKey(it.shopName) == selectedShopKey }
     }
 
     val stockItems = remember(products) {
         products.map { com.example.ruwia.domain.StockItem(it.id, it.name, it.stockAvailable, 0) }
     }
-    val derivedShops = remember(shopStocks, movements, stockItems) {
-        deriveShopStockTotals(shopStocks, movements, stockItems)
+    val derivedShops = remember(shopStocks, movements, stockItems, emptyCansBaseline) {
+        deriveShopStockTotals(shopStocks, movements, stockItems, emptyCansBaseline.toDouble())
     }
 
-    val availableUnitsMap = remember(products, movements) {
+    // Per selected shop, each product's net on-hand over its own movements.
+    // Counts are shop-specific: a product created/stocked in another shop is
+    // not included here (no global fallback, so counts never leak across shops).
+    val availableUnitsMap = remember(products, scopedMovements) {
         products.associate { p ->
-            // In the Stock screen, employees must see GLOBAL inventory across all shops.
-            // We ignore the individual shopName filter here to provide full visibility.
-            val allShops = movements.map { it.shopName }.distinct()
-            val totalAcrossShops = allShops.sumOf { sName ->
-                val shKey = shopMatchKey(sName)
-                val rows = movements.filter { it.productId == p.id && shopMatchKey(it.shopName) == shKey }
-                val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
-                val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-                (inward - outward).coerceAtLeast(0)
-            }
-            p.id to totalAcrossShops
+            val rows = scopedMovements.filter { it.productId == p.id }
+            val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
+            val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+            p.id to (inward - outward).coerceAtLeast(0)
         }
     }
 
     val totalFull = remember(availableUnitsMap) {
         availableUnitsMap.values.sumOf { it.toDouble() }
     }
-    val totalEmpty = remember(movements) {
-        movements
-            .filter { it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+    // Live "Empty Cases" is reported relative to the admin-set reset baseline.
+    val totalEmpty = remember(scopedMovements, emptyCansBaseline) {
+        (scopedMovements
+            .filter { it.source.isEmptyCansSource() }
             .sumOf { m ->
                 if (m.type == "inward") m.qty.toDouble() else -m.qty.toDouble()
             }
+            .coerceAtLeast(0.0) - emptyCansBaseline)
             .coerceAtLeast(0.0)
-    }
-    val totalCust = remember(movements) {
-        val sales = movements
-            .filter { it.type == "outward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
-            .sumOf { it.qty.toDouble() }
-        val returns = movements
-            .filter { it.type == "inward" && it.source.trim().startsWith("Empty cans", ignoreCase = true) }
-            .sumOf { it.qty.toDouble() }
-        (sales - returns).coerceAtLeast(0.0)
     }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(RuwiaColor.Background),
+            .background(NTColors.Background),
         contentPadding = PaddingValues(
             top    = contentPadding.calculateTopPadding(),
             bottom = contentPadding.calculateBottomPadding() + 16.dp,
@@ -116,13 +116,25 @@ fun EmployeeStockScreen(
     ) {
         item { StockTabTopBar(onRefresh = onRefresh, shopName = shopName) }
 
+        // ── Shop toggle ────────────────────────────────
+        if (allShops.isNotEmpty()) {
+            item {
+                ShopToggleRow(
+                    shops        = allShops,
+                    selectedShop = selectedShop,
+                    onSelect     = { shop -> selectedShop = shop },
+                    modifier     = Modifier.padding(horizontal = 20.dp)
+                )
+            }
+        }
+
         // ── Top Summary Card ──────────────────────────
         item {
             TodayStockCard(
-                available    = totalFull,
-                empty        = totalEmpty,
-                withCustomer = totalCust,
-                modifier     = Modifier.padding(horizontal = 20.dp)
+                available     = totalFull,
+                empty         = totalEmpty,
+                customerCount = customerCount,
+                modifier      = Modifier.padding(horizontal = 20.dp)
             )
         }
 
@@ -133,7 +145,7 @@ fun EmployeeStockScreen(
                     modifier = Modifier.fillMaxWidth().padding(40.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator(color = RuwiaColor.TealPrimary, modifier = Modifier.size(28.dp))
+                    CircularProgressIndicator(color = NTColors.Primary, modifier = Modifier.size(28.dp))
                 }
             }
         }
@@ -142,12 +154,12 @@ fun EmployeeStockScreen(
         if (products.isNotEmpty()) {
             item {
                 Text(
-                    text = "PRODUCT CATALOG",
+                    text = if (selectedShopKey.isBlank()) "PRODUCT CATALOG (ALL SHOPS)" else "PRODUCT CATALOG · ${selectedShop.uppercase()}",
                     modifier = Modifier.padding(horizontal = 20.dp),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.2.sp,
-                    color = RuwiaColor.TealPrimary
+                    color = NTColors.Primary
                 )
             }
 
@@ -170,6 +182,46 @@ fun EmployeeStockScreen(
     }
 }
 
+// ── Shop toggle ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun ShopToggleRow(
+    shops: List<ShopStockInfo>,
+    selectedShop: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val options = buildList {
+        add("")
+        addAll(shops.map { it.name })
+    }
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { option ->
+            val isSelected = if (option.isBlank()) selectedShop.isBlank() else shopMatchKey(option) == shopMatchKey(selectedShop)
+            val label = if (option.isBlank()) "All" else option
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(if (isSelected) NTColors.Primary else NTColors.Surface)
+                    .border(1.dp, if (isSelected) NTColors.Primary else NTColors.Divider, RoundedCornerShape(50))
+                    .clickable { onSelect(option) }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isSelected) Color.White else NTColors.TextSecondary,
+                )
+            }
+        }
+    }
+}
+
 // ── Top bar ────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -185,7 +237,7 @@ private fun StockTabTopBar(onRefresh: () -> Unit, shopName: String = "") {
                 "Stock",
                 fontSize   = 24.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color      = RuwiaColor.TextPrimary,
+                color      = NTColors.TextPrimary,
             )
             Text(
                 if (shopName.isNotBlank())
@@ -193,20 +245,20 @@ private fun StockTabTopBar(onRefresh: () -> Unit, shopName: String = "") {
                 else
                     "Live inventory across all shops",
                 fontSize = 12.sp,
-                color    = RuwiaColor.TextMuted,
+                color    = NTColors.TextTertiary,
             )
         }
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .border(1.2.dp, RuwiaColor.Divider, CircleShape)
+                .border(1.2.dp, NTColors.Divider, CircleShape)
                 .clickable(onClick = onRefresh),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 Icons.Rounded.Refresh,
                 contentDescription = "Refresh",
-                tint     = RuwiaColor.TextSecondary,
+                tint     = NTColors.TextSecondary,
                 modifier = Modifier.size(18.dp),
             )
         }
@@ -225,17 +277,17 @@ private fun ProductStockCard(
     
     // Status Badge colors and labels
     val (statusLabel, badgeBg, badgeFg) = when {
-        availableUnits <= 0 -> Triple("Out Of Stock", Color(0xFFFFE8E8), Color(0xFFCC3333))
-        availableUnits <= 2 -> Triple("Low Stock", Color(0xFFFFF3E0), Color(0xFFE65100))
-        else -> Triple("In Stock", RuwiaColor.TealExtraLight, RuwiaColor.TealPrimary)
+        availableUnits <= 0 -> Triple("Out Of Stock", NTColors.ErrorLight, NTColors.ErrorText)
+        availableUnits <= 2 -> Triple("Low Stock", NTColors.WarningLight, NTColors.WarningText)
+        else -> Triple("In Stock", NTColors.PrimaryLight, NTColors.Primary)
     }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(RuwiaColor.Surface)
-            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(NTDp.radXxl))
+            .background(NTColors.Surface)
+            .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
             .padding(16.dp)
     ) {
         Row(
@@ -248,16 +300,16 @@ private fun ProductStockCard(
                     text = product.displayName.ifBlank { product.name },
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    color = RuwiaColor.TextPrimary
+                    color = NTColors.TextPrimary
                 )
                 Spacer(Modifier.height(4.dp))
-                val unitLabel = "Can"
+                val unitLabel = "Case"
                 val displayPrice = product.defaultSellPrice
                 Text(
                     text = "₹${displayPrice.toInt()} / $unitLabel  ·  $displayStock $unitLabel${if (displayStock != 1) "s" else ""} Available",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = RuwiaColor.TextSecondary
+                    color = NTColors.TextSecondary
                 )
             }
             Box(
@@ -284,15 +336,15 @@ private fun ProductStockCard(
 private fun TodayStockCard(
     available: Double,
     empty: Double,
-    withCustomer: Double,
+    customerCount: Int,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(24.dp), ambientColor = Color.Black.copy(alpha = 0.05f), spotColor = Color.Black.copy(alpha = 0.05f)),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = RuwiaColor.Surface)
+            .shadow(4.dp, RoundedCornerShape(NTDp.radXxl), ambientColor = NTColors.GradAccent, spotColor = NTColors.GradAccent),
+        shape = RoundedCornerShape(NTDp.radXxl),
+        colors = CardDefaults.cardColors(containerColor = NTColors.Surface)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(
@@ -305,29 +357,29 @@ private fun TodayStockCard(
                         "Live Inventory",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = RuwiaColor.TealPrimary,
+                        color = NTColors.Primary,
                         letterSpacing = 0.5.sp
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "${formatCases(available)} Cans",
+                        "${formatCases(available)} Cases",
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black,
-                        color = RuwiaColor.TextPrimary
+                        color = NTColors.TextPrimary
                     )
                 }
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .background(RuwiaColor.TealExtraLight, CircleShape),
+                        .background(NTColors.PrimaryLight, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.Inventory2, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(24.dp))
+                    Icon(Icons.Rounded.Inventory2, null, tint = NTColors.Primary, modifier = Modifier.size(24.dp))
                 }
             }
 
             Spacer(Modifier.height(18.dp))
-            HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.6f))
+            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.6f))
             Spacer(Modifier.height(18.dp))
 
             Row(
@@ -336,16 +388,16 @@ private fun TodayStockCard(
             ) {
                 StockItemSmallCol(
                     value = formatCases(empty),
-                    label = "Empty Cans",
+                    label = "Empty Cases",
                     icon = Icons.AutoMirrored.Rounded.Undo,
-                    color = Color(0xFFF59E0B)
+                    color = NTColors.Warning
                 )
-                VerticalDivider(modifier = Modifier.height(32.dp), color = RuwiaColor.Divider)
+                VerticalDivider(modifier = Modifier.height(32.dp), color = NTColors.Divider)
                 StockItemSmallCol(
-                    value = formatCases(withCustomer),
-                    label = "With Customer",
+                    value = "$customerCount",
+                    label = "Customers",
                     icon = Icons.Rounded.Group,
-                    color = Color(0xFF6366F1)
+                    color = NTColors.Info
                 )
             }
         }
@@ -368,8 +420,8 @@ private fun StockItemSmallCol(
         }
         Spacer(Modifier.width(10.dp))
         Column {
-            Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
-            Text(label, fontSize = 11.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Medium)
+            Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+            Text(label, fontSize = 11.sp, color = NTColors.TextTertiary, fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -386,13 +438,13 @@ private fun StockEmptyState(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .size(72.dp)
                 .clip(CircleShape)
-                .background(RuwiaColor.TealExtraLight),
+                .background(NTColors.PrimaryLight),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 Icons.Rounded.Inventory2,
                 contentDescription = null,
-                tint = RuwiaColor.TealPrimary,
+                tint = NTColors.Primary,
                 modifier = Modifier.size(34.dp),
             )
         }
@@ -401,13 +453,13 @@ private fun StockEmptyState(modifier: Modifier = Modifier) {
             "Stock not configured yet",
             fontSize   = 16.sp,
             fontWeight = FontWeight.Bold,
-            color      = RuwiaColor.TextPrimary,
+            color      = NTColors.TextPrimary,
         )
         Spacer(Modifier.height(6.dp))
         Text(
             "Ask the admin to add shops and products. Once they do, live stock balances will show up here.",
             fontSize  = 13.sp,
-            color     = RuwiaColor.TextMuted,
+            color     = NTColors.TextTertiary,
             textAlign = TextAlign.Center,
             modifier  = Modifier.padding(horizontal = 12.dp),
             lineHeight = 18.sp,

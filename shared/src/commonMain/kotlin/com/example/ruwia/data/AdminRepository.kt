@@ -1,5 +1,6 @@
 package com.example.ruwia.data
 
+import com.example.ruwia.domain.AppSetting
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.MonthlyExpense
@@ -462,6 +463,90 @@ class AdminRepository {
         }
     }
 
+    suspend fun updateCustomer(customer: Customer): Customer {
+        val id = customer.id ?: throw IllegalArgumentException("Customer id is blank — cannot update.")
+        // Capture the pre-edit name so a rename can propagate to every
+        // denormalized copy (sale entries + stock movement sources).
+        val existing = runCatching {
+            supabase.from("customers")
+                .select { filter { eq("id", id) } }
+                .decodeSingleOrNull<Customer>()
+        }.getOrElse { null }
+        suspend fun updateCustomerInternal(client: io.github.jan.supabase.SupabaseClient): Customer {
+            return client.from("customers").update(
+                buildJsonObject {
+                    put("name", customer.name)
+                    if (customer.phone != null) put("phone", customer.phone)
+                    if (customer.address != null) put("address", customer.address)
+                    if (customer.otherDetails != null) put("other_details", customer.otherDetails)
+                }
+            ) {
+                filter { eq("id", id) }
+                select()
+            }.decodeSingle()
+        }
+        val saved = try {
+            updateCustomerInternal(supabase)
+        } catch (e: Exception) {
+            println("Standard updateCustomer failed, trying admin bypass: ${e.message}")
+            e.printStackTrace()
+            initAdminSession()
+            updateCustomerInternal(supabaseAdmin)
+        }
+        val oldName = existing?.name.orEmpty().trim()
+        val newName = customer.name.trim()
+        if (oldName.isNotEmpty() && oldName != newName) {
+            propagateCustomerRename(oldName, newName)
+        }
+        return saved
+    }
+
+    /** Rewrites every denormalized reference to [oldName] after a customer
+     *  rename so past transactions, stock history and activity sheets show the
+     *  new name everywhere, not just the customers list. */
+    private suspend fun propagateCustomerRename(oldName: String, newName: String) {
+        if (oldName.isBlank() || newName.isBlank()) return
+        initAdminSession()
+        val adminId = supabase.auth.currentUserOrNull()?.id ?: return
+        try {
+            supabaseAdmin.from("sale_entries").update(
+                buildJsonObject { put("customer_name", newName) }
+            ) {
+                filter {
+                    eq("admin_id", adminId)
+                    eq("customer_name", oldName)
+                }
+            }
+        } catch (e: Exception) {
+            println("sale_entries customer rename skipped: ${e.message}")
+        }
+        // Stock movements carry the customer inside the source string:
+        // "Sale · <name>", "Empty cans · <name>", "Empty cases · <name>".
+        try {
+            val prefixes = listOf("Sale", "Empty cans", "Empty cases")
+            val rows = supabaseAdmin.from("stock_movements")
+                .select {
+                    filter { eq("admin_id", adminId) }
+                    limit(100000)
+                }
+                .decodeList<StockMovement>()
+            rows.forEach { m ->
+                val source = m.source.trim()
+                val label = prefixes.firstOrNull { source.startsWith("$it · $oldName") }
+                    ?: return@forEach
+                try {
+                    supabaseAdmin.from("stock_movements").update(
+                        buildJsonObject { put("source", "$label · $newName") }
+                    ) { filter { eq("id", m.id) } }
+                } catch (e: Exception) {
+                    println("stock_movement source rename skipped (${m.id}): ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            println("stock_movements customer rename skipped: ${e.message}")
+        }
+    }
+
     // ── Orders ────────────────────────────────────────────────────────────────
 
     suspend fun getAllOrders(): List<Order> {
@@ -540,6 +625,66 @@ class AdminRepository {
         )
     }
 
+    /** Updates editable fields of an existing employee. Email/password are not
+     *  touched here (those belong to the auth user) — only the employee record.
+     *  The name is also mirrored to `profiles.full_name` (the source of the
+     *  displayed name in the employee's own app / auth state) so a rename
+     *  reflects everywhere, not just the admin roster. */
+    suspend fun updateEmployee(updated: EmployeeInfo): EmployeeInfo {
+        initAdminSession()
+        supabaseAdmin.from("employees").update(
+            buildJsonObject {
+                put("name", updated.name)
+                put("phone", updated.phone)
+                put("role", updated.role.lowercase())
+                if (updated.shopName.isNotBlank()) put("shop_name", updated.shopName)
+                put("monthly_salary", updated.monthlySalary)
+            }
+        ) {
+            filter { eq("id", updated.id) }
+        }
+        try {
+            supabaseAdmin.from("profiles").update(
+                buildJsonObject { put("full_name", updated.name) }
+            ) {
+                filter { eq("id", updated.id) }
+            }
+        } catch (e: Exception) {
+            println("Profile full_name sync skipped: ${e.message}")
+        }
+        return updated
+    }
+
+    /** Deactivates an employee. The row is soft-deleted (`status = "inactive"`)
+     *  so historical movements/sales keep resolving to the employee's name in
+     *  stock history and the report summary, and the matching auth user is
+     *  disabled so they can no longer sign in. */
+    suspend fun deleteEmployee(id: String) {
+        if (id.isBlank()) throw IllegalArgumentException("Employee id is blank — cannot delete.")
+        initAdminSession()
+        val updated = supabaseAdmin.from("employees").update(
+            buildJsonObject {
+                put("status", "inactive")
+            }
+        ) {
+            filter { eq("id", id) }
+            select()
+        }.decodeList<EmployeeInfo>()
+        if (updated.isEmpty()) {
+            throw IllegalStateException("Employee could not be deactivated. The row may not exist, or you lack permission.")
+        }
+        // Disable the auth user so the employee can no longer sign in.
+        try {
+            supabaseAdmin.auth.admin.updateUserById(id) {
+                this.userMetadata = buildJsonObject {
+                    put("disabled", true)
+                }
+            }
+        } catch (e: Exception) {
+            println("Employee auth user disable skipped: ${e.message}")
+        }
+    }
+
     // ── Stock ─────────────────────────────────────────────────────────────────
 
     suspend fun getShopStocks(): List<ShopStockInfo> {
@@ -552,21 +697,28 @@ class AdminRepository {
                 // Deduplicate by name (case-insensitive) — keeps the first occurrence.
                 // Guards against accidental duplicate rows already in the DB.
                 .distinctBy { it.name.trim().lowercase() }
+                // This business always has exactly two shops. Guard against
+                // legacy/duplicate rows so no screen ever shows a third shop.
+                .take(2)
         } catch (e: Exception) { emptyList() }
     }
 
     suspend fun getRecentMovements(): List<StockMovement> {
         return try {
             val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
-            // 1000 rows so we have at least the last ~3 months for dashboard
-            // aggregations (inward / outward totals, month-over-month deltas).
-            // RLS on `stock_movements` exposes every employee's record to the
-            // admin, so this is the cross-team view they expect.
+            // The full movement history is the single source of truth for live
+            // stock: product balances, shop totals, empty-cases and month-wise
+            // aggregates are all derived client-side from this list. Capping it
+            // (as we used to, at 5000) silently dropped older movements and
+            // corrupted every count once history grew past the window — the
+            // dashboard KPI showed a fraction (e.g. 64) of the real total
+            // (e.g. 1040). 100_000 overrides PostgREST's default 1000-row cap
+            // while remaining effectively unbounded for this business.
             supabase.from("stock_movements")
-                .select { 
+                .select {
                     filter { eq("admin_id", adminId) }
                     order("created_at", SortOrder.DESCENDING)
-                    limit(5000)
+                    limit(100000)
                 }
                 .decodeList()
         } catch (e: Exception) { emptyList() }
@@ -581,12 +733,14 @@ class AdminRepository {
         createdAt: String? = null,
     ) {
         val payload = buildJsonObject {
+            val adminId = supabase.auth.currentUserOrNull()?.id
             put("source", source)
             put("qty", qty)
             put("type", type)
             put("shop_name", shopName)
             if (productId != null) put("product_id", productId)
             if (createdAt != null) put("created_at", createdAt)
+            if (adminId != null) put("admin_id", adminId)
         }
         try {
             supabase.from("stock_movements").insert(payload)
@@ -594,6 +748,177 @@ class AdminRepository {
             initAdminSession()
             supabaseAdmin.from("stock_movements").insert(payload)
         }
+    }
+
+    // ── Empty-cases reset (live stock "Empty Cases" figure) ──────────────────
+
+    /** Global baseline persisted on the admin tenant that the live "Empty
+     *  Cases" figure is reported relative to. Defaults to 0 when unset. */
+    /**
+     * Global baseline persisted by the admin that the live "Empty Cases"
+     * figure is reported relative to.
+     *
+     * Returns `-1` when the value cannot be read (e.g. the `app_settings` tenant
+     * migration is not applied to the database yet) so callers can keep the
+     * last-known baseline instead of clobbering it with a bogus 0. Returns `0`
+     * only when the table is readable and genuinely has no baseline stored.
+     */
+    suspend fun getEmptyCansBaseline(): Int {
+        return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return -1
+            val row = supabase.from("app_settings")
+                .select {
+                    filter {
+                        eq("admin_id", adminId)
+                        eq("settings_key", "empty_cans_baseline")
+                    }
+                }
+                .decodeList<AppSetting>()
+                .firstOrNull()
+            row?.value?.toIntOrNull() ?: 0
+        } catch (e: Exception) {
+            // Fall back to the service-role client (bypasses RLS). The anon
+            // path can fail when the tenant isolation policy is missing or the
+            // self-row isn't visible to the auth session; the baseline is
+            // tenant data the admin must always be able to read back.
+            e.printStackTrace()
+            try {
+                initAdminSession()
+                val adminId = supabase.auth.currentUserOrNull()?.id ?: return -1
+                val row = supabaseAdmin.from("app_settings")
+                    .select {
+                        filter {
+                            eq("admin_id", adminId)
+                            eq("settings_key", "empty_cans_baseline")
+                        }
+                    }
+                    .decodeList<AppSetting>()
+                    .firstOrNull()
+                row?.value?.toIntOrNull() ?: 0
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+                -1
+            }
+        }
+    }
+
+    /**
+     * Resets the business's live "Empty Cases" figure to zero by persisting the
+     * current running empty-cans total as the baseline. The reported figure is
+     * `(current sum − baseline).coerceAtLeast(0)`, so this makes the displayed
+     * value 0 without deleting any movement history. New returns accumulate on
+     * top of the new baseline.
+     *
+     * Returns the new baseline when the write succeeds, or `-1` when it could
+     * not be persisted so callers keep the last-known baseline instead of
+     * clobbering it with an un-persisted value (which would make the count
+     * "come back" on the next refresh).
+     */
+    suspend fun resetEmptyCases(): Int {
+        val current = liveEmptyCansTotal()
+        val adminId = supabase.auth.currentUserOrNull()?.id ?: return -1
+        val value = current.toString()
+        try {
+            val existing = supabase.from("app_settings")
+                .select {
+                    filter {
+                        eq("admin_id", adminId)
+                        eq("settings_key", "empty_cans_baseline")
+                    }
+                }
+                .decodeList<AppSetting>()
+                .firstOrNull()
+            val payload = buildJsonObject {
+                put("admin_id", adminId)
+                put("settings_key", "empty_cans_baseline")
+                put("settings_value", value)
+            }
+            if (existing != null) {
+                val existingId = existing.id ?: return -1
+                supabase.from("app_settings").update(payload) {
+                    filter { eq("id", existingId) }
+                }
+            } else {
+                supabase.from("app_settings").insert(payload)
+            }
+        } catch (e: Exception) {
+            // The anon path may be blocked by RLS (missing tenant isolation
+            // policy on `app_settings`). Retry through the service-role client,
+            // which the app already uses for tenant-scoped writes (employees,
+            // stock adjustments, deletes).
+            e.printStackTrace()
+            try {
+                initAdminSession()
+                val existing = supabaseAdmin.from("app_settings")
+                    .select {
+                        filter {
+                            eq("admin_id", adminId)
+                            eq("settings_key", "empty_cans_baseline")
+                        }
+                    }
+                    .decodeList<AppSetting>()
+                    .firstOrNull()
+                val payload = buildJsonObject {
+                    put("admin_id", adminId)
+                    put("settings_key", "empty_cans_baseline")
+                    put("settings_value", value)
+                }
+                if (existing != null) {
+                    val existingId = existing.id ?: return -1
+                    supabaseAdmin.from("app_settings").update(payload) {
+                        filter { eq("id", existingId) }
+                    }
+                } else {
+                    supabaseAdmin.from("app_settings").insert(payload)
+                }
+            } catch (e2: Exception) {
+                // The `app_settings` table (or its `admin_id` tenant column) is
+                // not present on the live database until supabase_schema.sql is
+                // applied, so the baseline cannot be persisted. Report failure
+                // so the screen keeps its previous baseline and shows a clear
+                // error instead of silently doing nothing.
+                e2.printStackTrace()
+                return -1
+            }
+        }
+        return current
+    }
+
+    /**
+     * Records a manual inward "Empty cans" movement (product-less) so the live
+     * Empty Cases figure can be bumped directly from the home screen.
+     */
+    suspend fun addEmptyCases(qty: Int, shopName: String) {
+        if (qty <= 0) return
+        addStockMovement(
+            source = "Empty cans · Direct Entry",
+            qty = qty,
+            type = "inward",
+            shopName = shopName,
+            productId = null,
+            createdAt = com.example.ruwia.util.currentDateTimeIso(),
+        )
+    }
+
+    /** Running live empty-cans total across all movement history (global). */
+    private suspend fun liveEmptyCansTotal(): Int {
+        val adminId = supabase.auth.currentUserOrNull()?.id ?: return 0
+        val movs = try {
+            supabase.from("stock_movements")
+                .select {
+                    filter { eq("admin_id", adminId) }
+                    // Explicit cap so PostgREST's default 1000-row page doesn't
+                    // truncate the all-time empty-cans total (the reset baseline
+                    // must be computed against the same complete history the
+                    // dashboard displays, otherwise the count "comes back").
+                    limit(100000)
+                }
+                .decodeList<StockMovement>()
+        } catch (e: Exception) { emptyList() }
+        return movs
+            .filter { it.source.trim().lowercase().startsWith("empty cans") || it.source.trim().lowercase().startsWith("empty cases") }
+            .sumOf { m -> if (m.type == "inward") m.qty else -m.qty }
+            .coerceAtLeast(0)
     }
 
     suspend fun addStockMovement(
@@ -605,12 +930,14 @@ class AdminRepository {
         createdAt: String? = null,
     ) {
         val payload = buildJsonObject {
+            val adminId = supabase.auth.currentUserOrNull()?.id
             put("source", source)
             put("qty", qty)
             put("type", type)
             put("shop_name", shopName)
             if (productId != null) put("product_id", productId)
             if (createdAt != null) put("created_at", createdAt)
+            if (adminId != null) put("admin_id", adminId)
         }
         // 1. Persist the movement row itself.
         try {
@@ -718,6 +1045,98 @@ class AdminRepository {
         }
     }
 
+    // ── Shop names (business display names for Shop 1 / Shop 2) ───────────────
+
+    /**
+     * Returns the display names of this business's two shops, ordered. Names
+     * are read from the first two `shop_stocks` rows for the current admin;
+     * any missing slots fall back to the canonical "Shop 1" / "Shop 2" labels
+     * so callers always receive exactly two entries.
+     */
+    suspend fun getShopNames(): List<String> {
+        val defaults = listOf("Shop 1", "Shop 2")
+        return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return defaults
+            val rows = supabase.from("shop_stocks")
+                .select { filter { eq("admin_id", adminId) } }
+                .decodeList<ShopStockInfo>()
+            if (rows.isEmpty()) return defaults
+            buildList {
+                repeat(2) { i ->
+                    val name = rows.getOrNull(i)?.name?.trim()
+                    add(if (name.isNullOrBlank()) defaults[i] else name)
+                }
+            }
+        } catch (e: Exception) { defaults }
+    }
+
+    /**
+     * Persists the display name for the shop at [index] (0 = Shop 1, 1 = Shop 2)
+     * into the corresponding `shop_stocks` row. Creates the row if it does not
+     * exist yet so the name is available to the inventory / employee screens.
+     */
+    suspend fun updateShopName(index: Int, newName: String) {
+        if (index !in 0..1) return
+        val clean = newName.trim()
+        if (clean.isBlank()) return
+        initAdminSession()
+        try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return
+            val rows = supabase.from("shop_stocks")
+                .select { filter { eq("admin_id", adminId) } }
+                .decodeList<ShopStockInfo>()
+            val target = rows.getOrNull(index)
+            if (target != null) {
+                val oldName = target.name
+                // A rename also cleans up the literal slot label stored in the
+                // legacy `location` column so it never shows up on screen.
+                val cleanLocation = when (target.location) {
+                    "Shop 1" -> "Primary Shop"
+                    "Shop 2" -> "Secondary Shop"
+                    else     -> target.location
+                }
+                supabase.from("shop_stocks").update(
+                    buildJsonObject {
+                        put("name", clean)
+                        put("location", cleanLocation)
+                    }
+                ) { filter { eq("id", target.id) } }
+                // Keep every name-based reference pointing at this shop slot
+                // after a rename, otherwise the inventory per-product badge,
+                // employee assignments and sale grouping keep showing the
+                // outdated name while the shop tabs/counts use the new one.
+                if (oldName.isNotBlank() && oldName != clean) {
+                    supabase.from("stock_movements").update(
+                        buildJsonObject { put("shop_name", clean) }
+                    ) { filter { eq("shop_name", oldName) } }
+                    supabase.from("product_categories").update(
+                        buildJsonObject { put("supplier_group", clean) }
+                    ) { filter { eq("supplier_group", oldName) } }
+                    supabase.from("employees").update(
+                        buildJsonObject { put("shop_name", clean) }
+                    ) { filter { eq("shop_name", oldName) } }
+                    supabase.from("sale_entries").update(
+                        buildJsonObject { put("shop_id", clean) }
+                    ) { filter { eq("shop_id", oldName) } }
+                    supabase.from("monthly_expenses").update(
+                        buildJsonObject { put("shop_id", clean) }
+                    ) { filter { eq("shop_id", oldName) } }
+                }
+            } else {
+                supabase.from("shop_stocks").insert(
+                    buildJsonObject {
+                        put("name", clean)
+                        put("location", if (index == 0) "Primary Shop" else "Secondary Shop")
+                        put("is_live", true)
+                        put("admin_id", adminId)
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun parseLiters(name: String): Int {
@@ -735,7 +1154,5 @@ class AdminRepository {
     }
 }
 
-fun getCurrentDateTimeIso(): String {
-    val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-    return "${now.year}-${now.monthNumber.toString().padStart(2, '0')}-${now.dayOfMonth.toString().padStart(2, '0')}T${now.hour.toString().padStart(2, '0')}:${now.minute.toString().padStart(2, '0')}:${now.second.toString().padStart(2, '0')}"
-}
+fun getCurrentDateTimeIso(): String =
+    com.example.ruwia.util.currentDateTimeIso()

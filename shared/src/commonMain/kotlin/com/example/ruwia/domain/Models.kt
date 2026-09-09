@@ -130,6 +130,7 @@ data class StockMovement(
     val type: String,
     @SerialName("shop_name") val shopName: String = "",
     @SerialName("product_id") val productId: String? = null,
+    @SerialName("employee_id") val employeeId: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
 )
 
@@ -219,6 +220,14 @@ data class MonthlyExpense(
 fun shopMatchKey(name: String): String =
     name.split("·", limit = 2).firstOrNull()?.trim()?.lowercase() ?: name.trim().lowercase()
 
+/** A tenant-scoped application setting row (e.g. `empty_cans_baseline`). */
+@Serializable
+data class AppSetting(
+    val id: String? = null,
+    @SerialName("settings_key") val key: String = "",
+    @SerialName("settings_value") val value: String? = null,
+)
+
 /** True if a movement source string represents returned empty cans. */
 fun String.isEmptyCansSource(): Boolean {
     val clean = trim().lowercase()
@@ -226,14 +235,44 @@ fun String.isEmptyCansSource(): Boolean {
 }
 
 /**
+ * Net live units per product across ALL shops, derived from the movement log.
+ *
+ * Inward purchases add stock; outward sales/transfers subtract it. Empty-can
+ * returns are recorded as inward movements but are NOT sellable stock, so they
+ * are excluded from the net. This is the single source of truth for the global
+ * inventory figure, so movements recorded under any shop label (including ones
+ * renamed or not yet configured) never get orphaned.
+ */
+fun netStockPerProduct(movements: List<StockMovement>): Map<String?, Int> =
+    movements.groupBy { it.productId }.mapValues { (_, rows) ->
+        val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
+        val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
+        (inward - outward).coerceAtLeast(0)
+    }
+
+/** Net live units per product for a single shop, scoped by normalized shop key. */
+fun netStockPerProductInShop(movements: List<StockMovement>, shopKey: String): Map<String?, Int> =
+    netStockPerProduct(movements.filter { shopMatchKey(it.shopName) == shopKey })
+
+/** Net live units for one product across all shops (0 when no movement exists). */
+fun productNetStock(movements: List<StockMovement>, productId: String?): Int =
+    netStockPerProduct(movements)[productId] ?: 0
+
+/**
  * Returns each shop with its [ShopStockInfo] columns recomputed from the
  * movement log. The original metadata fields (`id`, `name`, `location`,
  * `isLive`) are preserved.
+ *
+ * @param emptyCansBaseline the business-wide admin-set "Empty Cases" reset
+ *        baseline. When non-zero it is subtracted from each shop's empty-cans
+ *        figure (and therefore its total), so an admin "Reset Empty Cases"
+ *        zeroes the figure on the Stock tab too — not only the home KPI.
  */
 fun deriveShopStockTotals(
     rawShops: List<ShopStockInfo>,
     movements: List<StockMovement>,
     stockItems: List<StockItem>,
+    emptyCansBaseline: Double = 0.0,
 ): List<ShopStockInfo> {
     if (rawShops.isEmpty()) return emptyList()
     val productMap = stockItems.associateBy { it.id }
@@ -292,12 +331,13 @@ fun deriveShopStockTotals(
         }
 
         val fullCans = totalCases
-        val totalCans = fullCans + emptyCases + withCust.coerceAtLeast(0.0)
+        val emptyCansLive = (emptyCases - emptyCansBaseline).coerceAtLeast(0.0)
+        val totalCans = fullCans + emptyCansLive + withCust.coerceAtLeast(0.0)
 
         shop.copy(
             totalCans = totalCans,
             fullCans = fullCans,
-            emptyCans = emptyCases,
+            emptyCans = emptyCansLive,
             cansWithCustomers = withCust.coerceAtLeast(0.0),
         )
     }

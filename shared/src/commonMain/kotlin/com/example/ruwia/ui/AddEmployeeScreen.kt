@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -29,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.ruwia.ui.dashboard.*
+import com.example.ruwia.util.capitalizeWords
+import com.example.ruwia.util.isTextField
 import kotlin.random.Random
 
 // ─────────────────────────────────────────────────────────────
@@ -36,7 +39,6 @@ import kotlin.random.Random
 // ─────────────────────────────────────────────────────────────
 
 private val roles  = listOf("Manager", "Stock", "Cashier", "Driver")
-private val shops  = listOf("Shop 1", "Shop 2")
 
 private val avatarPalette = listOf(
     Color(0xFF0F766E), Color(0xFF14B8A6), Color(0xFFF97316),
@@ -74,6 +76,7 @@ private fun generatePassword(): String {
 fun AddEmployeeScreen(
     isSaving: Boolean = false,
     saveError: String? = null,
+    shops: List<String> = emptyList(),
     onBack: () -> Unit,
     onClose: () -> Unit,
     onSave: (name: String, phone: String, role: String, shop: String,
@@ -88,6 +91,11 @@ fun AddEmployeeScreen(
     var email         by remember { mutableStateOf("") }
     var password      by remember { mutableStateOf(generatePassword()) }
     var showPassword  by remember { mutableStateOf(false) }
+
+    // Shop options come from the admin's saved shop names (DB-backed).
+    val shopOptions = remember(shops) {
+        shops.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    }
 
     // Auto-fill email when name changes (user can still override)
     var emailEdited by remember { mutableStateOf(false) }
@@ -220,7 +228,7 @@ fun AddEmployeeScreen(
                         Spacer(modifier = Modifier.height(NTDp.md))
 
                         AELabel("Shop assignment")
-                        AEChipGroup(options = shops, selected = shop, onSelect = { shop = it })
+                        AEChipGroup(options = shopOptions, selected = shop, onSelect = { shop = it })
                     }
                 }
 
@@ -500,8 +508,11 @@ private fun AETextField(
         Box(modifier = Modifier.weight(1f)) {
             if (value.isEmpty()) Text(placeholder, color = NTColors.TextDisabled, fontSize = 14.sp)
             BasicTextField(
-                value = value, onValueChange = onValueChange,
-                keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+                value = value, onValueChange = if (keyboard.isTextField()) { { v -> onValueChange(capitalizeWords(v)) } } else onValueChange,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = keyboard,
+                    capitalization = if (keyboard.isTextField()) KeyboardCapitalization.Words else KeyboardCapitalization.None,
+                ),
                 textStyle = TextStyle(color = NTColors.TextPrimary, fontSize = 14.sp,
                     fontWeight = FontWeight.Medium),
                 cursorBrush = SolidColor(NTColors.Primary),

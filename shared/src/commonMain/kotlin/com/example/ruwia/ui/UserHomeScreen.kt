@@ -623,7 +623,7 @@ private fun UserOrderCard(order: Order) {
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = order.createdAt?.take(10) ?: "—",
+                    text = order.createdAt?.let { com.example.ruwia.util.isoToDisplayDate(it) } ?: "—",
                     color = NTColors.TextTertiary,
                     fontSize = 12.sp
                 )
@@ -679,7 +679,7 @@ private fun UserPaymentCard(payment: Payment) {
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = payment.createdAt?.take(10) ?: "—",
+                    text = payment.createdAt?.let { com.example.ruwia.util.isoToDisplayDate(it) } ?: "—",
                     color = NTColors.TextTertiary,
                     fontSize = 12.sp
                 )

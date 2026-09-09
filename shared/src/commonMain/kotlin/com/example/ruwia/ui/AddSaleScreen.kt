@@ -62,10 +62,11 @@ private fun Long.toDisplayDate(): String {
     }
     val leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
     val dpm = intArrayOf(31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-    val mon = arrayOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
     var m = 0
     while (days >= dpm[m]) { days -= dpm[m]; m++ }
-    return "${days + 1} ${mon[m]} $year"
+    val dd = (days + 1).toString().padStart(2, '0')
+    val mm = (m + 1).toString().padStart(2, '0')
+    return "$dd/$mm/$year"
 }
 
 private fun formatTime(hour: Int, minute: Int): String {
@@ -90,7 +91,7 @@ fun AddSaleScreen(
     onBack: () -> Unit,
     /** Called when the employee taps "Save sale". The third arg is the number
      *  of empty cans the employee collected from this customer at delivery.
-     *  The fourth arg is the selected sale date in display format (e.g. "25 Jun 2026"). */
+     *  The fourth arg is the selected sale date in display format (e.g. "29/09/2026"). */
     onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String) -> Unit = { _, _, _, _ -> },
     shopName: String = "",
 ) {
@@ -150,11 +151,8 @@ fun AddSaleScreen(
     // Date / time — use current date/time via kotlinx-datetime
     var displayDate by remember {
         mutableStateOf(
-            try {
-                val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-                val mon = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
-                "${now.dayOfMonth} ${mon[now.monthNumber - 1]} ${now.year}"
-            } catch (_: Exception) { "" }
+            try { com.example.ruwia.util.toDisplayDate(Clock.System.now()) }
+            catch (_: Exception) { "" }
         )
     }
     var displayTime by remember {
@@ -174,9 +172,6 @@ fun AddSaleScreen(
     val timePickerState = rememberTimePickerState(initialHour = 11, initialMinute = 16)
 
     val totalQty   = lineItems.sumOf { it.qty }
-    val lineTotals = lineItems.sumOf {
-        (it.sellPriceText.toDoubleOrNull() ?: 0.0) * it.qty
-    }
     val isSaveEnabled = selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
 
     // ── Per-product available stock (derived from shop movements) ─────────────
@@ -262,7 +257,6 @@ fun AddSaleScreen(
                     isSaveEnabled = isSaveEnabled,
                     lineCount = lineItems.size,
                     totalQty = totalQty,
-                    totalAmount = lineTotals,
                     onCancel = onBack,
                     onSave   = {
                         val empties = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
@@ -278,7 +272,7 @@ fun AddSaleScreen(
                         if (overStockLine != null) {
                             val product = products.getOrNull(overStockLine.productIdx)
                             val availRaw = product?.let { availableUnitsMap[it.id] ?: it.stockAvailable } ?: 0
-                            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cans\nAvailable: $availRaw Cans\n\nPlease reduce the quantity and try again."
+                            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cases\nAvailable: $availRaw Cases\n\nPlease reduce the quantity and try again."
                             return@SaleBottomBar
                         }
                         onSave(selectedCustomer!!.name, lineItems, empties, displayDate)
@@ -319,11 +313,6 @@ fun AddSaleScreen(
                     onQtyChange   = { lineIdx, newQty ->
                         lineItems = lineItems.mapIndexed { i, item ->
                             if (i == lineIdx) item.copy(qty = newQty) else item
-                        }
-                    },
-                    onPriceChange = { lineIdx, newPrice ->
-                        lineItems = lineItems.mapIndexed { i, item ->
-                            if (i == lineIdx) item.copy(sellPriceText = newPrice) else item
                         }
                     },
                     onRemove      = { lineIdx ->
@@ -495,9 +484,9 @@ fun AddSaleScreen(
                                 Column {
                                     Text(p.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
                                     val limitText = availableUnitsMap[p.id]?.let {
-                                        "$it Cans available"
-                                    } ?: "Available stock: ${p.stockAvailable} Cans"
-                                    Text("₹${p.defaultSellPrice.toInt()}/Can  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                                        "$it Cases available"
+                                    } ?: "Available stock: ${p.stockAvailable} Cases"
+                                    Text("₹${p.defaultSellPrice.toInt()}/Case  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
                                 }
                             }
                             if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
@@ -626,7 +615,6 @@ private fun MultiProductSection(
     availableUnitsMap: Map<String, Int> = emptyMap(),
     onChangeProduct: (lineIdx: Int) -> Unit,
     onQtyChange: (lineIdx: Int, qty: Int) -> Unit,
-    onPriceChange: (lineIdx: Int, price: String) -> Unit,
     onRemove: (lineIdx: Int) -> Unit,
     onAdd: () -> Unit,
 ) {
@@ -707,11 +695,9 @@ private fun MultiProductSection(
                 product      = product,
                 qty          = item.qty,
                 availableUnits = availableUnitsRaw,
-                priceText    = item.sellPriceText,
                 showRemove   = lineItems.size > 1,
                 onProductTap = { onChangeProduct(idx) },
                 onQtyChange  = { onQtyChange(idx, it) },
-                onPriceChange = { onPriceChange(idx, it) },
                 onRemove     = { onRemove(idx) },
             )
         }
@@ -739,11 +725,9 @@ private fun SaleLineCard(
     product: ProductCategory,
     qty: Int,
     availableUnits: Int,
-    priceText: String,
     showRemove: Boolean,
     onProductTap: () -> Unit,
     onQtyChange: (Int) -> Unit,
-    onPriceChange: (String) -> Unit,
     onRemove: () -> Unit,
 ) {
     val isOverStock = qty > availableUnits
@@ -801,7 +785,7 @@ private fun SaleLineCard(
 
         Spacer(Modifier.height(10.dp))
 
-        // ── Qty stepper + price ────────────────────────────────
+        // ── Qty stepper ────────────────────────────────────
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -843,39 +827,9 @@ private fun SaleLineCard(
                 }
                 SaleStepBtn(Icons.Rounded.Add, qty < availableUnits) { onQtyChange(qty + 1) }
             }
-
-            Spacer(Modifier.width(10.dp))
-
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .background(RuwiaColor.LightGray, RoundedCornerShape(10.dp))
-                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
-                Spacer(Modifier.width(4.dp))
-                Box(modifier = Modifier.weight(1f)) {
-                    BasicTextField(
-                        value = priceText,
-                        onValueChange = onPriceChange,
-                        textStyle = TextStyle(
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = RuwiaColor.TextPrimary
-                        ),
-                        cursorBrush = SolidColor(RuwiaColor.TealPrimary),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                Text("/Can", fontSize = 11.sp, color = RuwiaColor.TextSecondary)
-            }
         }
 
-        val availLabel = "$availableUnits Cans available"
+        val availLabel = "$availableUnits Cases available"
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier
@@ -931,76 +885,6 @@ private fun SaleDateTimeButton(
     }
 }
 
-// ── Sale summary card (no margin shown to employee) ────────────────────────────
-
-@Composable
-private fun SaleSummaryCard(
-    customer: Customer?,
-    totalQty: Int,
-    lineCount: Int,
-    sellingTotal: Double,
-) {
-    Box(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(RuwiaColor.TealDark),
-    ) {
-        Canvas(modifier = Modifier.matchParentSize()) {
-            drawCircle(Color.White.copy(alpha = 0.07f), size.height * 1.6f, Offset(size.width * 0.68f, size.height * 0.95f))
-        }
-        Column(modifier = Modifier.padding(20.dp)) {
-            SaleSummaryRow("Customer",   customer?.name ?: "—")
-            Spacer(Modifier.height(6.dp))
-            SaleSummaryRow("Products",  "$lineCount type${if (lineCount != 1) "s" else ""}")
-            Spacer(Modifier.height(6.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Total qty", fontSize = 13.sp, color = Color.White.copy(alpha = 0.74f))
-                AnimatedContent(
-                    targetState = totalQty,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> -height } + fadeOut())
-                        } else {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> height } + fadeOut())
-                        }.using(SizeTransform(clip = false))
-                    }
-                ) { targetQty ->
-                    Text("$targetQty units", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.30f), thickness = 0.8.dp)
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Total sale value", fontSize = 13.sp, color = Color.White.copy(alpha = 0.78f))
-                AnimatedContent(
-                    targetState = sellingTotal,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> -height } + fadeOut())
-                        } else {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> height } + fadeOut())
-                        }.using(SizeTransform(clip = false))
-                    }
-                ) { targetTotal ->
-                    Text("₹${targetTotal.toInt()}", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SaleSummaryRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, fontSize = 13.sp, color = Color.White.copy(alpha = 0.74f))
-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-    }
-}
-
 // ── Bottom bar ─────────────────────────────────────────────────────────────────
 
 @Composable
@@ -1008,12 +892,11 @@ private fun SaleBottomBar(
     isSaveEnabled: Boolean,
     lineCount: Int,
     totalQty: Int,
-    totalAmount: Double,
     onCancel: () -> Unit,
     onSave: () -> Unit
 ) {
     val scale = remember { Animatable(1f) }
-    LaunchedEffect(totalQty, totalAmount) {
+    LaunchedEffect(totalQty) {
         if (totalQty > 0) {
             scale.animateTo(
                 targetValue = 1.03f,
@@ -1044,7 +927,6 @@ private fun SaleBottomBar(
             // Summary row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AnimatedContent(
@@ -1066,26 +948,6 @@ private fun SaleBottomBar(
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = RuwiaColor.TextSecondary
-                    )
-                }
-
-                AnimatedContent(
-                    targetState = totalAmount,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> -height } + fadeOut())
-                        } else {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> height } + fadeOut())
-                        }.using(SizeTransform(clip = false))
-                    }
-                ) { targetAmount ->
-                    Text(
-                        text = "₹${targetAmount.toInt()}",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = RuwiaColor.TextPrimary
                     )
                 }
             }

@@ -118,10 +118,12 @@ fun AdminState.toDashboardMetrics(
     val totalStockUnits = productCategories.filter { it.isActive }.sumOf { it.stockAvailable.toDouble() }
     
     // ── Live Empty Can derivation ────────────────────────────────────────────
-    // Sum of all 'inward' movements where source starts with "Empty cans".
-    val liveEmptyAtShop = recentMovements
+    // Sum of all 'inward' movements where source starts with "Empty cans",
+    // reported relative to the admin-set reset baseline so a reset zeroes it.
+    val liveEmptyAtShop = (recentMovements
         .filter { it.source.isEmptyCansSource() }
         .sumOf { m -> if (m.type == "inward") m.qty else -m.qty }
+        .coerceAtLeast(0) - emptyCansBaseline)
         .coerceAtLeast(0)
     
     // Sum of all 'outward' movements (delivered) - Sum of all 'inward' empty returns.
@@ -308,7 +310,7 @@ private fun List<SaleEntry>.lastTwoWeekTotals(): Pair<Double, Double> {
 
 private fun List<StockMovement>.netInwardForMonth(yearMonth: String): Int {
     if (yearMonth.isBlank()) return 0
-    return filter { it.createdAt?.startsWith(yearMonth) == true }
+    return filter { it.createdAt?.startsWith(yearMonth) == true && !it.source.isEmptyCansSource() }
         .sumOf { m ->
             when (m.type) {
                 "inward"     -> m.qty
@@ -319,10 +321,12 @@ private fun List<StockMovement>.netInwardForMonth(yearMonth: String): Int {
         }
 }
 
-/** Total qty for one specific [type] (e.g. "inward" / "outward") in [yearMonth]. */
+/** Total qty for one specific [type] (e.g. "inward" / "outward") in [yearMonth].
+ *  Empty-can/case movements are excluded — they are tracked separately by the
+ *  "Empty Cases" figure, not stock activity. */
 private fun List<StockMovement>.totalForType(yearMonth: String, type: String): Int {
     if (yearMonth.isBlank()) return 0
-    return filter { it.createdAt?.startsWith(yearMonth) == true && it.type == type }
+    return filter { it.createdAt?.startsWith(yearMonth) == true && it.type == type && !it.source.isEmptyCansSource() }
         .sumOf { it.qty }
 }
 

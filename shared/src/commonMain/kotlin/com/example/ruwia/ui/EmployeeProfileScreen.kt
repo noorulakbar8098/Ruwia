@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,8 +21,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ruwia.theme.RuwiaColor
 import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
 
 @Composable
 fun EmployeeProfileScreen(
@@ -50,22 +51,22 @@ fun EmployeeProfileScreen(
     if (showLogoutDialog) {
         AlertDialog(
             onDismissRequest = { showLogoutDialog = false },
-            title   = { Text("Logout?", fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary) },
-            text    = { Text("Are you sure you want to log out of your account?", color = RuwiaColor.TextSecondary) },
+            title   = { Text("Logout?", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+            text    = { Text("Are you sure you want to log out of your account?", color = NTColors.TextSecondary) },
             confirmButton = {
                 TextButton(
                     onClick = { showLogoutDialog = false; onLogout() },
-                    colors  = ButtonDefaults.textButtonColors(contentColor = Color(0xFFEF4444)),
+                    colors  = ButtonDefaults.textButtonColors(contentColor = NTColors.Error),
                 ) { Text("Logout", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(
                     onClick = { showLogoutDialog = false },
-                    colors  = ButtonDefaults.textButtonColors(contentColor = RuwiaColor.TextSecondary)
+                    colors  = ButtonDefaults.textButtonColors(contentColor = NTColors.TextSecondary)
                 ) { Text("Cancel") }
             },
-            shape = RoundedCornerShape(20.dp),
-            containerColor = RuwiaColor.Surface,
+            shape = RoundedCornerShape(NTDp.radXxl),
+            containerColor = NTColors.Surface,
         )
     }
 
@@ -78,7 +79,7 @@ fun EmployeeProfileScreen(
     }
 
     Scaffold(
-        containerColor = RuwiaColor.Background,
+        containerColor = NTColors.Background,
         topBar = { ProfileTopBar(onBack = onBack) },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { padding ->
@@ -100,17 +101,18 @@ fun EmployeeProfileScreen(
 
             // ── Today's Performance KPI ──────────────────
             TodayPerformanceKPI(
-                salesCount = todayOutward,
-                revenue    = todaySales
+                outward = todayOutward,
+                inward  = todayInward,
+                sales   = todaySales,
             )
 
             // ── Information Section ──────────────────────
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(RuwiaColor.Surface)
-                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(20.dp))
+                    .clip(RoundedCornerShape(NTDp.radXxl))
+                    .background(NTColors.Surface)
+                    .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
                     .padding(vertical = 8.dp),
             ) {
                 ProfileSectionHeader("INFORMATION")
@@ -137,9 +139,9 @@ fun EmployeeProfileScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(RuwiaColor.Surface)
-                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(20.dp))
+                    .clip(RoundedCornerShape(NTDp.radXxl))
+                    .background(NTColors.Surface)
+                    .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
                     .padding(vertical = 8.dp),
             ) {
                 ProfileSectionHeader("SETTINGS")
@@ -181,7 +183,7 @@ private fun ProfileTopBar(onBack: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(RuwiaColor.Background)
+            .background(NTColors.Background)
             .statusBarsPadding(),
     ) {
         Box(
@@ -193,16 +195,16 @@ private fun ProfileTopBar(onBack: () -> Unit) {
             Box(
                 modifier = Modifier
                     .size(36.dp)
-                    .background(RuwiaColor.Surface, RoundedCornerShape(10.dp))
+                    .background(NTColors.Surface, RoundedCornerShape(10.dp))
                     .clickable(onClick = onBack)
                     .align(Alignment.CenterStart),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Rounded.ArrowBack, "Back", tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
+                Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(18.dp))
             }
             Text(
                 "Profile", fontSize = 17.sp, fontWeight = FontWeight.Bold,
-                color = RuwiaColor.TextPrimary, modifier = Modifier.align(Alignment.Center),
+                color = NTColors.TextPrimary, modifier = Modifier.align(Alignment.Center),
             )
         }
     }
@@ -218,9 +220,9 @@ private fun ProfileCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(RuwiaColor.Surface)
-            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(NTDp.radXxl))
+            .background(NTColors.Surface)
+            .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
             .padding(16.dp)
     ) {
         Row(
@@ -233,7 +235,7 @@ private fun ProfileCard(
                 modifier = Modifier
                     .size(64.dp)
                     .clip(CircleShape)
-                    .background(RuwiaColor.TealPrimary),
+                    .background(NTColors.Primary),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -248,21 +250,21 @@ private fun ProfileCard(
                     text = name,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = RuwiaColor.TextPrimary
+                    color = NTColors.TextPrimary
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = shopName.replace("·", "•"),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
-                    color = RuwiaColor.TextSecondary
+                    color = NTColors.TextSecondary
                 )
             }
             // Active status badge
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(RuwiaColor.TealExtraLight)
+                    .clip(RoundedCornerShape(NTDp.radXxl))
+                    .background(NTColors.SuccessLight)
                     .padding(horizontal = 10.dp, vertical = 4.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -270,7 +272,7 @@ private fun ProfileCard(
                     text = "Active",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = RuwiaColor.TealPrimary
+                    color = NTColors.SuccessText
                 )
             }
         }
@@ -281,21 +283,33 @@ private fun ProfileCard(
 
 @Composable
 private fun TodayPerformanceKPI(
-    salesCount: Int,
-    revenue: Double
+    outward: Int,
+    inward: Int,
+    sales: Double,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         KPICard(
-            value = "$salesCount Cans",
-            label = "Sales Count",
+            value = "$outward",
+            label = "Cans Sold",
+            icon = Icons.Rounded.LocalShipping,
+            accent = NTColors.Info,
             modifier = Modifier.weight(1f)
         )
         KPICard(
-            value = "₹${revenue.toInt()}",
-            label = "Revenue",
+            value = "$inward",
+            label = "Empty Returned",
+            icon = Icons.AutoMirrored.Rounded.Undo,
+            accent = NTColors.Warning,
+            modifier = Modifier.weight(1f)
+        )
+        KPICard(
+            value = "₹${sales.toInt()}",
+            label = "Today's Sales",
+            icon = Icons.Rounded.Payments,
+            accent = NTColors.Success,
             modifier = Modifier.weight(1f)
         )
     }
@@ -305,29 +319,41 @@ private fun TodayPerformanceKPI(
 private fun KPICard(
     value: String,
     label: String,
+    icon: ImageVector,
+    accent: Color,
     modifier: Modifier = Modifier
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(RuwiaColor.TealExtraLight)
+            .clip(RoundedCornerShape(NTDp.radXxl))
+            .background(NTColors.PrimaryLight)
             .padding(16.dp)
     ) {
         Column(
             horizontalAlignment = Alignment.Start
         ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .background(accent.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.height(10.dp))
             Text(
                 text = value,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color = RuwiaColor.TealPrimary
+                color = if (value.length > 5) NTColors.TextPrimary else NTColors.PrimaryDeep,
+                maxLines = 1
             )
             Spacer(Modifier.height(4.dp))
             Text(
                 text = label,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
-                color = RuwiaColor.TextSecondary
+                color = NTColors.TextSecondary
             )
         }
     }
@@ -342,7 +368,7 @@ private fun ProfileSectionHeader(title: String) {
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 1.2.sp,
-        color = RuwiaColor.TealPrimary,
+        color = NTColors.Primary,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
     )
 }
@@ -367,21 +393,21 @@ private fun ProfileInfoRow(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = RuwiaColor.TextSecondary,
+                tint = NTColors.TextSecondary,
                 modifier = Modifier.size(18.dp)
             )
             Text(
                 text = label,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = RuwiaColor.TextSecondary
+                color = NTColors.TextSecondary
             )
         }
         Text(
             text = value,
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            color = RuwiaColor.TextPrimary
+            color = NTColors.TextPrimary
         )
     }
 }
@@ -390,7 +416,7 @@ private fun ProfileInfoRow(
 private fun ProfileSettingRow(
     icon: ImageVector,
     label: String,
-    tint: Color = RuwiaColor.TextSecondary,
+    tint: Color = NTColors.TextSecondary,
     onClick: () -> Unit
 ) {
     Row(
@@ -415,13 +441,13 @@ private fun ProfileSettingRow(
                 text = label,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (tint != RuwiaColor.TextSecondary) tint else RuwiaColor.TextPrimary
+                color = if (tint != NTColors.TextSecondary) tint else NTColors.TextPrimary
             )
         }
         Icon(
             imageVector = Icons.Rounded.ChevronRight,
             contentDescription = null,
-            tint = RuwiaColor.TextMuted,
+            tint = NTColors.TextTertiary,
             modifier = Modifier.size(16.dp)
         )
     }
@@ -431,7 +457,7 @@ private fun ProfileSettingRow(
 private fun ProfileDivider() {
     HorizontalDivider(
         modifier  = Modifier.padding(horizontal = 16.dp),
-        color     = RuwiaColor.Divider.copy(alpha = 0.6f),
+        color     = NTColors.Divider.copy(alpha = 0.6f),
         thickness = 0.6.dp,
     )
 }
@@ -462,13 +488,13 @@ private fun ProfileToggleRow(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(RuwiaColor.TealExtraLight),
+                    .background(NTColors.PrimaryLight),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    tint = RuwiaColor.TealPrimary,
+                    tint = NTColors.Primary,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -477,12 +503,12 @@ private fun ProfileToggleRow(
                     text = label,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = RuwiaColor.TextPrimary
+                    color = NTColors.TextPrimary
                 )
                 Text(
                     text = if (checked) "Currently in dark mode" else "Currently in light mode",
                     fontSize = 11.sp,
-                    color = RuwiaColor.TextMuted
+                    color = NTColors.TextTertiary
                 )
             }
         }
@@ -491,9 +517,9 @@ private fun ProfileToggleRow(
             onCheckedChange = onToggle,
             colors = SwitchDefaults.colors(
                 checkedThumbColor    = Color.White,
-                checkedTrackColor    = RuwiaColor.TealPrimary,
+                checkedTrackColor    = NTColors.Primary,
                 uncheckedThumbColor  = Color.White,
-                uncheckedTrackColor  = RuwiaColor.Disabled
+                uncheckedTrackColor  = NTColors.TextDisabled
             )
         )
     }

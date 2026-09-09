@@ -36,6 +36,7 @@ import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.deriveShopStockTotals
+import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.*
@@ -76,15 +77,16 @@ fun StockDashboardScreen(
                 contentPadding = contentPadding,
             )
             else -> StockDashboardContent(
-                shopStocks        = state.shopStocks,
-                stockItems        = state.stockItems,
-                movements         = state.recentMovements,
-                onBack            = onBack,
-                onRefresh         = onRefresh,
-                onAddStock        = onAddStock,
-                onAdjust          = onAdjust,
-                onViewInventory   = onViewInventory,
-                contentPadding    = contentPadding,
+                shopStocks          = state.shopStocks,
+                stockItems          = state.stockItems,
+                movements           = state.recentMovements,
+                emptyCansBaseline   = state.emptyCansBaseline,
+                onBack              = onBack,
+                onRefresh           = onRefresh,
+                onAddStock          = onAddStock,
+                onAdjust            = onAdjust,
+                onViewInventory     = onViewInventory,
+                contentPadding      = contentPadding,
             )
         }
     }
@@ -95,6 +97,7 @@ private fun StockDashboardContent(
     shopStocks: List<ShopStockInfo>,
     stockItems: List<StockItem>,
     movements: List<StockMovement>,
+    emptyCansBaseline: Int = 0,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onAddStock: () -> Unit,
@@ -117,13 +120,13 @@ private fun StockDashboardContent(
     //
     // `full_cans` = full_in − outward, `empty_cans` = empty_in,
     // `cans_with_customers` = outward, `total_cans` = sum of the three.
-    val derivedShops = remember(shopStocks, movements, stockItems) {
-        deriveShopStockTotals(shopStocks, movements, stockItems)
+    val derivedShops = remember(shopStocks, movements, stockItems, emptyCansBaseline) {
+        deriveShopStockTotals(shopStocks, movements, stockItems, emptyCansBaseline.toDouble())
     }
 
     val totalFull = remember(movements) {
         movements
-            .filter { !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .filter { !it.source.isEmptyCansSource() }
             .sumOf { m ->
                 when (m.type) {
                     "inward"  ->  m.qty.toDouble()
@@ -133,20 +136,22 @@ private fun StockDashboardContent(
             }
             .coerceAtLeast(0.0)
     }
-    val totalEmpty = remember(movements) {
+    val totalEmpty = remember(movements, emptyCansBaseline) {
         movements
-            .filter { it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .filter { it.source.isEmptyCansSource() }
             .sumOf { m ->
                 if (m.type == "inward") m.qty.toDouble() else -m.qty.toDouble()
             }
             .coerceAtLeast(0.0)
+            .minus(emptyCansBaseline)
+            .coerceAtLeast(0.0)
     }
     val totalCust = remember(movements) {
         val sales = movements
-            .filter { it.type == "outward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .filter { it.type == "outward" && !it.source.isEmptyCansSource() }
             .sumOf { it.qty.toDouble() }
         val returns = movements
-            .filter { it.type == "inward" && it.source.trim().startsWith("Empty cans", ignoreCase = true) }
+            .filter { it.type == "inward" && it.source.isEmptyCansSource() }
             .sumOf { it.qty.toDouble() }
         (sales - returns).coerceAtLeast(0.0)
     }
@@ -408,7 +413,7 @@ private fun CombinedStockCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        "cans/cases",
+                        "cases",
                         fontSize   = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                         color      = NTColors.TextSecondary,
@@ -417,7 +422,7 @@ private fun CombinedStockCard(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "In Stock (Cases & Cans)",
+                    "In Stock (Cases)",
                     fontSize   = 12.sp,
                     color      = NTColors.TextTertiary,
                     fontWeight = FontWeight.Medium,
@@ -458,7 +463,7 @@ private fun CombinedStockCard(
             horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
         ) {
             CanStatChip(totalCans, "AVAILABLE", Icons.Rounded.Inventory2, FullNumColor, FullChipBg, Modifier.weight(1f))
-            CanStatChip(emptyCans, "EMPTY CANS", Icons.Rounded.Undo, EmptyNumColor, EmptyChipBg, Modifier.weight(1f))
+            CanStatChip(emptyCans, "EMPTY CASES", Icons.Rounded.Undo, EmptyNumColor, EmptyChipBg, Modifier.weight(1f))
             CanStatChip(withCustomers, "WITH CUSTOMERS", Icons.Rounded.Group, CustNumColor, CustChipBg, Modifier.weight(1f))
         }
 
@@ -627,7 +632,7 @@ private fun ShopStockCard(
             horizontalArrangement = Arrangement.spacedBy(NTDp.sm),
         ) {
             CanStatChip(shop.fullCans, "AVAILABLE", Icons.Rounded.Inventory2, FullNumColor, FullChipBg, Modifier.weight(1f))
-            CanStatChip(shop.emptyCans, "EMPTY CANS", Icons.Rounded.Undo, EmptyNumColor, EmptyChipBg, Modifier.weight(1f))
+            CanStatChip(shop.emptyCans, "EMPTY CASES", Icons.Rounded.Undo, EmptyNumColor, EmptyChipBg, Modifier.weight(1f))
             CanStatChip(shop.cansWithCustomers, "WITH CUSTOMERS", Icons.Rounded.Group, CustNumColor, CustChipBg, Modifier.weight(1f))
         }
 
@@ -640,7 +645,7 @@ private fun ShopStockCard(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 productItems.forEach { product ->
                     val productRows = shopMovements.filter { it.productId == product.id }
-                    val fullIn = productRows.filter { it.type == "inward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }.sumOf { it.qty }
+                    val fullIn = productRows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
                     val sentOut = productRows.filter { it.type == "outward" }.sumOf { it.qty }
                     val totalUnits = (fullIn - sentOut).coerceAtLeast(0)
                     if (totalUnits > 0) {
@@ -665,40 +670,18 @@ private fun ShopStockCard(
         ) {
             Icon(Icons.Rounded.Bookmark, null, tint = NTColors.TextTertiary, modifier = Modifier.size(14.dp))
             Text(
-                "${shop.totalCans} TOTAL CANS/CASES",
+                "${shop.totalCans} TOTAL CASES",
                 fontSize      = 11.sp,
                 fontWeight    = FontWeight.SemiBold,
                 color         = NTColors.TextTertiary,
                 letterSpacing = 0.4.sp,
             )
         }
-
-        // ── Per-product breakdown ─────────────────────────────
-        // Shows the product catalogue with their current stock counts so the
-        // admin sees what's in stock by SKU/litre, not just aggregate totals.
-        // The product table is global (not yet shop-scoped), so we surface
-        // the same list under each shop card with a clear caption.
-        if (expanded.value && productItems.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(NTDp.md))
-            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.5f))
-            Spacer(modifier = Modifier.height(NTDp.sm))
-            Text(
-                "PRODUCTS · BY LITRE",
-                fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                letterSpacing = 0.8.sp, color = NTColors.TextTertiary,
-            )
-            Spacer(modifier = Modifier.height(NTDp.sm))
-            productItems.forEach { item ->
-                ProductStockRow(item = item)
-                Spacer(modifier = Modifier.height(6.dp))
-            }
-        }
     }
 }
 
 // ── Per-product stock row ──────────────────────────────────────
-//   Used both inside per-shop cards and the all-products fallback card so the
-//   look stays consistent across both presentations.
+//   Used in the all-products fallback card.
 
 @Composable
 private fun ProductStockRow(item: StockItem) {
@@ -852,13 +835,8 @@ private fun MovementRow(movement: StockMovement) {
         "outward" -> "Stock outward"
         else      -> "Customer delivery"
     }
-    val dateLabel = movement.createdAt?.take(10)?.let { d ->
-        val parts = d.split("-")
-        if (parts.size == 3) {
-            val mon = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
-                .getOrNull((parts[1].toIntOrNull() ?: 1) - 1) ?: parts[1]
-            "${parts[2]} $mon"
-        } else d
+    val dateLabel = movement.createdAt?.let {
+        com.example.ruwia.util.isoToDisplayDate(it)
     } ?: "—"
 
     Row(

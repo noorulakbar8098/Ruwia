@@ -1,5 +1,6 @@
 package com.example.ruwia.data
 
+import com.example.ruwia.domain.AppSetting
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.Outward
@@ -115,7 +116,7 @@ class EmployeeRepository {
                     source   = "Empty cans · route",
                     qty      = returnedEmptyQty,
                     type     = "inward",
-                    shopName = shopName.ifBlank { "Shop 1" },
+                    shopName = shopName,
                 )
             }
             supabase.from("route_tasks").update(
@@ -199,6 +200,80 @@ class EmployeeRepository {
                 emptyReturned = emptyReturnedFromMovements + deliveries.sumOf { it.qtyEmptyReturned },
             )
         } catch (e: Exception) { DailyCansSummary() }
+    }
+
+    /**
+     * Running total of empty cans this employee has ever collected (all-time,
+     * not limited to today or any date range). Sums every `inward` stock
+     * movement whose source is an empty-cans return, filtered by employee.
+     */
+    suspend fun getEmployeeEmptyCansTotal(employeeId: String): Int {
+        if (employeeId.isBlank()) return 0
+        return try {
+            val adminId = getAdminIdForUser(employeeId)
+            supabase.from("stock_movements")
+                .select {
+                    filter {
+                        eq("employee_id", employeeId)
+                        if (adminId != null) eq("admin_id", adminId)
+                    }
+                    // Explicit cap so the all-time total isn't truncated to
+                    // PostgREST's default 1000-row page.
+                    limit(100000)
+                }
+                .decodeList<StockMovement>()
+                .filter { it.type == "inward" && it.source.isEmptyCansSource() }
+                .sumOf { it.qty }
+        } catch (e: Exception) { 0 }
+    }
+
+    // ── Empty-cases baseline (live "Empty Cases" figure) ──────────────────────
+
+    /** Global baseline persisted by the admin that the live "Empty Cases"
+     *  figure is reported relative to.
+     *
+     *  Returns `-1` when the value cannot be read (e.g. the `app_settings`
+     *  tenant migration is not applied) so callers keep the last-known baseline
+     *  instead of resetting it to 0. Returns `0` only when readable with no
+     *  baseline stored. */
+    suspend fun getEmptyCansBaseline(): Int {
+        return try {
+            val uid = currentUserId() ?: return -1
+            val adminId = getAdminIdForUser(uid) ?: return -1
+            val row = supabase.from("app_settings")
+                .select {
+                    filter {
+                        eq("admin_id", adminId)
+                        eq("settings_key", "empty_cans_baseline")
+                    }
+                }
+                .decodeList<AppSetting>()
+                .firstOrNull()
+            row?.value?.toIntOrNull() ?: 0
+        } catch (e: Exception) {
+            // Fall back to the service-role client so an admin reset is still
+            // reflected even when the tenant isolation policy blocks the auth
+            // session's read of the admin's app_settings row.
+            e.printStackTrace()
+            try {
+                val uid = currentUserId() ?: return -1
+                val adminId = getAdminIdForUser(uid) ?: return -1
+                initAdminSession()
+                val row = supabaseAdmin.from("app_settings")
+                    .select {
+                        filter {
+                            eq("admin_id", adminId)
+                            eq("settings_key", "empty_cans_baseline")
+                        }
+                    }
+                    .decodeList<AppSetting>()
+                    .firstOrNull()
+                row?.value?.toIntOrNull() ?: 0
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+                -1
+            }
+        }
     }
 
     // ── Customers ─────────────────────────────────────────────────────────────
@@ -291,6 +366,9 @@ class EmployeeRepository {
                 // unique-name constraint can leave duplicate rows that would
                 // otherwise show up twice in the picker.
                 .distinctBy { it.name.trim().lowercase() }
+                // This business always has exactly two shops. Guard against
+                // legacy/duplicate rows so no screen ever shows a third shop.
+                .take(2)
         } catch (e: Exception) { emptyList() }
     }
 
@@ -327,6 +405,10 @@ class EmployeeRepository {
                 .select {
                     if (adminId != null) filter { eq("admin_id", adminId) }
                     order("created_at", SortOrder.DESCENDING)
+                    // Without an explicit cap PostgREST silently returns only
+                    // 1000 rows, truncating the shop-wide stock / empty-cans
+                    // aggregates once the movement log grows past that.
+                    limit(100000)
                 }
                 .decodeList<StockMovement>()
                 .let { list ->
@@ -412,6 +494,22 @@ class EmployeeRepository {
     // ── Record outward sale (one row per product line item) ──────────────────
 
     /**
+     * Records a manual inward "Empty cans" movement (product-less) so the live
+     * Empty Cases figure can be bumped directly from the home screen.
+     */
+    suspend fun addEmptyCases(qty: Int, shopName: String) {
+        if (qty <= 0) return
+        addStockMovement(
+            source = "Empty cans · Direct Entry",
+            qty = qty,
+            type = "inward",
+            shopName = shopName,
+            productId = null,
+            createdAt = com.example.ruwia.util.currentDateTimeIso(),
+        )
+    }
+
+    /**
      * Persist an outward sale for the current employee. Each [SaleLine] becomes
      * a row in `sale_entries` and an `outward` stock movement so the admin's
      * stock dashboard reflects the sale immediately.
@@ -483,7 +581,7 @@ class EmployeeRepository {
                     put("sales_margin_per_unit", line.sellingPricePerUnit - line.purchasePricePerUnit)
                     put("total_selling", line.sellingPricePerUnit * line.qty)
                     put("total_margin", (line.sellingPricePerUnit - line.purchasePricePerUnit) * line.qty)
-                    put("shop_id", shopName.ifBlank { "shop1" })
+                    put("shop_id", shopName)
                     if (employeeId != null) put("employee_id", employeeId)
                 }
             )

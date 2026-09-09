@@ -30,15 +30,18 @@ import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.deriveShopStockTotals
+import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.shopMatchKey
+import com.example.ruwia.presentation.EmployeeState
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import com.example.ruwia.presentation.EmployeeViewModel
-import com.example.ruwia.theme.RuwiaColor
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import com.example.ruwia.ui.dashboard.NTBottomNavigation
+import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -74,7 +77,7 @@ private fun DeliveryTask.toEntryDisplay(): EntryDisplay = EntryDisplay(
 
 private fun StockMovement.toEntryDisplay(): EntryDisplay = EntryDisplay(
     name     = source,
-    detail   = "$qty units · ${formatCreatedAtTime(createdAt)}",
+    detail   = "$qty units · ${formatCreatedAtDateTime(createdAt)}",
     amount   = if (type == "inward") "+$qty" else "-$qty",
     status   = type.uppercase(),
     isInward = type == "inward",
@@ -105,7 +108,7 @@ fun EmployeeDashboardScreen(
     vm: EmployeeViewModel,
     onLogout: () -> Unit,
     employeeName: String = "Employee",
-    shopInfo: String = "Shop 1  ·  Saibaba",
+    shopInfo: String = "",
     userEmail: String = "",
 ) {
     val state by vm.state.collectAsState()
@@ -135,6 +138,7 @@ fun EmployeeDashboardScreen(
     var showLogoutDialog by remember { mutableStateOf(false) }
     var isLoggingOut by remember { mutableStateOf(false) }
     var isSubmittingAction by remember { mutableStateOf(false) }
+    var showAddEmptyCasesDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.loading, state.error) {
         if (isSubmittingAction && !state.loading) {
@@ -196,17 +200,20 @@ fun EmployeeDashboardScreen(
 
     LaunchedEffect(Unit) { vm.loadDashboard() }
 
-    Box(modifier = Modifier.fillMaxSize().background(RuwiaColor.Background)) {
+    Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
         when (screen) {
             EmpScreen.AddInward -> {
+                val shopPart = resolvedShopInfo.split("·").getOrNull(0)?.trim().orEmpty()
+                val shopLoc  = resolvedShopInfo.split("·").getOrNull(1)?.trim().orEmpty()
                 AddStockPurchaseScreen(
                     stockItems = emptyList(),
                     products   = state.productCategories,
+                    shops      = listOf(shopPart to shopLoc).filter { it.first.isNotBlank() },
                     onBack     = { screen = EmpScreen.Home },
                     onClose    = { screen = EmpScreen.Home },
                     isEmployee = true,
                     onSave     = { productId, sku, brandName, purchasePrice, sellingPrice, qty, shopName, dateTimeIso, emptyCans ->
-                        val shopPart = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
+                        val saveShop = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
                         isSubmittingAction = true
                         vm.addInwardStockEntry(
                             sku = sku,
@@ -214,7 +221,7 @@ fun EmployeeDashboardScreen(
                             purchasePrice = purchasePrice,
                             sellingPrice = sellingPrice,
                             qty = qty,
-                            shopName = shopPart,
+                            shopName = saveShop,
                             createdAt = dateTimeIso,
                             emptyCans = emptyCans
                         )
@@ -239,17 +246,7 @@ fun EmployeeDashboardScreen(
                         // from the customer become an inward movement (visible to
                         // the admin on the stock dashboard).
                         val shopPart = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
-                        // Parse display date "25 Jun 2026" → "2026-06-25" for the DB.
-                        val parsedSaleDate = run {
-                            val months = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
-                            val parts = saleDate.split(" ")
-                            if (parts.size == 3) {
-                                val d = parts[0].padStart(2, '0')
-                                val m = (months.indexOf(parts[1]) + 1).toString().padStart(2, '0')
-                                val y = parts[2]
-                                "$y-$m-$d"
-                            } else null
-                        }
+                        val parsedSaleDate = com.example.ruwia.util.displayDateToDb(saleDate)
                         val lines = items.mapNotNull { item ->
                             val product = state.productCategories.getOrNull(item.productIdx) ?: return@mapNotNull null
                             val sellPricePerUnit = item.sellPriceText.toDoubleOrNull() ?: product.defaultSellPrice
@@ -301,7 +298,7 @@ fun EmployeeDashboardScreen(
 
             EmpScreen.Home -> {
                 Scaffold(
-                    containerColor = RuwiaColor.Background,
+                    containerColor = NTColors.Background,
                     snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
                     bottomBar = {
                         NTBottomNavigation(
@@ -324,27 +321,26 @@ fun EmployeeDashboardScreen(
                     when (selectedTab) {
                         1 -> EmployeeEntriesScreen(
                             movements      = state.recentEntries,
-                            todayInward    = state.todayInward,
-                            todayOutward   = state.todayOutward,
-                            todayEmptyCans = state.todayEmptyCans,
-                            dailyEarnings  = state.dailyEarnings,
                             currentDate    = state.currentDate,
                             isLoading      = state.loading,
+                            emptyCansTotal = state.emptyCansTotal,
                             products       = state.productCategories,
                             onRefresh      = { vm.loadDashboard() },
                             contentPadding = padding,
                         )
 
                         2 -> EmployeeStockScreen(
-                            shopStocks     = state.shopStocks,
-                            products       = state.productCategories,
+                            shopStocks         = state.shopStocks,
+                            products           = state.productCategories,
                             // Shop-wide movements (not just this employee's) so the live
                             // can balances reflect every colleague's activity at the shop.
-                            movements      = state.shopMovements,
-                            isLoading      = state.loading,
-                            onRefresh      = { vm.loadDashboard() },
-                            shopName       = state.assignedShop,
-                            contentPadding = padding,
+                            movements          = state.shopMovements,
+                            isLoading          = state.loading,
+                            onRefresh          = { vm.loadDashboard() },
+                            shopName           = state.assignedShop,
+                            customerCount      = state.customers.size,
+                            emptyCansBaseline  = state.emptyCansBaseline,
+                            contentPadding     = padding,
                         )
 
                         // Tab 0 (Home) — and the fallback. Tab 3 (Profile) is handled above
@@ -356,6 +352,7 @@ fun EmployeeDashboardScreen(
                             onLogout       = { showLogoutDialog = true },
                             onAddInward    = { screen = EmpScreen.AddInward },
                             onAddSale      = { screen = EmpScreen.AddSale },
+                            onAddEmptyCases = { showAddEmptyCasesDialog = true },
                             onProfileClick = { screen = EmpScreen.Profile },
                             onTabSelected  = { selectedTab = it },
                             contentPadding = padding,
@@ -363,6 +360,17 @@ fun EmployeeDashboardScreen(
                     }
                 }
             }
+        }
+
+        if (showAddEmptyCasesDialog) {
+            EmptyCasesStepperDialog(
+                currentCount = liveEmptyCases(state).toInt(),
+                onDismiss    = { showAddEmptyCasesDialog = false },
+                onConfirm    = { qty ->
+                    showAddEmptyCasesDialog = false
+                    vm.addEmptyCases(qty)
+                },
+            )
         }
 
         if (state.loading) {
@@ -380,27 +388,15 @@ fun EmployeeDashboardScreen(
 private data class HomeActivityItem(
     val title: String,
     val detail: String,
-    val time: String,
+    val dateTime: String,
     val isSale: Boolean
 )
 
-private fun formatCreatedAtTime(createdAt: String?): String {
-    if (createdAt.isNullOrBlank()) return ""
-    return try {
-        // Parse full ISO-8601 UTC string from Supabase and convert to local timezone
-        // so the activity feed shows the correct wall-clock time for the device.
-        val instant = Instant.parse(createdAt)
-        val local   = instant.toLocalDateTime(TimeZone.currentSystemDefault())
-        val h       = local.hour
-        val hh      = if (h == 0) 12 else if (h > 12) h - 12 else h
-        val ampm    = if (h >= 12) "PM" else "AM"
-        val mm      = local.minute.toString().padStart(2, '0')
-        "$hh:$mm $ampm"
-    } catch (_: Exception) { "" }
-}
+private fun formatCreatedAtDateTime(createdAt: String?): String =
+    com.example.ruwia.util.isoToDisplayDateTime(createdAt)
 
 private fun StockMovement.toHomeActivityItem(): HomeActivityItem {
-    val isReturn = type == "inward" && source.trim().startsWith("Empty cans", ignoreCase = true)
+    val isReturn = type == "inward" && source.isEmptyCansSource()
     val cleanSource = if (isReturn) {
         source.replace("Empty Cases", "")
             .replace("·", "")
@@ -409,23 +405,35 @@ private fun StockMovement.toHomeActivityItem(): HomeActivityItem {
         source.trim()
     }
     
-    val timeStr = formatCreatedAtTime(createdAt)
+    val dateTimeStr = formatCreatedAtDateTime(createdAt)
     
     return if (isReturn) {
         HomeActivityItem(
             title = "Return from $cleanSource",
-            detail = "$qty Empty Can${if (qty != 1) "s" else ""}",
-            time = timeStr,
+            detail = "$qty Empty Case${if (qty != 1) "s" else ""}",
+            dateTime = dateTimeStr,
             isSale = false
         )
     } else {
         HomeActivityItem(
             title = "Sale to $cleanSource",
-            detail = "$qty Can${if (qty != 1) "s" else ""}",
-            time = timeStr,
+            detail = "$qty Case${if (qty != 1) "s" else ""}",
+            dateTime = dateTimeStr,
             isSale = true
         )
     }
+}
+
+/** Live "Empty Cases" figure: admin-wide empty-cans movements minus the
+ *  admin-set reset baseline, floored at 0. */
+private fun liveEmptyCases(state: EmployeeState): Double {
+    return (state.shopMovements
+        .filter { it.source.isEmptyCansSource() }
+        .sumOf { m ->
+            if (m.type == "inward") m.qty.toDouble() else -m.qty.toDouble()
+        }
+        .coerceAtLeast(0.0) - state.emptyCansBaseline)
+        .coerceAtLeast(0.0)
 }
 
 @Composable
@@ -436,6 +444,7 @@ private fun EmployeeHomeContent(
     onLogout: () -> Unit,
     onAddInward: () -> Unit,
     onAddSale: () -> Unit,
+    onAddEmptyCases: () -> Unit,
     onProfileClick: () -> Unit,
     onTabSelected: (Int) -> Unit,
     contentPadding: PaddingValues,
@@ -445,39 +454,20 @@ private fun EmployeeHomeContent(
     val stockItems = remember(state.productCategories) {
         state.productCategories.map { com.example.ruwia.domain.StockItem(it.id, it.name, it.stockAvailable, 0) }
     }
-    val derivedShops = remember(visibleShops, visibleMovements, stockItems) {
-        deriveShopStockTotals(visibleShops, visibleMovements, stockItems)
+    val derivedShops = remember(visibleShops, visibleMovements, stockItems, state.emptyCansBaseline) {
+        deriveShopStockTotals(visibleShops, visibleMovements, stockItems, state.emptyCansBaseline.toDouble())
     }
 
-    val totalFull = remember(visibleMovements) {
-        visibleMovements
-            .filter { !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
-            .sumOf { m ->
-                when (m.type) {
-                    "inward"  ->  m.qty.toDouble()
-                    "outward" -> -m.qty.toDouble()
-                    else      ->  0.0
-                }
-            }
-            .coerceAtLeast(0.0)
+    // The "Live Inventory" total must exactly match the Stock tab and the
+    // per-product cards. We therefore derive it from the per-product on-hand
+    // counts (already computed by the ViewModel from stock movements) rather
+    // than a raw global movement sum, so the Home and Stock screens always agree.
+    val totalFull = remember(state.productCategories) {
+        state.productCategories.sumOf { it.stockAvailable.coerceAtLeast(0).toDouble() }
     }
-    val totalEmpty = remember(visibleMovements) {
-        visibleMovements
-            .filter { it.source.trim().startsWith("Empty cans", ignoreCase = true) }
-            .sumOf { m ->
-                if (m.type == "inward") m.qty.toDouble() else -m.qty.toDouble()
-            }
-            .coerceAtLeast(0.0)
-    }
-    val totalCust = remember(visibleMovements) {
-        val sales = visibleMovements
-            .filter { it.type == "outward" && !it.source.trim().startsWith("Empty cans", ignoreCase = true) }
-            .sumOf { it.qty.toDouble() }
-        val returns = visibleMovements
-            .filter { it.type == "inward" && it.source.trim().startsWith("Empty cans", ignoreCase = true) }
-            .sumOf { it.qty.toDouble() }
-        (sales - returns).coerceAtLeast(0.0)
-    }
+    // Live "Empty Cases" is reported relative to the admin-set reset baseline.
+    val totalEmpty = liveEmptyCases(state)
+    val customerCount = state.customers.size
 
     val activityItems = remember(state.recentEntries) {
         state.recentEntries.map { it.toHomeActivityItem() }.take(5)
@@ -503,24 +493,13 @@ private fun EmployeeHomeContent(
             }
         }
 
-//        // ── Today's Performance ─────────────────────
-//        item {
-//            TodayPerformanceCard(
-//                earnings = state.dailyEarnings,
-//                inward   = state.todayInward,
-//                outward  = state.todayOutward,
-//                modifier = Modifier.padding(horizontal = 20.dp)
-//            )
-//            Spacer(Modifier.height(24.dp))
-//        }
-
-        // ── Today's Stock Card ───────────────────────
+// ── Today's Stock Card ───────────────────────
         item {
             TodayStockCard(
-                available    = totalFull,
-                empty        = totalEmpty,
-                withCustomer = totalCust,
-                modifier     = Modifier.padding(horizontal = 20.dp)
+                available     = totalFull,
+                empty         = totalEmpty,
+                customerCount = customerCount,
+                modifier      = Modifier.padding(horizontal = 20.dp)
             )
             Spacer(Modifier.height(24.dp))
         }
@@ -531,7 +510,7 @@ private fun EmployeeHomeContent(
                 text       = "Quick Actions",
                 fontSize   = 18.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color      = RuwiaColor.TextPrimary,
+                color      = NTColors.TextPrimary,
                 modifier   = Modifier.padding(horizontal = 20.dp)
             )
             Spacer(Modifier.height(8.dp))
@@ -543,6 +522,7 @@ private fun EmployeeHomeContent(
                 onReturnEmptyCans = onAddInward,
                 onViewStock       = { onTabSelected(2) },
                 onHistory         = { onTabSelected(1) },
+                onAddEmptyCases   = onAddEmptyCases,
                 modifier          = Modifier.padding(horizontal = 20.dp)
             )
             Spacer(Modifier.height(24.dp))
@@ -561,7 +541,7 @@ private fun EmployeeHomeContent(
                     text       = "Recent Activity",
                     fontSize   = 18.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color      = RuwiaColor.TextPrimary,
+                    color      = NTColors.TextPrimary,
                 )
                 Row(
                     modifier = Modifier.clickable { onTabSelected(1) },
@@ -572,11 +552,11 @@ private fun EmployeeHomeContent(
                         text       = "View all",
                         fontSize   = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color      = RuwiaColor.TealPrimary,
+                        color      = NTColors.Primary,
                     )
                     Icon(
                         Icons.Rounded.ArrowForward, null,
-                        tint = RuwiaColor.TealPrimary, modifier = Modifier.size(14.dp),
+                        tint = NTColors.Primary, modifier = Modifier.size(14.dp),
                     )
                 }
             }
@@ -591,7 +571,7 @@ private fun EmployeeHomeContent(
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator(
-                        color    = RuwiaColor.TealPrimary,
+                        color    = NTColors.Primary,
                         modifier = Modifier.size(28.dp),
                     )
                 }
@@ -606,7 +586,7 @@ private fun EmployeeHomeContent(
                         "No activity registered today",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
-                        color = RuwiaColor.TextMuted
+                        color = NTColors.TextTertiary
                     )
                 }
             }
@@ -631,185 +611,128 @@ private fun EmpHeader(
     onLogout: () -> Unit,
     onProfileClick: () -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(52.dp)
-                    .clickable(onClick = onProfileClick),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    painter = painterResource(Res.drawable.app_icon),
-                    contentDescription = "Logo",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
+    val greeting = remember {
+        try {
+            val hour = Clock.System.now()
+                .toLocalDateTime(TimeZone.currentSystemDefault()).hour
+            when {
+                hour < 12 -> "Good morning"
+                hour < 17 -> "Good afternoon"
+                else      -> "Good evening"
             }
-
-            Spacer(Modifier.width(14.dp))
-
-            Column {
-                val greeting = remember {
-                    try {
-                        val hour = Clock.System.now()
-                            .toLocalDateTime(TimeZone.currentSystemDefault()).hour
-                        when {
-                            hour < 12 -> "Good Morning"
-                            hour < 17 -> "Good Afternoon"
-                            else      -> "Good Evening"
-                        }
-                    } catch (_: Exception) { "Good Morning" }
-                }
-                Text(
-                    text = "$greeting,",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = RuwiaColor.TextSecondary,
-                )
-                Text(
-                    text = name,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = RuwiaColor.TextPrimary,
-                )
-                if (shopInfo.isNotEmpty()) {
-                    val formattedShop = remember(shopInfo) { shopInfo.replace("·", "•") }
-                    Text(
-                        text = formattedShop,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = RuwiaColor.TealPrimary,
-                    )
-                }
-            }
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Notification Icon inside Elevated Container
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .background(RuwiaColor.Surface, RoundedCornerShape(12.dp))
-                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
-                    .clickable { /* Notifications */ },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Rounded.Notifications,
-                    contentDescription = "Notifications",
-                    tint = RuwiaColor.TextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
+        } catch (_: Exception) { "Good morning" }
     }
-}
+    val initials = remember(name) {
+        name.split(" ").take(2)
+            .mapNotNull { it.firstOrNull() }
+            .joinToString("") { it.uppercase() }
+    }
 
-// ── Today's Performance Card ───────────────────────────────────────────────────
-
-@Composable
-private fun TodayPerformanceCard(
-    earnings: Double,
-    inward: Int,
-    outward: Int,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
+    Box(
+        modifier = Modifier
             .fillMaxWidth()
-            .shadow(6.dp, RoundedCornerShape(24.dp), ambientColor = RuwiaColor.TealPrimary.copy(alpha = 0.1f), spotColor = RuwiaColor.TealPrimary.copy(alpha = 0.1f)),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = RuwiaColor.TealDark)
+            .clip(RoundedCornerShape(NTDp.radXxl))
+            .background(
+                Brush.linearGradient(
+                    listOf(NTColors.PrimaryDeep, NTColors.GradStart, NTColors.GradEnd),
+                    start = Offset.Zero,
+                    end = Offset(1200f, 400f),
+                )
+            )
+            .padding(NTDp.lg),
     ) {
-        Column(modifier = Modifier.padding(24.dp)) {
+        Column {
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        "TODAY'S EARNINGS",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White.copy(alpha = 0.7f),
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "₹${earnings.toInt()}",
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color.White
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(NTDp.avatarLg)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.1f))
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                            .clickable(onClick = onProfileClick),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (initials.isBlank()) {
+                            Image(
+                                painter = painterResource(Res.drawable.app_icon),
+                                contentDescription = "App logo",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Text(
+                                text = initials,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = NTColors.TextOnPrimary,
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.width(NTDp.md))
+
+                    Column {
+                        Text(
+                            text = greeting,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = NTColors.TextSecondary,
+                        )
+                        Text(
+                            text = name,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = NTColors.TextPrimary,
+                        )
+                    }
                 }
+
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(14.dp)),
-                    contentAlignment = Alignment.Center
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(NTDp.radMd))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(NTDp.radMd))
+                        .clickable(onClick = onProfileClick),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Rounded.Payments, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                    Icon(
+                        Icons.Rounded.Notifications,
+                        contentDescription = "Notifications",
+                        tint = NTColors.TextPrimary,
+                        modifier = Modifier.size(NTDp.iconMd),
+                    )
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
-            Spacer(Modifier.height(18.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                PerformanceStat(
-                    label = "Full in",
-                    value = "$inward",
-                    icon = Icons.Rounded.ArrowDownward,
-                    color = RuwiaColor.TealLight
-                )
-                PerformanceStat(
-                    label = "Sold out",
-                    value = "$outward",
-                    icon = Icons.Rounded.ArrowUpward,
-                    color = Color(0xFFFCA5A5) // Soft red
-                )
-                PerformanceStat(
-                    label = "Deliveries",
-                    value = "${outward}", // Simplified
-                    icon = Icons.Rounded.LocalShipping,
-                    color = Color(0xFFC7D2FE) // Soft indigo
-                )
+            if (shopInfo.isNotEmpty()) {
+                Spacer(Modifier.height(NTDp.lg))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(NTDp.radFull))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.Store, null,
+                        tint = NTColors.Primary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = shopInfo.replace("·", "•"),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NTColors.TextPrimary,
+                    )
+                }
             }
-        }
-    }
-}
-
-@Composable
-private fun PerformanceStat(
-    label: String,
-    value: String,
-    icon: ImageVector,
-    color: Color
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier.size(28.dp).background(color.copy(alpha = 0.2f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
-        }
-        Spacer(Modifier.width(8.dp))
-        Column {
-            Text(value, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            Text(label, fontSize = 9.sp, color = Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -820,15 +743,15 @@ private fun PerformanceStat(
 private fun TodayStockCard(
     available: Double,
     empty: Double,
-    withCustomer: Double,
+    customerCount: Int,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(24.dp), ambientColor = Color.Black.copy(alpha = 0.05f), spotColor = Color.Black.copy(alpha = 0.05f)),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = RuwiaColor.Surface)
+            .shadow(4.dp, RoundedCornerShape(NTDp.radXxl), ambientColor = NTColors.GradAccent, spotColor = NTColors.GradAccent),
+        shape = RoundedCornerShape(NTDp.radXxl),
+        colors = CardDefaults.cardColors(containerColor = NTColors.Surface)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(
@@ -841,7 +764,7 @@ private fun TodayStockCard(
                         "Live Inventory",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = RuwiaColor.TealPrimary,
+                        color = NTColors.Primary,
                         letterSpacing = 0.5.sp
                     )
                     Spacer(Modifier.height(4.dp))
@@ -849,21 +772,21 @@ private fun TodayStockCard(
                         "${formatCases(available)} Cases",
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black,
-                        color = RuwiaColor.TextPrimary
+                        color = NTColors.TextPrimary
                     )
                 }
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .background(RuwiaColor.TealExtraLight, CircleShape),
+                        .background(NTColors.PrimaryLight, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.Inventory2, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(24.dp))
+                    Icon(Icons.Rounded.Inventory2, null, tint = NTColors.Primary, modifier = Modifier.size(24.dp))
                 }
             }
 
             Spacer(Modifier.height(18.dp))
-            HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.6f))
+            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.6f))
             Spacer(Modifier.height(18.dp))
 
             Row(
@@ -874,14 +797,14 @@ private fun TodayStockCard(
                     value = formatCases(empty),
                     label = "Empty Cases",
                     icon = Icons.AutoMirrored.Rounded.Undo,
-                    color = Color(0xFFF59E0B)
+                    color = NTColors.Warning
                 )
-                VerticalDivider(modifier = Modifier.height(32.dp), color = RuwiaColor.Divider)
+                VerticalDivider(modifier = Modifier.height(32.dp), color = NTColors.Divider)
                 StockItemSmallCol(
-                    value = formatCases(withCustomer),
-                    label = "With Customer",
+                    value = "$customerCount",
+                    label = "Customers",
                     icon = Icons.Rounded.Group,
-                    color = Color(0xFF6366F1)
+                    color = NTColors.Info
                 )
             }
         }
@@ -904,8 +827,8 @@ private fun StockItemSmallCol(
         }
         Spacer(Modifier.width(10.dp))
         Column {
-            Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
-            Text(label, fontSize = 11.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Medium)
+            Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+            Text(label, fontSize = 11.sp, color = NTColors.TextTertiary, fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -918,6 +841,7 @@ private fun QuickActionGrid(
     onReturnEmptyCans: () -> Unit,
     onViewStock: () -> Unit,
     onHistory: () -> Unit,
+    onAddEmptyCases: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -933,14 +857,14 @@ private fun QuickActionGrid(
                 title = "Record Sale",
                 onClick = onRecordSale,
                 modifier = Modifier.weight(1f),
-                color = RuwiaColor.TealPrimary
+                color = NTColors.Primary
             )
             QuickActionCard(
                 icon = Icons.Rounded.Autorenew,
                 title = "Return Cases",
                 onClick = onReturnEmptyCans,
                 modifier = Modifier.weight(1f),
-                color = Color(0xFFF59E0B)
+                color = NTColors.Warning
             )
         }
         Row(
@@ -952,14 +876,25 @@ private fun QuickActionGrid(
                 title = "View Stock",
                 onClick = onViewStock,
                 modifier = Modifier.weight(1f),
-                color = Color(0xFF6366F1)
+                color = NTColors.Info
             )
             QuickActionCard(
                 icon = Icons.Rounded.History,
                 title = "History",
                 onClick = onHistory,
                 modifier = Modifier.weight(1f),
-                color = Color(0xFFEC4899)
+                color = NTColors.Accent
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            QuickActionCard(
+                icon = Icons.Rounded.Add,
+                title = "Add Empty Cases",
+                onClick = onAddEmptyCases,
+                modifier = Modifier.weight(1f),
+                color = NTColors.Success
             )
         }
     }
@@ -971,7 +906,7 @@ private fun QuickActionCard(
     title: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    color: Color = RuwiaColor.TealPrimary
+    color: Color = NTColors.Primary
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -984,8 +919,9 @@ private fun QuickActionCard(
         modifier = modifier
             .height(100.dp)
             .graphicsLayer(scaleX = scale, scaleY = scale)
-            .shadow(2.dp, RoundedCornerShape(24.dp), ambientColor = Color.Black.copy(alpha = 0.03f), spotColor = Color.Black.copy(alpha = 0.03f))
-            .background(RuwiaColor.Surface, RoundedCornerShape(24.dp))
+            .shadow(2.dp, RoundedCornerShape(NTDp.radXxl), ambientColor = NTColors.GradAccent, spotColor = NTColors.GradAccent)
+            .background(NTColors.Surface, RoundedCornerShape(NTDp.radXxl))
+            .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
             .clickable(
                 interactionSource = interactionSource,
                 indication = androidx.compose.foundation.LocalIndication.current,
@@ -1017,7 +953,7 @@ private fun QuickActionCard(
                 text = title,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
-                color = RuwiaColor.TextPrimary
+                color = NTColors.TextPrimary
             )
         }
     }
@@ -1033,13 +969,14 @@ private fun RecentActivityItemRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(2.dp, RoundedCornerShape(20.dp), ambientColor = Color.Black.copy(alpha = 0.02f), spotColor = Color.Black.copy(alpha = 0.02f))
-            .background(RuwiaColor.Surface, RoundedCornerShape(20.dp))
+            .shadow(2.dp, RoundedCornerShape(NTDp.radXxl), ambientColor = NTColors.GradAccent, spotColor = NTColors.GradAccent)
+            .background(NTColors.Surface, RoundedCornerShape(NTDp.radXxl))
+            .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Left: Icon Container (36dp)
-        val iconColor = if (item.isSale) RuwiaColor.TealPrimary else Color(0xFFF59E0B)
+        val iconColor = if (item.isSale) NTColors.Primary else NTColors.Warning
         val icon = if (item.isSale) Icons.Rounded.ArrowUpward else Icons.AutoMirrored.Rounded.Undo
 
         Box(
@@ -1067,15 +1004,15 @@ private fun RecentActivityItemRow(
                 text = customerName,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
-                color = RuwiaColor.TextPrimary,
+                color = NTColors.TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = if (item.isSale) "Delivered • ${item.time}" else "Returned • ${item.time}",
+                text = if (item.isSale) "Delivered • ${item.dateTime}" else "Returned • ${item.dateTime}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                color = RuwiaColor.TextMuted
+                color = NTColors.TextTertiary
             )
         }
 
@@ -1084,7 +1021,7 @@ private fun RecentActivityItemRow(
             text = item.detail,
             fontSize = 14.sp,
             fontWeight = FontWeight.Black,
-            color = if (item.isSale) RuwiaColor.TealPrimary else RuwiaColor.TextPrimary
+            color = if (item.isSale) NTColors.Primary else NTColors.TextPrimary
         )
     }
 }

@@ -35,10 +35,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.isEmptyCansSource
+import com.example.ruwia.domain.netStockPerProduct
+import com.example.ruwia.domain.netStockPerProductInShop
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
@@ -86,33 +89,48 @@ fun StockInventoryScreen(
     onAddProduct: () -> Unit = {},
     onDeleteProduct: (String) -> Unit = {},
     onToggleProductStatus: (ProductCategory) -> Unit = {},
+    onOpenStockHistory: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val products = state.productCategories
     val movements = state.recentMovements
     val shops = state.shopStocks
 
-    // Derive all unique shops from both official records and recent movement history.
-    // This ensures that "Shop 1" appears even if it hasn't been officially added to the database yet.
-    val displayShops = remember(shops, movements) {
-        val list = shops.toMutableList()
-        movements.map { it.shopName }.distinct().forEach { name ->
-            val cleanName = name.trim()
-            if (cleanName.isNotBlank() && cleanName.lowercase() != "all shops" && 
-                list.none { it.name.trim().lowercase() == cleanName.lowercase() }) {
-                list.add(ShopStockInfo(id = "temp_${cleanName}", name = cleanName, location = "Assigned Shop"))
+    // Derive the two shops to show, preferring the admin-configured display names
+    // (from Settings). Falls back to names seen in the movement history so data is
+    // never hidden even before a shop is configured.
+    val displayShops = remember(shops, movements, state.shopNames) {
+        val configured = state.shopNames.take(2).map { it.trim() }
+        val configuredList = configured.mapIndexedNotNull { index, name ->
+            if (name.isNotBlank()) ShopStockInfo(
+                id = "config_$index",
+                name = name,
+                location = if (index == 0) "Primary Shop" else "Secondary Shop"
+            ) else null
+        }
+        if (configuredList.size >= 2) return@remember configuredList
+
+        val fromMovements = movements.map { it.shopName }.distinct()
+            .mapNotNull { raw ->
+                val clean = raw.trim()
+                if (clean.isNotBlank() && clean.lowercase() != "all shops") clean else null
+            }
+            .filter { m -> configuredList.none { it.name.equals(m, ignoreCase = true) } }
+            .take(2 - configuredList.size)
+            .mapIndexed { index, name ->
+                ShopStockInfo(id = "temp_$index", name = name, location = "Assigned Shop")
+            }
+
+        (configuredList + fromMovements).ifEmpty {
+            state.shopNames.take(2).mapIndexedNotNull { index, name ->
+                val clean = name.trim()
+                if (clean.isBlank()) null else ShopStockInfo(
+                    id = "default_$index",
+                    name = clean,
+                    location = if (index == 0) "Primary Shop" else "Secondary Shop"
+                )
             }
         }
-        if (list.isEmpty()) {
-            list.add(ShopStockInfo(id = "default_1", name = "Shop 1", location = "Primary Shop"))
-        }
-        
-        list.filter { 
-            val clean = it.name.trim().lowercase()
-            clean == "shop 1" || clean == "shop 2"
-        }
-            .distinctBy { it.name.trim().lowercase() }
-            .sortedBy { it.name }
     }
 
     var selectedShopName by remember { mutableStateOf("All Shops") }
@@ -122,23 +140,23 @@ fun StockInventoryScreen(
     val currentShopKey = if (selectedShopName == "All Shops") null else shopKey(selectedShopName)
 
     // ── Live inventory counts filtered by shop ────────────────────────────────
-    val liveStockMap = remember(movements, products, currentShopKey, displayShops) {
-        products.associate { p ->
-            val shopStockMap = displayShops.associate { shop ->
-                val sKey = shopKey(shop.name)
-                val rows = movements.filter {
-                    val mKey = shopKey(it.shopName)
-                    it.productId == p.id && mKey == sKey
-                }
-                val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
-                val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-                sKey to (inward - outward).coerceAtLeast(0)
+    // The "All Shops" view must agree with the Home screen and the ViewModel,
+    // which compute per-product net stock from EVERY movement regardless of the
+    // shop label it carries. Only the per-shop tabs scope to one shop, so
+    // movements recorded under an unconfigured/renamed shop never get orphaned.
+    val liveStockMap = remember(movements, products, currentShopKey) {
+        if (currentShopKey != null) {
+            // Per-shop tab: only that shop's movements count. No global fallback,
+            // so stock recorded for another shop never leaks into this tab.
+            val perShop = netStockPerProductInShop(movements, currentShopKey)
+            products.associate { p ->
+                p.id to (perShop[p.id] ?: 0)
             }
-
-            if (currentShopKey == null) {
-                p.id to shopStockMap.values.sum()
-            } else {
-                p.id to (shopStockMap[currentShopKey] ?: 0)
+        } else {
+            // "All Shops": every movement counts regardless of its shop label.
+            val global = netStockPerProduct(movements)
+            products.associate { p ->
+                p.id to (global[p.id] ?: 0)
             }
         }
     }
@@ -280,7 +298,7 @@ fun StockInventoryScreen(
                     LowStockAttentionCard(
                         lowProducts = lowStockProducts,
                         liveStock = effectiveStockMap,
-                        onRestock = { onAddStock(null, 0) }
+                        onRestock = { product -> activeAdjustProduct = product }
                     )
                 }
             }
@@ -329,8 +347,8 @@ fun StockInventoryScreen(
             } else {
                 items(filteredSortedProducts, key = { it.id }) { product ->
                     val units = effectiveStockMap[product.id] ?: 0
-                    val assignedShop = remember(product, movements) {
-                        getAssignedShop(product, movements)
+                    val assignedShop = remember(product, movements, state.shopNames) {
+                        getAssignedShop(product, movements, state.shopNames)
                     }
                     ProductBreakdownCard(
                         product = product,
@@ -346,9 +364,62 @@ fun StockInventoryScreen(
                 }
             }
 
+            // ── Stock History Entry ──────────────────────────────────────────
+            if (state.recentMovements.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(24.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(SaaSColors.Surface)
+                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(20.dp))
+                            .clickable(onClick = onOpenStockHistory)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(SaaSColors.PrimaryLight),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.History,
+                                contentDescription = null,
+                                tint = SaaSColors.Primary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "STOCK HISTORY",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = SaaSColors.TextPrimary,
+                                letterSpacing = 0.4.sp,
+                            )
+                            Text(
+                                text = "View all movements · ${state.recentMovements.size} entries",
+                                fontSize = 11.sp,
+                                color = SaaSColors.TextMuted,
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Rounded.KeyboardArrowRight,
+                            contentDescription = "Open stock history",
+                            tint = SaaSColors.TextMuted,
+                        )
+                    }
+                }
+            }
+
             // ── Recent Activity Section ───────────────────────────────────────
-            val shopMovements = movements.filter { currentShopKey == null || shopKey(it.shopName) == currentShopKey }.take(8)
-            if (shopMovements.isNotEmpty()) {
+            val recentMovements = movements.take(12)
+            if (recentMovements.isNotEmpty()) {
                 item {
                     Spacer(Modifier.height(24.dp))
                     Text(
@@ -360,7 +431,11 @@ fun StockInventoryScreen(
                         letterSpacing = 1.2.sp
                     )
                     Spacer(Modifier.height(12.dp))
-                    RecentActivityFeed(movements = shopMovements, products = products)
+                    RecentActivityFeed(
+                        movements = recentMovements,
+                        products = products,
+                        employees = state.employees,
+                    )
                 }
             }
         }
@@ -385,18 +460,15 @@ fun StockInventoryScreen(
 
         activeAdjustProduct?.let { product ->
             val targetShopName = if (selectedShopName == "All Shops") {
-                getAssignedShop(product, movements)
+                getAssignedShop(product, movements, state.shopNames)
             } else {
                 selectedShopName
             }
-            val tKey = shopKey(targetShopName)
-            val rows = movements.filter {
-                val mKey = shopKey(it.shopName)
-                it.productId == product.id && mKey == tKey
-            }
-            val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
-            val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-            val currentCases = (inward - outward).coerceAtLeast(0)
+            // Start the dialog on the exact live figure shown next to this
+            // product (business-wide net on the All-Shops tab, that shop's net
+            // on a shop tab). Adjustments are diff-based, so the +/- steppers
+            // move from this base and only the delta is recorded.
+            val currentCases = effectiveStockMap[product.id] ?: 0
 
             AdjustStockDialog(
                 product = product,
@@ -868,7 +940,7 @@ private fun ShopSummaryCard(
 private fun LowStockAttentionCard(
     lowProducts: List<ProductCategory>,
     liveStock: Map<String, Int>,
-    onRestock: () -> Unit
+    onRestock: (ProductCategory) -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -900,37 +972,59 @@ private fun LowStockAttentionCard(
             Spacer(Modifier.height(10.dp))
             lowProducts.forEach { p ->
                 val units = liveStock[p.id] ?: 0
-
-                val qtyVal = units
-                val unitWord = "Units"
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SaaSColors.SurfaceVar)
+                        .border(1.dp, SaaSColors.Border.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .clickable { onRestock(p) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = p.displayName.ifBlank { p.name },
-                        fontSize = 13.sp,
-                        color = SaaSColors.TextPrimary,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = if (qtyVal <= 0) "Out of Stock" else "$qtyVal $unitWord low",
-                        fontSize = 13.sp,
-                        color = SaaSColors.Critical,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = p.displayName.ifBlank { p.name },
+                            fontSize = 13.sp,
+                            color = SaaSColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = if (units <= 0) "Out of Stock" else "$units Units available",
+                            fontSize = 11.sp,
+                            color = SaaSColors.Critical,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SaaSColors.Critical)
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Restock",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
                 }
+                Spacer(Modifier.height(6.dp))
             }
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = onRestock,
-                colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Critical),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                modifier = Modifier.align(Alignment.End)
-            ) {
-                Text("Restock Items", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Tap a product to adjust its stock level",
+                fontSize = 11.sp,
+                color = SaaSColors.TextMuted,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
         }
     }
 }
@@ -1563,8 +1657,13 @@ private fun ProductBreakdownCard(
 @Composable
 private fun RecentActivityFeed(
     movements: List<StockMovement>,
-    products: List<ProductCategory>
+    products: List<ProductCategory>,
+    employees: List<EmployeeInfo>,
 ) {
+    // Accordion state: only one entry is open at a time. Clicking an open entry
+    // collapses it; clicking another switches the expanded detail to that one.
+    var expandedId by remember { mutableStateOf<String?>(null) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1575,75 +1674,202 @@ private fun RecentActivityFeed(
             .padding(16.dp)
     ) {
         movements.forEachIndexed { index, m ->
-            val isReturn = m.source.trim().startsWith("Empty Cases", ignoreCase = true)
+            val isExpanded = expandedId == m.id
+            val isReturn = m.source.isNotEmpty() && m.source.isEmptyCansSource()
             val product = products.find { it.id == m.productId }
             val prodName = if (isReturn) "Empty Units" else (product?.displayName ?: "Water Bottle")
-            val upc = 1
-            val casesCount = if (upc > 1) m.qty / upc else m.qty
-            val suffix = if (isReturn) "Units" else if (upc > 1) "Units" else "Units"
 
-            val isAdd = m.type == "inward"
-            val titleText = when {
-                isReturn -> if (isAdd) "Units Collected" else "Units Returned"
-                isAdd    -> "Stock Added"
-                else     -> "Stock Sold"
-            }
-            val qtyText = "${if (isAdd) "+" else "-"}$casesCount $suffix"
-            val sourceText = if (isAdd) "From ${m.source}" else "To ${m.source}"
-            
-            val iconBg = if (isAdd) SaaSColors.HealthyLight else Color(0xFFF3E8FF)
-            val iconFg = if (isAdd) SaaSColors.Healthy else Color(0xFF8B5CF6)
-            val arrowIcon = if (isAdd) Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward
-
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .animateContentSize()
             ) {
-                // Circle type icon
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(iconBg),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(arrowIcon, null, tint = iconFg, modifier = Modifier.size(16.dp))
-                }
-                Spacer(Modifier.width(12.dp))
-                
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "$titleText • $prodName",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = SaaSColors.TextPrimary
-                    )
-                    Text(
-                        text = sourceText,
-                        fontSize = 11.sp,
-                        color = SaaSColors.TextMuted
-                    )
-                }
+                StockActivityRow(
+                    movement   = m,
+                    productName = prodName,
+                    isReturn   = isReturn,
+                    isExpanded = isExpanded,
+                    onClick    = { expandedId = if (isExpanded) null else m.id },
+                )
 
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = qtyText,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = iconFg
+                if (isExpanded) {
+                    ActivityDetailSheet(
+                        movement = m,
+                        employees = employees,
                     )
-                    Text(
-                        text = "Today",
-                        fontSize = 11.sp,
-                        color = SaaSColors.TextMuted
-                    )
+                    Spacer(Modifier.height(4.dp))
                 }
             }
+
             if (index < movements.size - 1) {
                 HorizontalDivider(color = SaaSColors.Border, modifier = Modifier.padding(start = 48.dp))
             }
+        }
+    }
+}
+
+/** A tappable recent-activity row shared by the inventory feed & stock history. */
+@Composable
+internal fun StockActivityRow(
+    movement: StockMovement,
+    productName: String,
+    isReturn: Boolean,
+    isExpanded: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val upc = 1
+    val casesCount = if (upc > 1) movement.qty / upc else movement.qty
+    val suffix = "Units"
+
+    val isAdd = movement.type == "inward"
+    val titleText = when {
+        isReturn -> if (isAdd) "Units Collected" else "Units Returned"
+        isAdd    -> "Stock Added"
+        else     -> "Stock Sold"
+    }
+    val qtyText = "${if (isAdd) "+" else "-"}$casesCount $suffix"
+    val sourceText = if (isAdd) "From ${movement.source}" else "To ${movement.source}"
+
+    val iconBg = if (isAdd) SaaSColors.HealthyLight else Color(0xFFF3E8FF)
+    val iconFg = if (isAdd) SaaSColors.Healthy else Color(0xFF8B5CF6)
+    val arrowIcon = if (isAdd) Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Circle type icon
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(iconBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(arrowIcon, null, tint = iconFg, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "$titleText • $productName",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = SaaSColors.TextPrimary
+            )
+            Text(
+                text = sourceText,
+                fontSize = 11.sp,
+                color = SaaSColors.TextMuted
+            )
+        }
+
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = qtyText,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = iconFg
+            )
+            Text(
+                text = movement.createdAt?.let { com.example.ruwia.util.isoToDisplayDate(it) } ?: "—",
+                fontSize = 11.sp,
+                color = SaaSColors.TextMuted
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        Icon(
+            imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+            contentDescription = if (isExpanded) "Collapse details" else "Expand details",
+            tint = SaaSColors.TextMuted,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+/** Expandable detail sheet rendered under a movement row. Shared by the
+ *  inventory recent-activity feed and the stock-history screen. */
+@Composable
+internal fun ActivityDetailSheet(
+    movement: StockMovement,
+    employees: List<EmployeeInfo>,
+    bg: Color = SaaSColors.SurfaceVar,
+    border: Color = SaaSColors.Border,
+    textPrimary: Color = SaaSColors.TextPrimary,
+    textMuted: Color = SaaSColors.TextMuted,
+) {
+    val isAdd = movement.type == "inward"
+    val isReturn = movement.source.isNotEmpty() && movement.source.isEmptyCansSource()
+
+    val employeeName = employees.find { it.id == movement.employeeId }?.name
+        ?: if (movement.employeeId.isNullOrBlank()) "Admin" else "—"
+    val shopName = movement.shopName.ifBlank { "—" }
+    val date = com.example.ruwia.util.isoToDisplayDate(movement.createdAt)
+    val time = com.example.ruwia.util.isoToDisplayTime(movement.createdAt).ifBlank { "—" }
+
+    // Customer is embedded in the source recorded for sales / empty-can returns:
+    // "Sale · <name>", "Empty cans · <name>".
+    val customerName = remember(movement.source) {
+        val s = movement.source.trim()
+        when {
+            s.startsWith("Sale ·", ignoreCase = true)      -> s.substringAfter("·").trim()
+            s.startsWith("Empty cans ·", ignoreCase = true) -> s.substringAfter("·").trim()
+            s.startsWith("Empty cases ·", ignoreCase = true) -> s.substringAfter("·").trim()
+            else -> null
+        }
+    }
+
+    val rows = buildList {
+        if (isAdd) {
+            add("Added by" to (employeeName ?: "Admin"))
+            add("Shop" to shopName)
+            add("Date" to date)
+            add("Time" to time)
+            add("Total items" to "${movement.qty} Units")
+            if (customerName != null && isReturn) add("Customer" to customerName)
+        } else {
+            add("Employee" to (employeeName ?: "Admin"))
+            add("Shop" to shopName)
+            add("Date" to date)
+            add("Time" to time)
+            add("Quantity" to "${movement.qty} Units")
+            if (customerName != null) add("Customer" to customerName)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .border(1.dp, border.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        rows.forEachIndexed { i, (label, value) ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 11.sp,
+                    color = textMuted,
+                )
+                Text(
+                    text = value,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = textPrimary,
+                    textAlign = TextAlign.End,
+                )
+            }
+            if (i < rows.lastIndex) Spacer(Modifier.height(6.dp))
         }
     }
 }
@@ -2061,21 +2287,23 @@ private fun formatCases(value: Double): String {
     }
 }
 
-private fun getAssignedShop(product: ProductCategory, movements: List<StockMovement>): String {
+private fun getAssignedShop(
+    product: ProductCategory,
+    movements: List<StockMovement>,
+    configuredShops: List<String>,
+): String {
     val group = product.supplierGroup.trim()
-    return if (group.isNotBlank() && group != "GC" && group != "MB") {
-        group
-    } else {
-        val firstMov = movements.firstOrNull { it.productId == product.id }
-        if (firstMov != null) {
-            val sName = firstMov.shopName.split("·", limit = 2).firstOrNull()?.trim() ?: "Shop 1"
-            if (sName.contains("2", ignoreCase = true)) "Shop 2" else "Shop 1"
-        } else {
-            "Shop 1"
-        }
+    if (group.isNotBlank() && group != "GC" && group != "MB") {
+        return group
+    }
+    val firstMov = movements.firstOrNull { it.productId == product.id }
+    return when {
+        firstMov != null ->
+            firstMov.shopName.split("·", limit = 2).firstOrNull()?.trim()?.takeIf { it.isNotBlank() }
+                ?: configuredShops.firstOrNull().orEmpty()
+        else -> configuredShops.firstOrNull().orEmpty()
     }
 }
-
 @Composable
 private fun PremiumWaterBottle(
     level: Float, // 0.0 to 1.0

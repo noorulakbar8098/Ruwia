@@ -1,5 +1,6 @@
 package com.example.ruwia.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,6 +10,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -18,10 +21,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import com.example.ruwia.util.capitalizeWords
+import com.example.ruwia.util.isTextField
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.ui.dashboard.*
 
@@ -37,22 +46,31 @@ private val avatarPalette = listOf(
 @Composable
 fun EmployeesScreen(
     employees: List<EmployeeInfo>,
+    shops: List<String> = emptyList(),
     onBack: () -> Unit,
-    onAddEmployee: () -> Unit = {}
+    onAddEmployee: () -> Unit = {},
+    onUpdateEmployee: (EmployeeInfo) -> Unit = {},
+    onDeleteEmployee: (String) -> Unit = {},
 ) {
     var selectedRole by remember { mutableStateOf("All") }
+    var editingEmployee by remember { mutableStateOf<EmployeeInfo?>(null) }
+    var deletingEmployee by remember { mutableStateOf<EmployeeInfo?>(null) }
+
+    // Inactive (soft-deleted) employees are kept in state only so their names
+    // still resolve in stock history and the report summary — hide them here.
+    val active = employees.filter { it.status != "inactive" }
 
     val roles = buildList {
         add("All")
-        employees.map { it.role.replaceFirstChar { c -> c.uppercaseChar() } }
+        active.map { it.role.replaceFirstChar { c -> c.uppercaseChar() } }
             .distinct().forEach { add(it) }
     }
-    val filtered = if (selectedRole == "All") employees
-    else employees.filter { it.role.equals(selectedRole, ignoreCase = true) }
+    val filtered = if (selectedRole == "All") active
+    else active.filter { it.role.equals(selectedRole, ignoreCase = true) }
 
-    val onlineCount = employees.count { it.status == "active" || it.status == "on_delivery" }
-    val shopCount   = employees.map { it.shopName }.distinct().size
-    val roleCount   = employees.map { it.role }.distinct().size
+    val onlineCount = active.count { it.status == "active" || it.status == "on_delivery" }
+    val shopCount   = active.map { it.shopName }.distinct().size
+    val roleCount   = active.map { it.role }.distinct().size
 
     Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)
             .statusBarsPadding()) {
@@ -75,7 +93,7 @@ fun EmployeesScreen(
                         Text("Employees", color = NTColors.TextPrimary,
                             fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("· ${employees.size}", color = NTColors.TextTertiary,
+                        Text("· ${active.size}", color = NTColors.TextTertiary,
                             fontSize = 18.sp, fontWeight = FontWeight.Normal)
                     }
                     ScreenIconButton(icon = Icons.Rounded.PersonAdd, onClick = onAddEmployee)
@@ -113,7 +131,7 @@ fun EmployeesScreen(
                         Column {
                             Text("TEAM", color = NTColors.PrimaryLight.copy(alpha = 0.8f),
                                 fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                            Text("${employees.size} employees · $onlineCount online",
+                            Text("${active.size} employees · $onlineCount online",
                                 color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
                                 lineHeight = 26.sp)
                             Text("$shopCount SHOPS · $roleCount ROLES",
@@ -133,8 +151,8 @@ fun EmployeesScreen(
                     horizontalArrangement = Arrangement.spacedBy(NTDp.sm)
                 ) {
                     roles.forEach { role ->
-                        val count = if (role == "All") employees.size
-                        else employees.count { it.role.equals(role, ignoreCase = true) }
+                        val count = if (role == "All") active.size
+                        else active.count { it.role.equals(role, ignoreCase = true) }
                         val isSelected = role == selectedRole
                         item {
                             Box(
@@ -163,15 +181,71 @@ fun EmployeesScreen(
 
             // ── Employee cards ────────────────────────────────
             itemsIndexed(items = filtered, key = { _, e -> e.id }) { index, employee ->
-                EmployeeCard(employee = employee, colorIndex = employees.indexOf(employee))
+                EmployeeCard(
+                    employee   = employee,
+                    colorIndex = employees.indexOf(employee),
+                    onEdit     = { editingEmployee = employee },
+                    onDelete   = { deletingEmployee = employee },
+                )
                 Spacer(modifier = Modifier.height(NTDp.sm))
             }
+        }
+
+        editingEmployee?.let { e ->
+            val shopOptions = (shops + employees.map { it.shopName })
+                .map { it.trim() }.filter { it.isNotBlank() }.distinct()
+            EmployeeEditDialog(
+                initial = e,
+                shops   = shopOptions,
+                onDismiss = { editingEmployee = null },
+                onSave    = { updated ->
+                    onUpdateEmployee(updated)
+                    editingEmployee = null
+                },
+            )
+        }
+
+        deletingEmployee?.let { e ->
+            AlertDialog(
+                onDismissRequest = { deletingEmployee = null },
+                icon  = { Icon(Icons.Rounded.Delete, null, tint = NTColors.Error) },
+                title = { Text("Remove ${e.name}?", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+                text  = {
+                    Text(
+                        "This employee will no longer be able to sign in. Their past sales and stock history will remain visible in reports.",
+                        fontSize = 13.sp, color = NTColors.TextSecondary,
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            onDeleteEmployee(e.id)
+                            deletingEmployee = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Error, contentColor = Color.White),
+                    ) { Text("Remove", fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { deletingEmployee = null },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                        border = BorderStroke(1.dp, NTColors.Border),
+                    ) { Text("Cancel") }
+                },
+                containerColor = NTColors.Surface,
+                shape = RoundedCornerShape(20.dp),
+            )
         }
     }
 }
 
 @Composable
-private fun EmployeeCard(employee: EmployeeInfo, colorIndex: Int) {
+private fun EmployeeCard(
+    employee: EmployeeInfo,
+    colorIndex: Int,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val isOnline = employee.status == "active" || employee.status == "on_delivery"
     val avatarColor = avatarPalette[colorIndex % avatarPalette.size]
     val initials = employee.name.split(" ")
@@ -223,9 +297,9 @@ private fun EmployeeCard(employee: EmployeeInfo, colorIndex: Int) {
                 }
             }
 
-            // Stat
-            if (employee.todayStat >= 0) {
-                Column(horizontalAlignment = Alignment.End) {
+            // Stat + actions
+            Column(horizontalAlignment = Alignment.End) {
+                if (employee.todayStat >= 0) {
                     Text(
                         "${employee.todayStat}",
                         color = NTColors.TextPrimary,
@@ -239,6 +313,27 @@ private fun EmployeeCard(employee: EmployeeInfo, colorIndex: Int) {
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.5.sp
                     )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(
+                        modifier = Modifier.size(30.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(NTColors.SurfaceVar)
+                            .clickable(onClick = onEdit),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Edit, "Edit", tint = NTColors.TextSecondary, modifier = Modifier.size(15.dp))
+                    }
+                    Box(
+                        modifier = Modifier.size(30.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(NTColors.ErrorLight)
+                            .clickable(onClick = onDelete),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Delete, "Delete", tint = NTColors.Error, modifier = Modifier.size(15.dp))
+                    }
                 }
             }
         }
@@ -285,5 +380,178 @@ private fun ScreenIconButton(icon: androidx.compose.ui.graphics.vector.ImageVect
     ) {
         Icon(icon, contentDescription = null, tint = NTColors.TextPrimary,
             modifier = Modifier.size(NTDp.iconMd))
+    }
+}
+
+@Composable
+private fun EmployeeEditDialog(
+    initial: EmployeeInfo,
+    shops: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (EmployeeInfo) -> Unit,
+) {
+    var name   by remember { mutableStateOf(initial.name) }
+    var phone  by remember { mutableStateOf(initial.phone) }
+    var role   by remember { mutableStateOf(initial.role.ifBlank { "staff" }) }
+    var shop   by remember { mutableStateOf(initial.shopName.ifBlank { shops.firstOrNull().orEmpty() }) }
+    var salary by remember { mutableStateOf(initial.monthlySalary.toString()) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(NTColors.Surface, RoundedCornerShape(20.dp))
+                .padding(24.dp),
+        ) {
+            Text("Edit employee", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+            Spacer(Modifier.height(4.dp))
+            Text("Update this employee's profile details.", fontSize = 12.sp, color = NTColors.TextTertiary)
+            Spacer(Modifier.height(NTDp.md))
+
+            EmployeeFieldLabel("Name")
+            EmployeeFieldInput(
+                value = name, onValueChange = { name = it },
+                placeholder = "Employee name",
+                keyboardType = KeyboardType.Text,
+            )
+            Spacer(Modifier.height(NTDp.md))
+            EmployeeFieldLabel("Phone")
+            EmployeeFieldInput(
+                value = phone, onValueChange = { phone = it },
+                placeholder = "Mobile number",
+                keyboardType = KeyboardType.Phone,
+            )
+            Spacer(Modifier.height(NTDp.md))
+            EmployeeFieldLabel("Monthly salary")
+            EmployeeFieldInput(
+                value = salary, onValueChange = { salary = it },
+                placeholder = "e.g. 15000",
+                keyboardType = KeyboardType.Decimal,
+            )
+
+            Spacer(Modifier.height(NTDp.md))
+            Text("Role", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextSecondary)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("manager", "stock", "cashier", "driver").forEach { r ->
+                    val selected = role.equals(r, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(NTDp.radFull))
+                            .background(if (selected) NTColors.AccentLight else NTColors.SurfaceVar)
+                            .clickable { role = r }
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                    ) {
+                        Text(
+                            r.replaceFirstChar { it.uppercaseChar() },
+                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            color = if (selected) NTColors.AccentDark else NTColors.TextSecondary,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(NTDp.md))
+            Text("Shop", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextSecondary)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val shopOptions = shops.filter { it.isNotBlank() }
+                shopOptions.forEach { s ->
+                    val selected = shop == s
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(NTDp.radFull))
+                            .background(if (selected) NTColors.AccentLight else NTColors.SurfaceVar)
+                            .clickable { shop = s }
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                    ) {
+                        Text(
+                            s,
+                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            color = if (selected) NTColors.AccentDark else NTColors.TextSecondary,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(NTDp.lg))
+            Row(horizontalArrangement = Arrangement.spacedBy(NTDp.sm)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(NTColors.PrimaryLight)
+                        .clickable(onClick = onDismiss)
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Cancel", fontWeight = FontWeight.SemiBold, color = NTColors.Primary)
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (name.isNotBlank()) NTColors.Primary else NTColors.TextDisabled)
+                        .clickable(enabled = name.isNotBlank()) {
+                            onSave(
+                                initial.copy(
+                                    name          = name.trim().ifBlank { initial.name },
+                                    phone         = phone.trim(),
+                                    role          = role.lowercase(),
+                                    shopName      = shop,
+                                    monthlySalary = salary.toDoubleOrNull() ?: initial.monthlySalary,
+                                )
+                            )
+                        }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Save", fontWeight = FontWeight.Bold, color = NTColors.TextOnPrimary)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmployeeFieldLabel(text: String) {
+    Text(
+        text,
+        fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+        color = NTColors.TextSecondary,
+        letterSpacing = 0.4.sp,
+    )
+    Spacer(Modifier.height(6.dp))
+}
+
+@Composable
+private fun EmployeeFieldInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    keyboardType: KeyboardType,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        if (value.isEmpty()) {
+            Text(placeholder, fontSize = 14.sp, color = NTColors.TextTertiary)
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = if (keyboardType.isTextField()) { { v -> onValueChange(capitalizeWords(v)) } } else onValueChange,
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
+            cursorBrush = SolidColor(NTColors.Primary),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = keyboardType,
+                capitalization = if (keyboardType.isTextField()) KeyboardCapitalization.Words else KeyboardCapitalization.None,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }

@@ -15,7 +15,7 @@ import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.Supplier
-import com.example.ruwia.domain.isEmptyCansSource
+import com.example.ruwia.domain.netStockPerProduct
 import com.example.ruwia.util.sanitizeError
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,6 +67,12 @@ data class AdminState(
     val currentMonth: String = "",
     /** "YYYY-MM" of the previous calendar month. */
     val previousMonth: String = "",
+    /** Display names of the business's two shops (index 0 = Shop 1, 1 = Shop 2). */
+    val shopNames: List<String> = listOf("Shop 1", "Shop 2"),
+    /** Custom shop name set by the admin (kept as the primary display fallback). */
+    val shopName: String = "",
+    /** Global baseline subtracted from the live "Empty Cases" figure. */
+    val emptyCansBaseline: Int = 0,
 )
 
 class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
@@ -97,6 +103,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                     val products      = repo.getProductCategories()
                     val stockItems    = repo.getStockSummaryList()
                     val saleEntries   = repo.getSaleEntries()
+                    val baseline      = repo.getEmptyCansBaseline()
                     
                     // Prevent replacing valid cached data with empty lists if RLS returned empty lists due to a race
                     if (products.isNotEmpty() || movements.isNotEmpty() || _state.value.productCategories.isEmpty()) {
@@ -107,6 +114,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                             productCategories = products,
                             stockItems        = stockItems,
                             saleEntries       = saleEntries,
+                            emptyCansBaseline = if (baseline >= 0) baseline else _state.value.emptyCansBaseline,
                         ).deriveStockFromMovements()
                     }
                 }
@@ -147,6 +155,9 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             val previousMonth    = previousYearMonth()
             val expense          = repo.getMonthlyExpense(currentMonth)
             val lastExpense      = repo.getMonthlyExpense(previousMonth)
+            val shopNames        = repo.getShopNames()
+            val shopName         = shopNames.firstOrNull().orEmpty()
+            val baseline         = repo.getEmptyCansBaseline()
             AdminState(
                 loading              = false,
                 mrr                  = mrr,
@@ -168,6 +179,9 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 monthlyExpenses      = listOfNotNull(expense, lastExpense).associateBy { it.month },
                 currentMonth         = currentMonth,
                 previousMonth        = previousMonth,
+                shopNames            = shopNames,
+                shopName             = shopName,
+                emptyCansBaseline    = if (baseline >= 0) baseline else 0,
             )
         }.onSuccess { newState ->
             _state.value = newState.deriveStockFromMovements()
@@ -179,21 +193,71 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         }
     }
 
+    // ── Empty-cases reset ─────────────────────────────────────────────────────
+
+    /** Zeroes the live "Empty Cases" figure business-wide. Sets the persisted
+     *  baseline to the current total; the reported figure becomes 0 and any
+     *  new returns accumulate on top. */
+    fun resetEmptyCases() = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching { repo.resetEmptyCases() }
+            .onSuccess { newBaseline ->
+                if (newBaseline >= 0) {
+                    _state.value = _state.value.copy(
+                        loading           = false,
+                        emptyCansBaseline = newBaseline,
+                    )
+                } else {
+                    // The baseline could not be persisted (app_settings table not
+                    // migrated on the live database / RLS blocked the write).
+                    // Keep the last-known baseline so the count does not come
+                    // back on the next refresh, and tell the user why.
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        error   = "Empty Cases reset could not be saved. The " +
+                            "app_settings table may not be created yet — run " +
+                            "supabase_schema.sql in the Supabase SQL Editor.",
+                    )
+                }
+            }
+            .onFailure {
+                it.printStackTrace()
+                _state.value = _state.value.copy(error = it.message, loading = false)
+            }
+    }
+
+    // ── Empty-cases direct entry ──────────────────────────────────────────────
+
+    /** Records a manual inward "Empty cans" movement so the live Empty Cases
+     *  figure can be bumped from the home screen without a full screen form. */
+    fun addEmptyCases(qty: Int) = viewModelScope.launch {
+        if (qty <= 0) return@launch
+        _state.value = _state.value.copy(loading = false, error = null)
+        val shop = _state.value.shopNames.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Shop 1"
+        runCatching { repo.addEmptyCases(qty, shop) }
+            .onSuccess { loadData() }
+            .onFailure {
+                it.printStackTrace()
+                _state.value = _state.value.copy(error = it.message ?: "Failed to add empty cases", loading = false)
+            }
+    }
+
     // ── Product categories ────────────────────────────────────────────────────
 
-    fun addProductCategory(cat: ProductCategory, openingStock: Int = 0, shopName: String = "Shop 1") = viewModelScope.launch {
+    fun addProductCategory(cat: ProductCategory, openingStock: Int = 0, shopName: String = "") = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
-        runCatching { 
-            // We store the assigned shop in supplierGroup so All Shops view can correctly 
+        val resolvedShop = shopName.ifBlank { _state.value.shopNames.firstOrNull().orEmpty() }
+        runCatching {
+            // We store the assigned shop in supplierGroup so All Shops view can correctly
             // identify which shop this product belongs to for stock adjustments.
-            val productWithShop = cat.copy(supplierGroup = shopName)
+            val productWithShop = cat.copy(supplierGroup = resolvedShop)
             val savedId = repo.addProductCategory(productWithShop)
             if (openingStock > 0 && savedId.isNotBlank()) {
                 repo.addRawStockMovement(
                     source = "Opening Stock",
                     qty = openingStock,
                     type = "inward",
-                    shopName = shopName,
+                    shopName = resolvedShop,
                     productId = savedId
                 )
             }
@@ -203,13 +267,20 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             }
             .onFailure {
                 it.printStackTrace()
-                _state.value = _state.value.copy(error = "Database Error: ${it.message}", loading = false) 
+                _state.value = _state.value.copy(error = "Database Error: ${it.message}", loading = false)
             }
     }
 
     fun updateProductCategory(cat: ProductCategory) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         val old = _state.value.productCategories.find { it.id == cat.id }
+        // Attribute the adjustment to the product's assigned shop (supplierGroup)
+        // so the per-shop ledger stays consistent; fall back to the first shop
+        // name when the product was never assigned a real shop.
+        val adjustmentShop = cat.supplierGroup.trim().let {
+            if (it.isNotBlank() && it != "GC" && it != "MB") it
+            else _state.value.shopNames.firstOrNull().orEmpty()
+        }
         if (old != null && old.stockAvailable != cat.stockAvailable) {
             val diff = cat.stockAvailable - old.stockAvailable
             val type = if (diff > 0) "inward" else "outward"
@@ -218,7 +289,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                     source = "Admin Adjustment",
                     qty = kotlin.math.abs(diff),
                     type = type,
-                    shopName = "Shop 1",
+                    shopName = adjustmentShop,
                     productId = cat.id
                 )
             }
@@ -279,7 +350,16 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     }
 
     fun loadMonthlyExpense(month: String) = viewModelScope.launch {
-        if (month.isBlank() || _state.value.monthlyExpenses.containsKey(month)) return@launch
+        if (month.isBlank()) return@launch
+        // The dashboard comparison header also needs the month *before* the one
+        // being viewed (prev-month revenue/profit vs expenses), which may never
+        // have been cached when the admin jumps back beyond the last two months.
+        loadMonthlyExpenseIntoCache(month)
+        loadMonthlyExpenseIntoCache(previousMonthKey(month))
+    }
+
+    private suspend fun loadMonthlyExpenseIntoCache(month: String) {
+        if (month.isBlank() || _state.value.monthlyExpenses.containsKey(month)) return
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching { repo.getMonthlyExpense(month) }
             .onSuccess { expense ->
@@ -293,6 +373,15 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 }
             }
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
+    }
+
+    /** "YYYY-MM" of the calendar month before [month], e.g. "2026-03" -> "2026-02". */
+    private fun previousMonthKey(month: String): String {
+        val parts = month.split("-")
+        if (parts.size != 2) return ""
+        val y = parts[0].toIntOrNull() ?: return ""
+        val m = parts[1].toIntOrNull() ?: return ""
+        return if (m == 1) "${y - 1}-12" else "$y-${(m - 1).toString().padStart(2, '0')}"
     }
 
     // ── Stock movements ───────────────────────────────────────────────────────
@@ -314,7 +403,9 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 val shopStocks    = repo.getShopStocks()
                 val productCats   = repo.getProductCategories()
                 _state.value = _state.value.copy(
-                    recentMovements   = updated,
+                    // Never blank the feed on a transient read hiccup: if the
+                    // refresh returns nothing, keep whatever we already had.
+                    recentMovements   = updated.ifEmpty { _state.value.recentMovements },
                     stockItems        = stockItems,
                     shopStocks        = shopStocks,
                     productCategories = productCats,
@@ -413,6 +504,46 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             }
     }
 
+    fun updateCustomer(customer: Customer) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching { repo.updateCustomer(customer) }
+            .onSuccess { saved ->
+                val merged = _state.value.customers
+                    .map { if (it.id == saved.id) saved else it }
+                _state.value = _state.value.copy(customers = merged, loading = false)
+                // A rename also rewrites denormalized copies in sale_entries and
+                // stock_movements sources, so refresh so every screen (report
+                // summary, stock history) shows the new name immediately.
+                loadData()
+            }
+            .onFailure {
+                it.printStackTrace()
+                _state.value = _state.value.copy(error = it.message, loading = false)
+            }
+    }
+
+    fun updateShopName(index: Int, newName: String) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching { repo.updateShopName(index, newName) }
+            .onSuccess {
+                val updated = _state.value.shopNames.toMutableList()
+                if (index in updated.indices) updated[index] = newName
+                _state.value = _state.value.copy(
+                    shopNames = updated,
+                    shopName  = if (index == 0) newName else _state.value.shopName,
+                    loading   = false
+                )
+                // Reload everything: stock_movements.shop_name, product supplier
+                // groups, employee assignments and sale entries were migrated to
+                // the new name in the DB, so the whole UI must reflect it now
+                // instead of waiting for the next periodic refresh.
+                loadData()
+            }
+            .onFailure {
+                _state.value = _state.value.copy(error = it.message, loading = false)
+            }
+    }
+
     fun clearError() {
         _state.value = _state.value.copy(error = null)
     }
@@ -460,6 +591,36 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
 
     fun clearEmployeeCreation() {
         _state.value = _state.value.copy(employeeCreation = EmployeeCreationState.Idle)
+    }
+
+    fun updateEmployee(employee: EmployeeInfo) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching { repo.updateEmployee(employee) }
+            .onSuccess { saved ->
+                val merged = _state.value.employees.map { if (it.id == saved.id) saved else it }
+                _state.value = _state.value.copy(employees = merged, loading = false)
+            }
+            .onFailure {
+                it.printStackTrace()
+                _state.value = _state.value.copy(error = it.message, loading = false)
+            }
+    }
+
+    fun deleteEmployee(id: String) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching { repo.deleteEmployee(id) }
+            .onSuccess {
+                // Soft-delete: keep the row (as inactive) so historical reports
+                // still resolve the employee's name.
+                val updated = _state.value.employees.map {
+                    if (it.id == id) it.copy(status = "inactive") else it
+                }
+                _state.value = _state.value.copy(employees = updated, loading = false)
+            }
+            .onFailure {
+                it.printStackTrace()
+                _state.value = _state.value.copy(error = it.message, loading = false)
+            }
     }
 
     fun addStockForProduct(
@@ -512,6 +673,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         qty: Int,
         shopName: String,
         createdAt: String,
+        emptyCans: Int = 0,
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
@@ -553,6 +715,18 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 productId = productId,
                 createdAt = createdAt
             )
+
+            // Returned empties come INTO the shop as an extra inward movement.
+            if (emptyCans > 0) {
+                repo.addStockMovement(
+                    source = "Empty cans · Inward Purchase",
+                    qty = emptyCans,
+                    type = "inward",
+                    shopName = shopName,
+                    productId = null,
+                    createdAt = createdAt
+                )
+            }
         }.onSuccess {
             loadData()
         }.onFailure {
@@ -628,14 +802,12 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
 
     private fun AdminState.deriveStockFromMovements(): AdminState {
         if (recentMovements.isEmpty()) return this
-        
+
+        val net = netStockPerProduct(recentMovements)
         val updatedProducts = productCategories.map { p ->
-            val rows = recentMovements.filter { it.productId == p.id }
-            val inward = rows.filter { it.type == "inward" }.sumOf { it.qty }
-            val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-            p.copy(stockAvailable = (inward - outward).coerceAtLeast(0))
+            p.copy(stockAvailable = net[p.id] ?: 0)
         }
-        
+
         return this.copy(productCategories = updatedProducts)
     }
 
