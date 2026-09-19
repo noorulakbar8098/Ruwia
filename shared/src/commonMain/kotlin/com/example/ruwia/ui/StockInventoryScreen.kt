@@ -35,6 +35,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.CustomerProductPrice
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
@@ -90,6 +93,11 @@ fun StockInventoryScreen(
     onDeleteProduct: (String) -> Unit = {},
     onToggleProductStatus: (ProductCategory) -> Unit = {},
     onOpenStockHistory: () -> Unit = {},
+    onSaveCustomerPrice: (CustomerProductPrice) -> Unit = {},
+    onLoadCustomerPrices: (productId: String) -> Unit = {},
+    onDeleteCustomerPrice: (customerId: String, productId: String) -> Unit = { _, _ -> },
+    /** View-only mode (employee app): same UI, every editing affordance removed. */
+    readOnly: Boolean = false,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val products = state.productCategories
@@ -134,7 +142,7 @@ fun StockInventoryScreen(
     }
 
     var selectedShopName by remember { mutableStateOf("All Shops") }
-    
+
     val selectedShop = displayShops.find { it.name == selectedShopName }
     val selectedShopLocation = selectedShop?.location ?: if (selectedShopName == "All Shops") "Combined Inventory" else "Assigned Shop"
     val currentShopKey = if (selectedShopName == "All Shops") null else shopKey(selectedShopName)
@@ -183,13 +191,15 @@ fun StockInventoryScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(InvFilter.ALL) }
     var selectedSort by remember { mutableStateOf(InvSort.NAME) }
-    
+
     var showFilterMenu by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
 
     var activeTransferProduct by remember { mutableStateOf<ProductCategory?>(null) }
     var activeAdjustProduct by remember { mutableStateOf<ProductCategory?>(null) }
     var deletingProduct by remember { mutableStateOf<ProductCategory?>(null) }
+    var activeCustomerPriceProduct by remember { mutableStateOf<ProductCategory?>(null) }
+    var showCustomerPriceDialog by remember { mutableStateOf(false) }
 
     // ── Filtered & Sorted products list ──────────────────────────────────────
     val filteredSortedProducts = remember(products, effectiveStockMap, searchQuery, selectedFilter, selectedSort) {
@@ -212,7 +222,7 @@ fun StockInventoryScreen(
                 val u2 = effectiveStockMap[p2.id] ?: 0
                 val val1 = u1 * p1.defaultSellPrice
                 val val2 = u2 * p2.defaultSellPrice
-                
+
                 when (selectedSort) {
                     InvSort.NAME -> p1.displayName.compareTo(p2.displayName, ignoreCase = true)
                     InvSort.QTY_DESC -> u2.compareTo(u1)
@@ -273,173 +283,188 @@ fun StockInventoryScreen(
                         )
                     }
                 }
-            }
+                }
 
-            // ── Summary KPI Card ──────────────────────────────────────────────
-            item {
-                Spacer(Modifier.height(20.dp))
-                ShopSummaryCard(
-                    totalInventory = totalInventory,
-                    totalValue = totalValue,
-                    productsCount = productsAvailable,
-                    lowStockCount = lowStockCount,
-                    unitLabel = "Units"
-                )
-            }
-
-            // ── Low Stock Attention Alert Section ─────────────────────────────
-            val lowStockProducts = products.filter { p ->
-                val units = effectiveStockMap[p.id] ?: 0
-                units in 1..5
-            }
-            if (lowStockProducts.isNotEmpty()) {
+                // ── Summary KPI Card ──────────────────────────────────────────────
                 item {
                     Spacer(Modifier.height(20.dp))
-                    LowStockAttentionCard(
-                        lowProducts = lowStockProducts,
-                        liveStock = effectiveStockMap,
-                        onRestock = { product -> activeAdjustProduct = product }
+                    ShopSummaryCard(
+                        totalInventory = totalInventory,
+                        totalValue = totalValue,
+                        productsCount = productsAvailable,
+                        lowStockCount = lowStockCount,
+                        unitLabel = "Units",
+                        readOnly = readOnly
                     )
                 }
-            }
 
-            // ── Analytics Insights Section ────────────────────────────────────
-            item {
-                Spacer(Modifier.height(24.dp))
-                InventoryAnalyticsRow(
-                    products = products,
-                    liveStock = effectiveStockMap,
-                    movements = movements,
-                    currentShopKey = currentShopKey
-                )
-            }
-
-            // ── Donut Chart Distribution Section ──────────────────────────────
-            if (totalInventory > 0.0) {
-                item {
-                    Spacer(Modifier.height(24.dp))
-                    InventoryDistributionCard(
-                        products = products,
-                        liveStock = effectiveStockMap,
-                        totalInventory = totalInventory
-                    )
-                }
-            }
-
-            // ── Product Breakdown List ────────────────────────────────────────
-            item {
-                Spacer(Modifier.height(24.dp))
-                Text(
-                    text = "PRODUCT BREAKDOWN",
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                    color = SaaSColors.Primary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp
-                )
-                Spacer(Modifier.height(10.dp))
-            }
-
-            if (filteredSortedProducts.isEmpty()) {
-                item {
-                    EmptySearchState()
-                }
-            } else {
-                items(filteredSortedProducts, key = { it.id }) { product ->
-                    val units = effectiveStockMap[product.id] ?: 0
-                    val assignedShop = remember(product, movements, state.shopNames) {
-                        getAssignedShop(product, movements, state.shopNames)
+                // ── Low Stock Attention Alert Section ─────────────────────────────
+                // Hidden in read-only (employee) mode.
+                if (!readOnly) {
+                    val lowStockProducts = products.filter { p ->
+                        val units = effectiveStockMap[p.id] ?: 0
+                        units in 1..5
                     }
-                    ProductBreakdownCard(
-                        product = product,
-                        liveUnits = units,
-                        assignedShop = assignedShop,
-                        onEditPrice = { onAddStock(product, units) },
-                        onTransferClick = { activeTransferProduct = product },
-                        onAdjustClick = { activeAdjustProduct = product },
-                        onDeleteClick = { deletingProduct = product },
-                        onToggleStatus = { onToggleProductStatus(product) }
-                    )
-                    Spacer(Modifier.height(12.dp))
+                    if (lowStockProducts.isNotEmpty()) {
+                        item {
+                            Spacer(Modifier.height(20.dp))
+                            LowStockAttentionCard(
+                                lowProducts = lowStockProducts,
+                                liveStock = effectiveStockMap,
+                                readOnly = readOnly,
+                                onRestock = { product -> activeAdjustProduct = product }
+                            )
+                        }
+                    }
                 }
-            }
 
-            // ── Stock History Entry ──────────────────────────────────────────
-            if (state.recentMovements.isNotEmpty()) {
-                item {
-                    Spacer(Modifier.height(24.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(SaaSColors.Surface)
-                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(20.dp))
-                            .clickable(onClick = onOpenStockHistory)
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(SaaSColors.PrimaryLight),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.History,
-                                contentDescription = null,
-                                tint = SaaSColors.Primary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "STOCK HISTORY",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = SaaSColors.TextPrimary,
-                                letterSpacing = 0.4.sp,
-                            )
-                            Text(
-                                text = "View all movements · ${state.recentMovements.size} entries",
-                                fontSize = 11.sp,
-                                color = SaaSColors.TextMuted,
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.Rounded.KeyboardArrowRight,
-                            contentDescription = "Open stock history",
-                            tint = SaaSColors.TextMuted,
+                // ── Analytics Insights Section ────────────────────────────────────
+                // (Top Product / Most Moving / Fastest Selling — hidden in
+                // read-only (employee) mode.)
+                if (!readOnly) {
+                    item {
+                        Spacer(Modifier.height(24.dp))
+                        InventoryAnalyticsRow(
+                            products = products,
+                            liveStock = effectiveStockMap,
+                            movements = movements,
+                            currentShopKey = currentShopKey
                         )
                     }
                 }
-            }
 
-            // ── Recent Activity Section ───────────────────────────────────────
-            val recentMovements = movements.take(12)
-            if (recentMovements.isNotEmpty()) {
+                // ── Donut Chart Distribution Section ──────────────────────────────
+                if (totalInventory > 0.0) {
+                    item {
+                        Spacer(Modifier.height(24.dp))
+                        InventoryDistributionCard(
+                            products = products,
+                            liveStock = effectiveStockMap,
+                            totalInventory = totalInventory
+                        )
+                    }
+                }
+
+                // ── Product Breakdown List ────────────────────────────────────────
                 item {
                     Spacer(Modifier.height(24.dp))
                     Text(
-                        text = "RECENT ACTIVITY",
+                        text = "PRODUCT BREAKDOWN",
                         modifier = Modifier.padding(horizontal = 24.dp),
                         color = SaaSColors.Primary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.2.sp
                     )
-                    Spacer(Modifier.height(12.dp))
-                    RecentActivityFeed(
-                        movements = recentMovements,
-                        products = products,
-                        employees = state.employees,
-                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+
+                if (filteredSortedProducts.isEmpty()) {
+                    item {
+                        EmptySearchState()
+                    }
+                } else {
+                    items(filteredSortedProducts, key = { it.id }) { product ->
+                        val units = effectiveStockMap[product.id] ?: 0
+                        val assignedShop = remember(product, movements, state.shopNames) {
+                            getAssignedShop(product, movements, state.shopNames)
+                        }
+                        ProductBreakdownCard(
+                            product = product,
+                            liveUnits = units,
+                            assignedShop = assignedShop,
+                            readOnly = readOnly,
+                            onEditPrice = { onAddStock(product, units) },
+                            onTransferClick = { activeTransferProduct = product },
+                            onAdjustClick = { activeAdjustProduct = product },
+                            onDeleteClick = { deletingProduct = product },
+                            onToggleStatus = { onToggleProductStatus(product) },
+                            onSetCustomerPrice = { activeCustomerPriceProduct = product; showCustomerPriceDialog = true }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
+
+                // ── Stock History Entry ──────────────────────────────────────────
+                // Hidden in read-only (employee) mode.
+                if (!readOnly && state.recentMovements.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(24.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(SaaSColors.Surface)
+                                .border(1.dp, SaaSColors.Border, RoundedCornerShape(20.dp))
+                                .clickable(onClick = onOpenStockHistory)
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(SaaSColors.PrimaryLight),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.History,
+                                    contentDescription = null,
+                                    tint = SaaSColors.Primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "STOCK HISTORY",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SaaSColors.TextPrimary,
+                                    letterSpacing = 0.4.sp,
+                                )
+                                Text(
+                                    text = "View all movements · ${state.recentMovements.size} entries",
+                                    fontSize = 11.sp,
+                                    color = SaaSColors.TextMuted,
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Rounded.KeyboardArrowRight,
+                                contentDescription = "Open stock history",
+                                tint = SaaSColors.TextMuted,
+                            )
+                        }
+                    }
+                }
+
+                // ── Recent Activity Section ───────────────────────────────────────
+                // Hidden in read-only (employee) mode.
+                if (!readOnly) {
+                    val recentMovements = movements.take(12)
+                    if (recentMovements.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(24.dp))
+                        Text(
+                            text = "RECENT ACTIVITY",
+                            modifier = Modifier.padding(horizontal = 24.dp),
+                            color = SaaSColors.Primary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        RecentActivityFeed(
+                            movements = recentMovements,
+                            products = products,
+                            employees = state.employees,
+                        )
+                    }
+                    }
                 }
             }
         }
-    }
 
         // ── Dialog Modals ─────────────────────────────────────────────────────
         activeTransferProduct?.let { product ->
@@ -476,11 +501,10 @@ fun StockInventoryScreen(
                 shopName = targetShopName,
                 onDismiss = { activeAdjustProduct = null },
                 onConfirm = { targetCases, reason ->
-                    val diff = targetCases - currentCases
-                    if (diff > 0) {
-                        onAddMovement(reason, diff, "inward", targetShopName, product.id)
-                    } else if (diff < 0) {
-                        onAddMovement(reason, -diff, "outward", targetShopName, product.id)
+                    if (targetCases > currentCases) {
+                        onAddMovement("Manual adjustment", targetCases - currentCases, "inward", targetShopName, product.id)
+                    } else if (targetCases < currentCases) {
+                        onAddMovement("Manual adjustment", currentCases - targetCases, "outward", targetShopName, product.id)
                     }
                     activeAdjustProduct = null
                 }
@@ -516,22 +540,59 @@ fun StockInventoryScreen(
             )
         }
 
-        // ── Floating Action Button (FAB) ──────────────────────────────────
-        FloatingActionButton(
-            onClick = onAddProduct,
-            containerColor = SaaSColors.Primary,
-            contentColor = Color.White,
-            shape = CircleShape,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = contentPadding.calculateBottomPadding() + 16.dp)
-                .shadow(8.dp, CircleShape)
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Add,
-                contentDescription = "Add Product",
-                modifier = Modifier.size(28.dp)
+        activeCustomerPriceProduct?.let { product ->
+            // Load any previously saved custom prices so the dialog opens
+            // with real values instead of defaults.
+            LaunchedEffect(product.id) { onLoadCustomerPrices(product.id) }
+            val savedPrices = remember(state.customerPrices, product.id) {
+                state.customerPrices[product.id]
+                    ?.associate { it.customerId to it.sellingPrice }
+                    ?: emptyMap()
+            }
+            CustomerPricePickerDialog(
+                product = product,
+                customers = state.customers,
+                savedPrices = savedPrices,
+                onDeletePrice = { customerId -> onDeleteCustomerPrice(customerId, product.id) },
+                onDismiss = {
+                    activeCustomerPriceProduct = null
+                    showCustomerPriceDialog = false
+                },
+                onPriceSave = { customerId, purchasePrice, sellingPrice ->
+                    // Persist the customer-specific price via the repository.
+                    // The dialog stays open so the admin can keep editing
+                    // other customers; it tracks its own per-row saved state.
+                    onSaveCustomerPrice(
+                        CustomerProductPrice(
+                            customerId = customerId,
+                            productId = product.id,
+                            sellingPrice = sellingPrice,
+                            isActive = true
+                        )
+                    )
+                }
             )
+        }
+
+        // ── Floating Action Button (FAB) ──────────────────────────────────
+        // Hidden in read-only (employee) mode.
+        if (!readOnly) {
+            FloatingActionButton(
+                onClick = onAddProduct,
+                containerColor = SaaSColors.Primary,
+                contentColor = Color.White,
+                shape = CircleShape,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = contentPadding.calculateBottomPadding() + 16.dp)
+                    .shadow(8.dp, CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Add,
+                    contentDescription = "Add Product",
+                    modifier = Modifier.size(28.dp)
+                )
+            }
         }
     }
 }
@@ -601,7 +662,7 @@ private fun InventoryHeader(
                             .background(SaaSColors.SurfaceVar, RoundedCornerShape(10.dp))
                             .border(1.dp, SaaSColors.Border, RoundedCornerShape(10.dp))
                             .clickable(onClick = onBack),
-                        contentAlignment = Alignment.Center
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.ArrowBack,
@@ -703,125 +764,125 @@ private fun InventoryHeader(
                     )
                     Spacer(Modifier.width(8.dp))
                     Box(modifier = Modifier.weight(1f)) {
-                        if (searchQuery.isEmpty()) {
-                            Text(
-                                text = "Search product...",
-                                color = SaaSColors.TextMuted,
-                                fontSize = 14.sp
-                            )
-                        }
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = onSearchQueryChange,
-                            textStyle = TextStyle(
+                    if (searchQuery.isEmpty()) {
+                        Text(
+                            text = "Search product...",
+                            color = SaaSColors.TextMuted,
+                            fontSize = 14.sp
+                        )
+                    }
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchQueryChange,
+                        textStyle = TextStyle(
                                 color = SaaSColors.TextPrimary,
                                 fontSize = 14.sp
                             ),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                     if (searchQuery.isNotEmpty()) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "Clear",
-                            tint = SaaSColors.TextMuted,
-                            modifier = Modifier
-                                .size(16.dp)
-                                .clickable { onSearchQueryChange("") }
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Clear",
+                        tint = SaaSColors.TextMuted,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clickable { onSearchQueryChange("") }
+                    )
+                }
                 }
 
                 // Filter Dropdown Anchor
                 Box {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (selectedFilter != InvFilter.ALL) SaaSColors.PrimaryLight else SaaSColors.SurfaceVar)
-                            .border(1.dp, if (selectedFilter != InvFilter.ALL) SaaSColors.Primary else SaaSColors.Border, RoundedCornerShape(12.dp))
-                            .clickable { onShowFilterMenuChange(true) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.FilterList,
-                            contentDescription = "Filter",
-                            tint = if (selectedFilter != InvFilter.ALL) SaaSColors.Primary else SaaSColors.TextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showFilterMenu,
-                        onDismissRequest = { onShowFilterMenuChange(false) }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("All Products") },
-                            onClick = { onFilterSelect(InvFilter.ALL); onShowFilterMenuChange(false) },
-                            leadingIcon = { Icon(Icons.Rounded.Category, null) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Healthy Stock (>5)") },
-                            onClick = { onFilterSelect(InvFilter.HEALTHY); onShowFilterMenuChange(false) },
-                            leadingIcon = { Icon(Icons.Rounded.CheckCircle, null, tint = SaaSColors.Healthy) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Low Stock (3-5)") },
-                            onClick = { onFilterSelect(InvFilter.LOW); onShowFilterMenuChange(false) },
-                            leadingIcon = { Icon(Icons.Rounded.Warning, null, tint = SaaSColors.LowStock) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Critical (1-2)") },
-                            onClick = { onFilterSelect(InvFilter.CRITICAL); onShowFilterMenuChange(false) },
-                            leadingIcon = { Icon(Icons.Rounded.Dangerous, null, tint = SaaSColors.Critical) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Out of Stock (0)") },
-                            onClick = { onFilterSelect(InvFilter.OUT); onShowFilterMenuChange(false) },
-                            leadingIcon = { Icon(Icons.Rounded.Cancel, null, tint = SaaSColors.OutOfStock) }
-                        )
-                    }
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (selectedFilter != InvFilter.ALL) SaaSColors.PrimaryLight else SaaSColors.SurfaceVar)
+                        .border(1.dp, if (selectedFilter != InvFilter.ALL) SaaSColors.Primary else SaaSColors.Border, RoundedCornerShape(12.dp))
+                        .clickable { onShowFilterMenuChange(true) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.FilterList,
+                        contentDescription = "Filter",
+                        tint = if (selectedFilter != InvFilter.ALL) SaaSColors.Primary else SaaSColors.TextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                DropdownMenu(
+                    expanded = showFilterMenu,
+                    onDismissRequest = { onShowFilterMenuChange(false) }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("All Products") },
+                        onClick = { onFilterSelect(InvFilter.ALL); onShowFilterMenuChange(false) },
+                        leadingIcon = { Icon(Icons.Rounded.Category, null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Healthy Stock (>5)") },
+                        onClick = { onFilterSelect(InvFilter.HEALTHY); onShowFilterMenuChange(false) },
+                        leadingIcon = { Icon(Icons.Rounded.CheckCircle, null, tint = SaaSColors.Healthy) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Low Stock (3-5)") },
+                        onClick = { onFilterSelect(InvFilter.LOW); onShowFilterMenuChange(false) },
+                        leadingIcon = { Icon(Icons.Rounded.Warning, null, tint = SaaSColors.LowStock) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Critical (1-2)") },
+                        onClick = { onFilterSelect(InvFilter.CRITICAL); onShowFilterMenuChange(false) },
+                        leadingIcon = { Icon(Icons.Rounded.Dangerous, null, tint = SaaSColors.Critical) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Out of Stock (0)") },
+                        onClick = { onFilterSelect(InvFilter.OUT); onShowFilterMenuChange(false) },
+                        leadingIcon = { Icon(Icons.Rounded.Cancel, null, tint = SaaSColors.OutOfStock) }
+                    )
+                }
                 }
 
                 // Sort Dropdown Anchor
                 Box {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(SaaSColors.SurfaceVar)
-                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(12.dp))
-                            .clickable { onShowSortMenuChange(true) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Sort,
-                            contentDescription = "Sort",
-                            tint = SaaSColors.TextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showSortMenu,
-                        onDismissRequest = { onShowSortMenuChange(false) }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Sort by Name") },
-                            onClick = { onSortSelect(InvSort.NAME); onShowSortMenuChange(false) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Quantity: High to Low") },
-                            onClick = { onSortSelect(InvSort.QTY_DESC); onShowSortMenuChange(false) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Quantity: Low to High") },
-                            onClick = { onSortSelect(InvSort.QTY_ASC); onShowSortMenuChange(false) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Value: High to Low") },
-                            onClick = { onSortSelect(InvSort.VALUE_DESC); onShowSortMenuChange(false) }
-                        )
-                    }
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SaaSColors.SurfaceVar)
+                        .border(1.dp, SaaSColors.Border, RoundedCornerShape(12.dp))
+                        .clickable { onShowSortMenuChange(true) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Sort,
+                        contentDescription = "Sort",
+                        tint = SaaSColors.TextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                DropdownMenu(
+                    expanded = showSortMenu,
+                    onDismissRequest = { onShowSortMenuChange(false) }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Sort by Name") },
+                        onClick = { onSortSelect(InvSort.NAME); onShowSortMenuChange(false) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Quantity: High to Low") },
+                        onClick = { onSortSelect(InvSort.QTY_DESC); onShowSortMenuChange(false) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Quantity: Low to High") },
+                        onClick = { onSortSelect(InvSort.QTY_ASC); onShowSortMenuChange(false) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Value: High to Low") },
+                        onClick = { onSortSelect(InvSort.VALUE_DESC); onShowSortMenuChange(false) }
+                    )
+                }
                 }
             }
         }
@@ -835,7 +896,8 @@ private fun ShopSummaryCard(
     totalValue: Double,
     productsCount: Int,
     lowStockCount: Int,
-    unitLabel: String
+    unitLabel: String,
+    readOnly: Boolean = false
 ) {
     Card(
         modifier = Modifier
@@ -874,8 +936,8 @@ private fun ShopSummaryCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(Icons.Rounded.ArrowUpward, null, tint = SaaSColors.Healthy, modifier = Modifier.size(14.dp))
-                        Text("12%", color = SaaSColors.Healthy, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Icon(Icons.Rounded.ArrowUpward, null, tint = SaaSColors.Healthy, modifier = Modifier.size(14.dp))
+                    Text("12%", color = SaaSColors.Healthy, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                     Text("vs last week", color = SaaSColors.TextMuted, fontSize = 10.sp)
                 }
@@ -892,8 +954,8 @@ private fun ShopSummaryCard(
             ) {
                 // We use a dynamic scale: if stock is very low, max is small.
                 // This ensures "2 Units" still looks meaningful in the bottle.
-                val maxCapacity = remember(totalInventory) { 
-                    max(10.0, totalInventory * 1.2).coerceAtMost(100.0) 
+                val maxCapacity = remember(totalInventory) {
+                    max(10.0, totalInventory * 1.2).coerceAtMost(100.0)
                 }
                 PremiumWaterBottle(
                     level = (totalInventory / maxCapacity).coerceIn(0.0, 1.0).toFloat(),
@@ -905,15 +967,17 @@ private fun ShopSummaryCard(
             HorizontalDivider(color = SaaSColors.Border)
             Spacer(Modifier.height(16.dp))
 
-            // Sub Stats Grid
+            // Sub Stats Grid (Inventory Value is hidden in read-only mode)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Inventory Value", color = SaaSColors.TextMuted, fontSize = 11.sp)
-                    Spacer(Modifier.height(2.dp))
-                    Text("₹${formatInventoryAmount(totalValue)}", color = SaaSColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                if (!readOnly) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Inventory Value", color = SaaSColors.TextMuted, fontSize = 11.sp)
+                        Spacer(Modifier.height(2.dp))
+                        Text("₹${formatInventoryAmount(totalValue)}", color = SaaSColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("SKUs Available", color = SaaSColors.TextMuted, fontSize = 11.sp)
@@ -940,6 +1004,7 @@ private fun ShopSummaryCard(
 private fun LowStockAttentionCard(
     lowProducts: List<ProductCategory>,
     liveStock: Map<String, Int>,
+    readOnly: Boolean = false,
     onRestock: (ProductCategory) -> Unit
 ) {
     Card(
@@ -978,7 +1043,7 @@ private fun LowStockAttentionCard(
                         .clip(RoundedCornerShape(12.dp))
                         .background(SaaSColors.SurfaceVar)
                         .border(1.dp, SaaSColors.Border.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                        .clickable { onRestock(p) }
+                        .then(if (readOnly) Modifier else Modifier.clickable { onRestock(p) })
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -1001,26 +1066,29 @@ private fun LowStockAttentionCard(
                         )
                     }
                     Spacer(Modifier.width(10.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SaaSColors.Critical)
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Restock",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                    if (!readOnly) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SaaSColors.Critical)
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Restock",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(6.dp))
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "Tap a product to adjust its stock level",
+                text = if (readOnly) "Low stock items need attention"
+                else "Tap a product to adjust its stock level",
                 fontSize = 11.sp,
                 color = SaaSColors.TextMuted,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -1125,7 +1193,7 @@ private fun AnalyticTile(
                     .size(32.dp)
                     .clip(CircleShape)
                     .background(iconBg),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(icon, null, tint = iconFg, modifier = Modifier.size(16.dp))
             }
@@ -1292,16 +1360,18 @@ private fun ProductBreakdownCard(
     product: ProductCategory,
     liveUnits: Int,
     assignedShop: String,
+    readOnly: Boolean = false,
     onEditPrice: () -> Unit,
     onTransferClick: () -> Unit,
     onAdjustClick: () -> Unit,
     onDeleteClick: (() -> Unit)? = null,
-    onToggleStatus: () -> Unit = {}
+    onToggleStatus: () -> Unit = {},
+    onSetCustomerPrice: () -> Unit = {} // New parameter for customer price setting
 ) {
 
     val cases = liveUnits
     val totalVal = liveUnits * product.defaultSellPrice
-    
+
     var showActions by remember { mutableStateOf(false) }
 
     // Status config
@@ -1341,7 +1411,8 @@ private fun ProductBreakdownCard(
             .shadow(2.dp, RoundedCornerShape(20.dp), ambientColor = SaaSColors.CardShadow, spotColor = SaaSColors.CardShadow),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface),
-        onClick = { if (product.isActive) showActions = !showActions }
+        // Read-only cards don't expand: there are no actions to reveal.
+        onClick = { if (!readOnly && product.isActive) showActions = !showActions }
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -1353,25 +1424,25 @@ private fun ProductBreakdownCard(
                 // Product Thumbnail
                 Box(
                     modifier = Modifier
-                        .size(80.dp)
+                        .size(60.dp)
                         .graphicsLayer(alpha = cardAlpha)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .background(if (painter != null) Color.White else iconBg),
                     contentAlignment = Alignment.Center
                 ) {
                     if (painter != null) {
                         Image(
                             painter = painter,
-                            contentDescription = null,
+                            contentDescription = product.displayName.ifBlank { product.name },
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize().padding(8.dp)
                         )
                     } else {
                         Icon(
                             imageVector = Icons.Rounded.WaterDrop,
-                            contentDescription = null,
+                            contentDescription = product.displayName.ifBlank { product.name },
                             tint = iconFg,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(26.dp)
                         )
                     }
                 }
@@ -1418,8 +1489,8 @@ private fun ProductBreakdownCard(
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFFF3F4F6))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    .background(Color(0xFFF3F4F6))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
                                         text = "Hidden",
@@ -1449,31 +1520,27 @@ private fun ProductBreakdownCard(
                     Spacer(Modifier.height(4.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.graphicsLayer(alpha = cardAlpha)
                     ) {
-                        Text("Single Unit", fontSize = 11.sp, color = SaaSColors.TextMuted)
-                        
-                        val (shopBg, shopFg) = if (assignedShop.contains("2", ignoreCase = true)) {
-                            Color(0xFFE0F2FE) to Color(0xFF0369A1)
-                        } else {
-                            Color(0xFFF3E8FF) to Color(0xFF6B21A8)
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(shopBg)
-                                .padding(horizontal = 6.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                text = assignedShop,
-                                color = shopFg,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        Text(
+                            text = "₹${product.defaultSellPrice.toInt()} / unit",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SaaSColors.TextSecondary
+                        )
+                        Text(
+                            text = "·",
+                            fontSize = 12.sp,
+                            color = SaaSColors.TextMuted
+                        )
+                        Text(
+                            text = "Cost ₹${product.purchasePrice.toInt()}",
+                            fontSize = 12.sp,
+                            color = SaaSColors.TextMuted
+                        )
                     }
-                    
+
                     Spacer(Modifier.height(8.dp))
 
                     // Count and Value Row
@@ -1501,7 +1568,7 @@ private fun ProductBreakdownCard(
                             ) { targetCases ->
                                 Text(
                                     text = "$targetCases",
-                                    fontSize = 32.sp,
+                                    fontSize = 26.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = config.color,
                                     style = TextStyle(letterSpacing = (-1).sp)
@@ -1527,128 +1594,153 @@ private fun ProductBreakdownCard(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(12.dp))
 
-            // Stock Health Progress Bar
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .graphicsLayer(alpha = cardAlpha)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(SaaSColors.Border)
-            ) {
+                // Stock Health Progress Bar
                 Box(
                     modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(config.fraction)
-                        .background(
-                            brush = Brush.horizontalGradient(listOf(config.color, config.color.copy(alpha = 0.6f))),
-                            shape = RoundedCornerShape(3.dp)
-                        )
-                )
-            }
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .graphicsLayer(alpha = cardAlpha)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(SaaSColors.Border)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(config.fraction)
+                            .background(
+                                brush = Brush.horizontalGradient(listOf(config.color, config.color.copy(alpha = 0.6f))),
+                                shape = RoundedCornerShape(3.dp)
+                            )
+                    )
+                }
 
-            // Quick Actions Panel (Collapsible)
-            AnimatedVisibility(
-                visible = showActions && product.isActive,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                Column {
-                    Spacer(Modifier.height(16.dp))
-                    HorizontalDivider(color = SaaSColors.Border)
-                    Spacer(Modifier.height(16.dp))
-                    
-                    // Row 1: Primary Actions (Edit Price, Adjust, Transfer)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Button(
-                            onClick = onEditPrice,
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary),
-                            modifier = Modifier.weight(1f).height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp)
+                // Quick Actions Panel (Collapsible)
+                AnimatedVisibility(
+                    visible = showActions && product.isActive,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Column {
+                        Spacer(Modifier.height(16.dp))
+                        HorizontalDivider(color = SaaSColors.Border)
+                        Spacer(Modifier.height(16.dp))
+
+                        // Primary actions: 2 x 2 grid so every label stays
+                        // readable and each target meets the 44dp minimum.
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(14.dp), tint = Color.White)
-                            Spacer(Modifier.width(4.dp))
-                            Text("Edit Price", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = onEditPrice,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary),
+                                    modifier = Modifier.weight(1f).height(46.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(16.dp), tint = Color.White)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Edit Price", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+
+                                Button(
+                                    onClick = onSetCustomerPrice,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = SaaSColors.PrimaryLight,
+                                        contentColor = SaaSColors.Primary
+                                    ),
+                                    modifier = Modifier.weight(1f).height(46.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Rounded.AttachMoney, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Customer Price", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = onAdjustClick,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, SaaSColors.Border),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SaaSColors.TextSecondary),
+                                    modifier = Modifier.weight(1f).height(46.dp),
+                                    contentPadding = PaddingValues(horizontal = 6.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Tune, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Adjust Stock", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = onTransferClick,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, SaaSColors.Primary.copy(alpha = 0.35f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SaaSColors.Primary),
+                                    modifier = Modifier.weight(1f).height(46.dp),
+                                    contentPadding = PaddingValues(horizontal = 6.dp)
+                                ) {
+                                    Icon(Icons.Rounded.SwapHoriz, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Transfer", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
 
-                        OutlinedButton(
-                            onClick = onAdjustClick,
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, SaaSColors.Border),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SaaSColors.TextSecondary),
-                            modifier = Modifier.weight(0.9f).height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 6.dp)
-                        ) {
-                            Icon(Icons.Rounded.Tune, null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Adjust", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
+                        Spacer(Modifier.height(8.dp))
 
-                        OutlinedButton(
-                            onClick = onTransferClick,
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, SaaSColors.Primary.copy(alpha = 0.3f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SaaSColors.Primary),
-                            modifier = Modifier.weight(0.9f).height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 6.dp)
+                        // Row 2: Secondary Actions (Hide, Delete)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Rounded.SwapHoriz, null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Transfer", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    
-                    Spacer(Modifier.height(8.dp))
-                    
-                    // Row 2: Secondary Actions (Hide, Delete)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Button(
-                            onClick = onToggleStatus,
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFFFF7ED),
-                                contentColor = Color(0xFFF97316)
-                            ),
-                            border = BorderStroke(1.dp, Color(0xFFFDBA74)),
-                            modifier = Modifier.weight(1f).height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp)
-                        ) {
-                            Icon(Icons.Rounded.VisibilityOff, null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Hide Product", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        if (onDeleteClick != null) {
                             Button(
-                                onClick = onDeleteClick,
+                                onClick = onToggleStatus,
                                 shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFFEE2E2),
-                                    contentColor = Color(0xFFEF4444)
+                                    containerColor = Color(0xFFFFF7ED),
+                                    contentColor = Color(0xFFF97316)
                                 ),
-                                border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
-                                modifier = Modifier.weight(1f).height(36.dp),
+                                border = BorderStroke(1.dp, Color(0xFFFDBA74)),
+                                modifier = Modifier.weight(1f).height(46.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp)
                             ) {
-                                Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Delete Product", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Rounded.VisibilityOff, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Hide Product", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            if (onDeleteClick != null) {
+                                Button(
+                                    onClick = onDeleteClick,
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFFEE2E2),
+                                        contentColor = Color(0xFFEF4444)
+                                    ),
+                                    border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                                    modifier = Modifier.weight(1f).height(46.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Delete Product", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
                 }
-            }
         }
     }
 }
@@ -1749,7 +1841,7 @@ internal fun StockActivityRow(
                 .size(36.dp)
                 .clip(CircleShape)
                 .background(iconBg),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Center,
         ) {
             Icon(arrowIcon, null, tint = iconFg, modifier = Modifier.size(16.dp))
         }
@@ -1901,6 +1993,539 @@ private fun EmptySearchState() {
             fontSize = 12.sp,
             color = SaaSColors.TextMuted,
             textAlign = TextAlign.Center
+        )
+    }
+}
+
+// ── Customer Price Picker Dialog Component ────────────────────────────────────
+@Composable
+private fun CustomerPricePickerDialog(
+    product: ProductCategory,
+    customers: List<Customer> = emptyList(),
+    /** Previously saved custom selling prices, keyed by customer id. */
+    savedPrices: Map<String, Double> = emptyMap(),
+    onDeletePrice: (customerId: String) -> Unit = {},
+    onDismiss: () -> Unit,
+    onPriceSave: (String, Double, Double) -> Unit // customerId, purchasePrice, sellingPrice
+) {
+    val isLoading by remember { mutableStateOf(false) }
+    val errorMessage by remember { mutableStateOf<String?>(null) }
+    var searchQuery by remember(product.id) { mutableStateOf("") }
+
+    val defaultPurchase = product.purchasePrice.toInt()
+    val defaultSelling = product.defaultSellPrice.toInt()
+
+    // Rows saved during this session (optimistic; failures surface through
+    // the global admin error state).
+    var savedIds by remember(product.id) { mutableStateOf(setOf<String>()) }
+
+    // Price fields per customer: raw input text. Blank / zero values fall back
+    // to the product defaults when saving.
+    var customerPriceFields by remember(product.id) {
+        mutableStateOf<Map<String, Pair<String, String>>>(emptyMap())
+    }
+    // Rows the admin has typed into. Only these are preserved across
+    // refreshes — everything else always reflects the latest saved values,
+    // so prices arriving late from the database still fill in correctly.
+    var dirtyIds by remember(product.id) { mutableStateOf(setOf<String>()) }
+
+    // Pre-fill: previously saved custom prices first, product defaults
+    // otherwise. Only user-edited rows are preserved.
+    LaunchedEffect(customers, savedPrices) {
+        val current = customerPriceFields
+        customerPriceFields = customers.mapNotNull { customer ->
+            val id = customer.id ?: return@mapNotNull null
+            val keep = current[id]
+            if (keep != null && dirtyIds.contains(id)) {
+                id to keep
+            } else {
+                val selling = savedPrices[id]?.toInt() ?: defaultSelling
+                id to Pair(defaultPurchase.toString(), selling.toString())
+            }
+        }.toMap()
+    }
+
+    val visibleCustomers = remember(customers, searchQuery) {
+        if (searchQuery.isBlank()) customers
+        else customers.filter {
+            it.name.contains(searchQuery, ignoreCase = true) ||
+                (it.phone?.contains(searchQuery, ignoreCase = true) == true)
+        }
+    }
+
+    // Rows with a saved custom price or unsaved edits differing from defaults.
+    val customizedCount = remember(customerPriceFields, savedPrices) {
+        val ids = (customerPriceFields.keys + savedPrices.keys).toSet()
+        ids.count { id ->
+            if (savedPrices.containsKey(id)) true
+            else {
+                val pair = customerPriceFields[id]
+                pair != null &&
+                    ((pair.first.toIntOrNull() ?: defaultPurchase) != defaultPurchase ||
+                        (pair.second.toIntOrNull() ?: defaultSelling) != defaultSelling)
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .padding(vertical = 16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 680.dp)
+                    .padding(20.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(SaaSColors.PrimaryLight),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.AttachMoney,
+                            contentDescription = null,
+                            tint = SaaSColors.Primary,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Customer Pricing",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = SaaSColors.TextPrimary
+                        )
+                        Text(
+                            text = "${product.displayName.ifBlank { product.name }} · Default ₹${product.defaultSellPrice.toInt()}",
+                            fontSize = 11.sp,
+                            color = SaaSColors.TextMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Close",
+                            tint = SaaSColors.TextSecondary
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
+                // Default-price reference strip
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PriceStatTile(
+                        label = "Cost",
+                        value = "₹$defaultPurchase",
+                        modifier = Modifier.weight(1f)
+                    )
+                    PriceStatTile(
+                        label = "Default sell",
+                        value = "₹$defaultSelling",
+                        modifier = Modifier.weight(1f)
+                    )
+                    PriceStatTile(
+                        label = "Margin",
+                        value = "₹${defaultSelling - defaultPurchase}",
+                        modifier = Modifier.weight(1f),
+                        highlight = true
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+
+                // Search
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search customers...") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = SaaSColors.TextMuted
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Clear search",
+                                    tint = SaaSColors.TextMuted,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+
+                // Section label with customized counter
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "CUSTOMERS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        color = SaaSColors.Primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (customizedCount > 0) {
+                        Text(
+                            text = "$customizedCount custom",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = SaaSColors.Primary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(SaaSColors.PrimaryLight)
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+
+                val dialogError = errorMessage
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = SaaSColors.Primary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                } else if (dialogError != null) {
+                    Text(
+                        text = dialogError,
+                        color = SaaSColors.Critical,
+                        fontSize = 14.sp
+                    )
+                } else if (visibleCustomers.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Group,
+                            contentDescription = null,
+                            tint = SaaSColors.TextMuted,
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = if (customers.isEmpty()) "No customers found" else "No matches",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SaaSColors.TextSecondary
+                        )
+                        Text(
+                            text = if (customers.isEmpty()) "Add customers in Customer Management first."
+                            else "Try a different search.",
+                            fontSize = 12.sp,
+                            color = SaaSColors.TextMuted
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        visibleCustomers.forEach { customer ->
+                            val customerId = customer.id ?: return@forEach
+                            val (purchaseText, sellingText) = customerPriceFields[customerId]
+                                ?: Pair(product.purchasePrice.toInt().toString(), product.defaultSellPrice.toInt().toString())
+                            val purchaseValue = purchaseText.toIntOrNull()?.takeIf { it > 0 }
+                                ?: defaultPurchase
+                            val sellingValue = sellingText.toIntOrNull()?.takeIf { it > 0 }
+                                ?: defaultSelling
+                            val margin = sellingValue - purchaseValue
+                            val hasDbCustom = savedPrices.containsKey(customerId)
+                            val isCustom = hasDbCustom ||
+                                purchaseValue != defaultPurchase || sellingValue != defaultSelling
+                            val isSaved = savedIds.contains(customerId)
+
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = SaaSColors.SurfaceVar),
+                                border = BorderStroke(1.dp, SaaSColors.Border)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(SaaSColors.PrimaryLight),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = customer.name.firstOrNull()?.uppercase() ?: "?",
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SaaSColors.Primary
+                                            )
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = customer.name,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SaaSColors.TextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            val customerPhone = customer.phone?.takeIf { it.isNotBlank() }
+                                            if (customerPhone != null) {
+                                                Text(
+                                                    text = customerPhone,
+                                                    fontSize = 11.sp,
+                                                    color = SaaSColors.TextMuted
+                                                )
+                                            }
+                                        }
+                                        if (isCustom) {
+                                            Text(
+                                                text = "Custom",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SaaSColors.Primary,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(20.dp))
+                                                    .background(SaaSColors.PrimaryLight)
+                                                    .padding(horizontal = 7.dp, vertical = 3.dp)
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                        }
+                                        Text(
+                                            text = "Margin ₹$margin",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SaaSColors.Healthy,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(SaaSColors.HealthyLight)
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.height(12.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = purchaseText,
+                                            onValueChange = { newValue ->
+                                                val digitsOnly = newValue.filter { it.isDigit() }
+                                                val updated = customerPriceFields.toMutableMap()
+                                                updated[customerId] = Pair(digitsOnly, sellingText)
+                                                customerPriceFields = updated
+                                                dirtyIds = dirtyIds + customerId
+                                                savedIds = savedIds - customerId
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            textStyle = TextStyle(
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = SaaSColors.TextPrimary
+                                            ),
+                                            label = { Text("Purchase", fontSize = 11.sp) },
+                                            prefix = { Text("₹") },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                        OutlinedTextField(
+                                            value = sellingText,
+                                            onValueChange = { newValue ->
+                                                val digitsOnly = newValue.filter { it.isDigit() }
+                                                val updated = customerPriceFields.toMutableMap()
+                                                updated[customerId] = Pair(purchaseText, digitsOnly)
+                                                customerPriceFields = updated
+                                                dirtyIds = dirtyIds + customerId
+                                                savedIds = savedIds - customerId
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            textStyle = TextStyle(
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = SaaSColors.TextPrimary
+                                            ),
+                                            label = { Text("Selling", fontSize = 11.sp) },
+                                            prefix = { Text("₹") },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = "Blank or 0 uses the product default.",
+                                        fontSize = 10.sp,
+                                        color = SaaSColors.TextMuted
+                                    )
+
+                                    Spacer(Modifier.height(8.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (isCustom) {
+                                            TextButton(
+                                                onClick = {
+                                                    if (hasDbCustom) onDeletePrice(customerId)
+                                                    val updated = customerPriceFields.toMutableMap()
+                                                    updated[customerId] = Pair(
+                                                        defaultPurchase.toString(),
+                                                        defaultSelling.toString()
+                                                    )
+                                                    customerPriceFields = updated
+                                                    dirtyIds = dirtyIds - customerId
+                                                    savedIds = savedIds - customerId
+                                                }
+                                            ) {
+                                                Icon(
+                                                    Icons.Rounded.Refresh,
+                                                    null,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Text(
+                                                    "Reset",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        } else {
+                                            Spacer(Modifier.width(1.dp))
+                                        }
+                                        Button(
+                                            onClick = {
+                                                onPriceSave(customerId, purchaseValue.toDouble(), sellingValue.toDouble())
+                                                savedIds = savedIds + customerId
+                                            },
+                                            modifier = Modifier.height(38.dp),
+                                            shape = RoundedCornerShape(10.dp),
+                                            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (isSaved) SaaSColors.Healthy else SaaSColors.Primary
+                                            )
+                                        ) {
+                                            Icon(
+                                                if (isSaved) Icons.Rounded.CheckCircle else Icons.Rounded.Check,
+                                                null,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                if (isSaved) "Saved"
+                                                else if (hasDbCustom) "Update" else "Save",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${visibleCustomers.size} customer${if (visibleCustomers.size == 1) "" else "s"}",
+                            fontSize = 12.sp,
+                            color = SaaSColors.TextMuted,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onDismiss) {
+                            Text("Close", fontWeight = FontWeight.Bold, color = SaaSColors.Primary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Small stat tile used by the customer pricing header ───────────────────────
+@Composable
+private fun PriceStatTile(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (highlight) SaaSColors.PrimaryLight else SaaSColors.SurfaceVar)
+            .border(
+                1.dp,
+                if (highlight) SaaSColors.Primary.copy(alpha = 0.3f) else SaaSColors.Border,
+                RoundedCornerShape(12.dp)
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = value,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (highlight) SaaSColors.Primary else SaaSColors.TextPrimary
+        )
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = SaaSColors.TextMuted
         )
     }
 }
@@ -2149,7 +2774,7 @@ private fun AdjustStockDialog(
                     ) {
                         Icon(Icons.Rounded.Remove, null, tint = SaaSColors.TextSecondary)
                     }
-                    
+
                     BasicTextField(
                         value = textVal,
                         onValueChange = { newValue ->
@@ -2304,13 +2929,14 @@ private fun getAssignedShop(
         else -> configuredShops.firstOrNull().orEmpty()
     }
 }
+
 @Composable
 private fun PremiumWaterBottle(
     level: Float, // 0.0 to 1.0
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition()
-    
+
     val waveOffset by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 2 * PI.toFloat(),
@@ -2328,18 +2954,18 @@ private fun PremiumWaterBottle(
     Canvas(modifier = modifier) {
         val width = size.width
         val height = size.height
-        
+
         // Horizontal Bottle Dimensions
         val bottleWidth = width * 0.75f
         val bottleHeight = height * 0.7f
         val left = (width - bottleWidth - 40.dp.toPx()) / 2
         val top = (height - bottleHeight) / 2
-        
+
         val neckWidth = 20.dp.toPx()
         val neckHeight = bottleHeight * 0.45f
         val capWidth = 10.dp.toPx()
         val capHeight = neckHeight * 1.1f
-        
+
         // Single organic bottle path
         val bottlePath = Path().apply {
             val corner = 14.dp.toPx()
@@ -2357,6 +2983,7 @@ private fun PremiumWaterBottle(
             lineTo(left + bottleWidth + neckWidth, top + (bottleHeight - capHeight) / 2)
             lineTo(left + bottleWidth + neckWidth + capWidth, top + (bottleHeight - capHeight) / 2)
             lineTo(left + bottleWidth + neckWidth + capWidth, top + (bottleHeight + capHeight) / 2)
+            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight + capHeight) / 2)
             lineTo(left + bottleWidth + neckWidth, top + (bottleHeight + capHeight) / 2)
             lineTo(left + bottleWidth + neckWidth, top + (bottleHeight + neckHeight) / 2)
             // Back to body
@@ -2390,7 +3017,7 @@ private fun PremiumWaterBottle(
         clipPath(bottlePath) {
             val effectiveLevel = animatedLevel.coerceIn(0.01f, 0.99f)
             val baseWaterY = top + bottleHeight - (bottleHeight * effectiveLevel)
-            
+
             // Background Wave (slightly different phase and darker)
             val backWavePath = Path()
             backWavePath.moveTo(left - 50f, top + bottleHeight + 50f)
@@ -2423,7 +3050,7 @@ private fun PremiumWaterBottle(
             waterPath.lineTo(left + bottleWidth + 100f, top + bottleHeight + 50f)
             for (i in 0..100) {
                 val x = left + bottleWidth + 100f - (i.toFloat() / 100) * (bottleWidth + 150f)
-                val relX = i.toFloat() / 100
+                var relX = i.toFloat() / 100
                 val amplitude = 5.dp.toPx() * (1f - abs(effectiveLevel - 0.5f))
                 val y = baseWaterY + amplitude * sin(relX * 1.8 * PI.toFloat() + waveOffset)
                 waterPath.lineTo(x, y.toFloat())
@@ -2454,7 +3081,7 @@ private fun PremiumWaterBottle(
                 val bRelX = bubbleRandom.nextFloat()
                 val bX = left + bottleWidth * bRelX
                 val bY = top + bottleHeight - (bottleHeight * effectiveLevel * bubbleRandom.nextFloat())
-                
+
                 // Only draw if submerged enough
                 if (bY > baseWaterY - 5.dp.toPx()) {
                     val size = (1f + bubbleRandom.nextFloat() * 2f).dp.toPx()
@@ -2472,33 +3099,33 @@ private fun PremiumWaterBottle(
                     )
                 }
             }
-        }
 
-        // 4. Glass Detail
-        // Thick edges
-        drawPath(
-            path = bottlePath,
-            color = Color(0xFF6EEEF4).copy(alpha = 0.25f),
-            style = Stroke(width = 2.5.dp.toPx())
-        )
-        // Internal highlight
-        drawPath(
-            path = bottlePath,
-            color = Color(0xFFC8FFFF).copy(alpha = 0.1f),
-            style = Stroke(width = 0.8.dp.toPx())
-        )
+            // 4. Glass Detail
+            // Thick edges
+            drawPath(
+                path = bottlePath,
+                color = Color(0xFF6EEEF4).copy(alpha = 0.25f),
+                style = Stroke(width = 2.5.dp.toPx())
+            )
+            // Internal highlight
+            drawPath(
+                path = bottlePath,
+                color = Color(0xFFC8FFFF).copy(alpha = 0.1f),
+                style = Stroke(width = 0.8.dp.toPx())
+            )
 
-        // Top Glossy Reflection
-        val glossPath = Path().apply {
-            moveTo(left + 20.dp.toPx(), top + 4.dp.toPx())
-            lineTo(left + bottleWidth - 40.dp.toPx(), top + 4.dp.toPx())
+            // Top Glossy Reflection
+            val glossPath = Path().apply {
+                moveTo(left + 20.dp.toPx(), top + 4.dp.toPx())
+                lineTo(left + bottleWidth - 40.dp.toPx(), top + 4.dp.toPx())
+            }
+            drawPath(
+                path = glossPath,
+                brush = Brush.horizontalGradient(
+                    listOf(Color.Transparent, Color(0xFFC8FFFF).copy(alpha = 0.3f), Color.Transparent)
+                ),
+                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+            )
         }
-        drawPath(
-            path = glossPath,
-            brush = Brush.horizontalGradient(
-                listOf(Color.Transparent, Color(0xFFC8FFFF).copy(alpha = 0.3f), Color.Transparent)
-            ),
-            style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-        )
     }
 }

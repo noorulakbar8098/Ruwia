@@ -187,6 +187,15 @@ data class CustomExpense(
 )
 
 @Serializable
+data class CustomerProductPrice(
+    val id: String? = null,
+    @SerialName("customer_id") val customerId: String,
+    @SerialName("product_id") val productId: String,
+    @SerialName("selling_price") val sellingPrice: Double,
+    @SerialName("is_active") val isActive: Boolean = true
+)
+
+@Serializable
 data class MonthlyExpense(
     val id: String? = null,
     val month: String,

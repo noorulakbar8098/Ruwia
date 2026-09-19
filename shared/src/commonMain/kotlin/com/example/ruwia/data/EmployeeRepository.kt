@@ -2,6 +2,7 @@ package com.example.ruwia.data
 
 import com.example.ruwia.domain.AppSetting
 import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.CustomerProductPrice
 import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.Outward
 import com.example.ruwia.domain.ProductCategory
@@ -286,6 +287,25 @@ class EmployeeRepository {
                 if (adminId != null) filter { eq("admin_id", adminId) }
             }.decodeList()
         } catch (e: Exception) { emptyList() }
+    }
+
+    /**
+     * Active customer-specific selling prices for one customer, keyed by
+     * product id. Empty when none are set — callers fall back to the
+     * product defaults.
+     */
+    suspend fun getCustomPricesForCustomer(customerId: String): Map<String, Double> {
+        if (customerId.isBlank()) return emptyMap()
+        return try {
+            val uid = currentUserId()
+            val adminId = uid?.let { getAdminIdForUser(it) }
+            supabase.from("customer_product_prices").select {
+                filter { eq("customer_id", customerId) }
+                filter { eq("is_active", true) }
+                if (adminId != null) filter { eq("admin_id", adminId) }
+            }.decodeList<CustomerProductPrice>()
+                .associate { it.productId to it.sellingPrice }
+        } catch (e: Exception) { emptyMap() }
     }
 
     suspend fun addCustomer(customer: Customer): Customer {

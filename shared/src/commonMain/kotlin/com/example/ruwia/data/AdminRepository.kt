@@ -13,6 +13,7 @@ import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.Supplier
 import com.example.ruwia.domain.UserRole
+import com.example.ruwia.domain.CustomerProductPrice
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order as SortOrder
@@ -229,6 +230,122 @@ class AdminRepository {
                     else entries
                 }
         } catch (e: Exception) { emptyList() }
+    }
+
+    /**
+     * Gets the effective selling price for a customer and product.
+     * Returns the customer-specific price if available and active,
+     * otherwise returns the product's default sell price.
+     */
+    suspend fun getEffectiveSellingPrice(customerId: String, productId: String): Double {
+        return try {
+            // First try to get customer-specific price
+            val customerPrice = supabase.from("customer_product_prices")
+                .select {
+                    filter { eq("customer_id", customerId) }
+                    filter { eq("product_id", productId) }
+                    filter { eq("is_active", true) }
+                }
+                .decodeSingleOrNull<CustomerProductPrice>()
+
+            if (customerPrice != null) {
+                customerPrice.sellingPrice
+            } else {
+                // Fall back to product's default sell price
+                val product = supabase.from("product_categories")
+                    .select { filter { eq("id", productId) } }
+                    .decodeSingleOrNull<ProductCategory>()
+                product?.defaultSellPrice ?: 0.0
+            }
+        } catch (e: Exception) {
+            // If anything goes wrong, return 0 to be safe
+            e.printStackTrace()
+            return 0.0
+        }
+    }
+
+    /**
+     * Active customer-specific prices for one product. Empty when none are
+     * set or the read fails — callers fall back to product defaults.
+     */
+    suspend fun getCustomerProductPricesForProduct(productId: String): List<CustomerProductPrice> {
+        return try {
+            supabase.from("customer_product_prices")
+                .select {
+                    filter { eq("product_id", productId) }
+                    filter { eq("is_active", true) }
+                }
+                .decodeList()
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /**
+     * Inserts or updates the active customer-specific selling price for a
+     * product. At most one active row per (customer, product) is kept, so a
+     * second save updates the existing row instead of duplicating it.
+     */
+    suspend fun upsertCustomerProductPrice(price: CustomerProductPrice) {
+        try {
+            upsertCustomerProductPriceInternal(supabase, price)
+        } catch (e: Exception) {
+            println("Standard upsertCustomerProductPrice failed, trying admin bypass: ${e.message}")
+            initAdminSession()
+            upsertCustomerProductPriceInternal(supabaseAdmin, price)
+        }
+    }
+
+    private suspend fun upsertCustomerProductPriceInternal(
+        client: io.github.jan.supabase.SupabaseClient,
+        price: CustomerProductPrice
+    ) {
+        val existing = client.from("customer_product_prices")
+            .select {
+                filter { eq("customer_id", price.customerId) }
+                filter { eq("product_id", price.productId) }
+                filter { eq("is_active", true) }
+            }
+            .decodeSingleOrNull<CustomerProductPrice>()
+        val existingId = existing?.id
+        if (!existingId.isNullOrBlank()) {
+            client.from("customer_product_prices").update(
+                buildJsonObject {
+                    put("selling_price", price.sellingPrice)
+                    put("is_active", true)
+                }
+            ) { filter { eq("id", existingId) } }
+        } else {
+            client.from("customer_product_prices").insert(price)
+        }
+    }
+
+    /**
+     * Removes a customer-specific price (soft delete). The customer
+     * transparently falls back to the product default afterwards.
+     */
+    suspend fun deleteCustomerProductPrice(customerId: String, productId: String) {
+        try {
+            supabase.from("customer_product_prices").update(
+                buildJsonObject { put("is_active", false) }
+            ) {
+                filter {
+                    eq("customer_id", customerId)
+                    eq("product_id", productId)
+                    eq("is_active", true)
+                }
+            }
+        } catch (e: Exception) {
+            println("Standard deleteCustomerProductPrice failed, trying admin bypass: ${e.message}")
+            initAdminSession()
+            supabaseAdmin.from("customer_product_prices").update(
+                buildJsonObject { put("is_active", false) }
+            ) {
+                filter {
+                    eq("customer_id", customerId)
+                    eq("product_id", productId)
+                    eq("is_active", true)
+                }
+            }
+        }
     }
 
     suspend fun addSaleEntry(entry: SaleEntry) {

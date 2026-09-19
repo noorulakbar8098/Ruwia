@@ -308,6 +308,9 @@ private fun AdminDashboardContentSwitcher(
                          vm.updateProductCategory(product.copy(isActive = !product.isActive))
                      },
                      onOpenStockHistory = { showStockHistory = true },
+                     onSaveCustomerPrice = vm::saveCustomerProductPrice,
+                     onLoadCustomerPrices = vm::loadCustomerPrices,
+                     onDeleteCustomerPrice = vm::deleteCustomerProductPrice,
                      contentPadding = contentPadding,
                  )
             2 -> ProfitDashboardScreen(

@@ -35,7 +35,6 @@ fun EmployeeProfileScreen(
     joinDate: String = "",
     todayOutward: Int = 0,
     todayInward: Int = 0,
-    todaySales: Double = 0.0,
     customerCount: Int = 0,
     supplierCount: Int = 0,
     onAddCustomer: (com.example.ruwia.domain.Customer) -> Unit = {},
@@ -103,7 +102,6 @@ fun EmployeeProfileScreen(
             TodayPerformanceKPI(
                 outward = todayOutward,
                 inward  = todayInward,
-                sales   = todaySales,
             )
 
             // ── Information Section ──────────────────────
@@ -285,7 +283,6 @@ private fun ProfileCard(
 private fun TodayPerformanceKPI(
     outward: Int,
     inward: Int,
-    sales: Double,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -305,13 +302,6 @@ private fun TodayPerformanceKPI(
             accent = NTColors.Warning,
             modifier = Modifier.weight(1f)
         )
-        KPICard(
-            value = "₹${sales.toInt()}",
-            label = "Today's Sales",
-            icon = Icons.Rounded.Payments,
-            accent = NTColors.Success,
-            modifier = Modifier.weight(1f)
-        )
     }
 }
 
@@ -321,7 +311,7 @@ private fun KPICard(
     label: String,
     icon: ImageVector,
     accent: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Box(
         modifier = modifier

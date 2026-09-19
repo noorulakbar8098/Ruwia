@@ -32,6 +32,7 @@ import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.deriveShopStockTotals
 import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.shopMatchKey
+import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.presentation.EmployeeState
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -50,9 +51,10 @@ import com.example.ruwia.ui.dashboard.NTNavTab
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.ruwia.domain.Customer
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
 import ruwia.shared.generated.resources.app_icon
@@ -139,6 +141,7 @@ fun EmployeeDashboardScreen(
     var isLoggingOut by remember { mutableStateOf(false) }
     var isSubmittingAction by remember { mutableStateOf(false) }
     var showAddEmptyCasesDialog by remember { mutableStateOf(false) }
+    var selectedCustomerForSale by remember { mutableStateOf<Customer?>(null) }
 
     LaunchedEffect(state.loading, state.error) {
         if (isSubmittingAction && !state.loading) {
@@ -235,18 +238,31 @@ fun EmployeeDashboardScreen(
                     products      = state.productCategories,
                     customers     = state.customers,
                     stockMovements = state.shopMovements,
+                    customPrices  = state.customPrices,
+                    selectedCustomer = selectedCustomerForSale,
+                    onCustomerChange = {
+                        selectedCustomerForSale = it
+                        vm.loadCustomPrices(it.id ?: "")
+                    },
+                    getEffectivePrice = { _, productId ->
+                        state.customPrices[productId]
+                            ?: state.productCategories.find { it.id == productId }?.defaultSellPrice
+                            ?: 0.0
+                    },
                     errorMessage  = state.error,
                     onNewCustomer = { vm.addCustomer(it) },
                     onClearError  = vm::clearError,
                     onBack        = { screen = EmpScreen.Home },
                     shopName      = shopPart,
-                    onSave        = { customerName, items, emptyCans, saleDate ->
+                    onSave        = { customerName, items, emptyCans, saleDate, saleTime ->
                         // Persist the sale: each line item creates one sale_entries
                         // row and one outward stock movement; any empties picked up
                         // from the customer become an inward movement (visible to
                         // the admin on the stock dashboard).
                         val shopPart = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
                         val parsedSaleDate = com.example.ruwia.util.displayDateToDb(saleDate)
+                        // Combine date and time for proper timestamp
+                        val saleDateTime = "$parsedSaleDate $saleTime"
                         val lines = items.mapNotNull { item ->
                             val product = state.productCategories.getOrNull(item.productIdx) ?: return@mapNotNull null
                             val sellPricePerUnit = item.sellPriceText.toDoubleOrNull() ?: product.defaultSellPrice
@@ -265,11 +281,16 @@ fun EmployeeDashboardScreen(
                                 shopName           = shopPart,
                                 lines              = lines,
                                 emptyCansCollected = emptyCans,
-                                saleDate           = parsedSaleDate,
+                                saleDate           = saleDateTime,
                             )
                         }
                     },
                 )
+                // Loader while the sale is being saved. The overlay previously
+                // only rendered on the Home tab, so Save appeared to do nothing.
+                if (isSubmittingAction && state.loading) {
+                    SaaSLoadingOverlay(message = "Saving Sale")
+                }
             }
 
             EmpScreen.Profile -> {
@@ -282,7 +303,6 @@ fun EmployeeDashboardScreen(
                     // employee_id (see EmployeeRepository.getDailyCansSummary).
                     todayInward  = state.todayInward,
                     todayOutward = state.todayOutward,
-                    todaySales   = state.dailyEarnings,
                     customerCount = state.customers.size,
                     supplierCount = 0,
                     errorMessage  = state.error,
@@ -316,7 +336,7 @@ fun EmployeeDashboardScreen(
                                 NTNavTab(3, "Profile", Icons.Rounded.Person),
                             ),
                         )
-                    },
+                    }
                 ) { padding ->
                     when (selectedTab) {
                         1 -> EmployeeEntriesScreen(
@@ -326,22 +346,32 @@ fun EmployeeDashboardScreen(
                             emptyCansTotal = state.emptyCansTotal,
                             products       = state.productCategories,
                             onRefresh      = { vm.loadDashboard() },
+                            errorMessage   = state.error,
                             contentPadding = padding,
                         )
 
-                        2 -> EmployeeStockScreen(
-                            shopStocks         = state.shopStocks,
-                            products           = state.productCategories,
-                            // Shop-wide movements (not just this employee's) so the live
-                            // can balances reflect every colleague's activity at the shop.
-                            movements          = state.shopMovements,
-                            isLoading          = state.loading,
-                            onRefresh          = { vm.loadDashboard() },
-                            shopName           = state.assignedShop,
-                            customerCount      = state.customers.size,
-                            emptyCansBaseline  = state.emptyCansBaseline,
-                            contentPadding     = padding,
-                        )
+                        2 -> {
+                            // Same Inventory UI as the admin side, but strictly
+                            // view-only: every editing affordance is removed.
+                            val inventoryState = remember(state) {
+                                AdminState(
+                                    productCategories = state.productCategories,
+                                    // Shop-wide movements (not just this employee's)
+                                    // so the live balances reflect every
+                                    // colleague's activity at the shop.
+                                    recentMovements = state.shopMovements,
+                                    shopStocks = state.shopStocks,
+                                    shopNames = state.shopStocks.map { it.name }.distinct().take(2),
+                                    loading = state.loading,
+                                )
+                            }
+                            StockInventoryScreen(
+                                state = inventoryState,
+                                onBack = {},
+                                readOnly = true,
+                                contentPadding = padding,
+                            )
+                        }
 
                         // Tab 0 (Home) — and the fallback. Tab 3 (Profile) is handled above
                         // via the `screen` overlay state.
@@ -359,22 +389,22 @@ fun EmployeeDashboardScreen(
                         )
                     }
                 }
+
+                if (showAddEmptyCasesDialog) {
+                    EmptyCasesStepperDialog(
+                        currentCount = liveEmptyCases(state).toInt(),
+                        onDismiss    = { showAddEmptyCasesDialog = false },
+                        onConfirm    = { qty ->
+                            showAddEmptyCasesDialog = false
+                            vm.addEmptyCases(qty)
+                        },
+                    )
+                }
+
+                if (state.loading) {
+                    SaaSLoadingOverlay(message = "Syncing Database")
+                }
             }
-        }
-
-        if (showAddEmptyCasesDialog) {
-            EmptyCasesStepperDialog(
-                currentCount = liveEmptyCases(state).toInt(),
-                onDismiss    = { showAddEmptyCasesDialog = false },
-                onConfirm    = { qty ->
-                    showAddEmptyCasesDialog = false
-                    vm.addEmptyCases(qty)
-                },
-            )
-        }
-
-        if (state.loading) {
-            SaaSLoadingOverlay(message = "Syncing Database")
         }
     }
 }
@@ -404,9 +434,9 @@ private fun StockMovement.toHomeActivityItem(): HomeActivityItem {
     } else {
         source.trim()
     }
-    
+
     val dateTimeStr = formatCreatedAtDateTime(createdAt)
-    
+
     return if (isReturn) {
         HomeActivityItem(
             title = "Return from $cleanSource",
@@ -493,7 +523,7 @@ private fun EmployeeHomeContent(
             }
         }
 
-// ── Today's Stock Card ───────────────────────
+        // ── Today's Stock Card ───────────────────────
         item {
             TodayStockCard(
                 available     = totalFull,
@@ -579,7 +609,7 @@ private fun EmployeeHomeContent(
         } else if (activityItems.isEmpty()) {
             item {
                 Box(
-                    modifier = Modifier.fillMaxWidth().padding(24.dp),
+                    Modifier.fillMaxWidth().padding(24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -681,13 +711,13 @@ private fun EmpHeader(
                             text = greeting,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
-                            color = NTColors.TextSecondary,
+                            color = Color.White.copy(alpha = 0.75f),
                         )
                         Text(
                             text = name,
                             fontSize = 22.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = NTColors.TextPrimary,
+                            color = Color.White,
                         )
                     }
                 }
@@ -704,7 +734,7 @@ private fun EmpHeader(
                     Icon(
                         Icons.Rounded.Notifications,
                         contentDescription = "Notifications",
-                        tint = NTColors.TextPrimary,
+                        tint = Color.White,
                         modifier = Modifier.size(NTDp.iconMd),
                     )
                 }
@@ -721,7 +751,7 @@ private fun EmpHeader(
                 ) {
                     Icon(
                         Icons.Rounded.Store, null,
-                        tint = NTColors.Primary,
+                        tint = Color.White,
                         modifier = Modifier.size(14.dp),
                     )
                     Spacer(Modifier.width(6.dp))
@@ -729,7 +759,7 @@ private fun EmpHeader(
                         text = shopInfo.replace("·", "•"),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = NTColors.TextPrimary,
+                        color = Color.White,
                     )
                 }
             }
@@ -983,7 +1013,7 @@ private fun RecentActivityItemRow(
             modifier = Modifier
                 .size(40.dp)
                 .background(iconColor.copy(alpha = 0.1f), CircleShape),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,

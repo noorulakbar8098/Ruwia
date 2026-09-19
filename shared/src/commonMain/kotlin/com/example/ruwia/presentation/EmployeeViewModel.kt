@@ -38,6 +38,9 @@ data class EmployeeState(
     val shopMovements: List<StockMovement> = emptyList(),
     val productCategories: List<ProductCategory> = emptyList(),
     val customers: List<Customer> = emptyList(),
+    /** Active custom selling prices for the currently selected sale customer,
+     *  keyed by product id. Empty = fall back to product defaults. */
+    val customPrices: Map<String, Double> = emptyMap(),
 
     /** Shop-level can balances mirrored from shop_stocks. */
     val shopStocks: List<ShopStockInfo> = emptyList(),
@@ -281,6 +284,17 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
 
     fun clearError() {
         _state.value = _state.value.copy(error = null)
+    }
+
+    /** Loads the selected sale customer's custom prices (if any). */
+    fun loadCustomPrices(customerId: String) = viewModelScope.launch {
+        if (customerId.isBlank()) {
+            _state.value = _state.value.copy(customPrices = emptyMap())
+            return@launch
+        }
+        runCatching { repo.getCustomPricesForCustomer(customerId) }
+            .onSuccess { map -> _state.value = _state.value.copy(customPrices = map) }
+            .onFailure { _state.value = _state.value.copy(customPrices = emptyMap()) }
     }
 
     // ── Inward Stock Entry ────────────────────────────────────────────────────

@@ -1,5 +1,10 @@
 package com.example.ruwia.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.isEmptyCansSource
 
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
@@ -67,9 +74,16 @@ fun EmployeeEntriesScreen(
     emptyCansTotal: Int = 0,
     products: List<ProductCategory> = emptyList(), // Added products
     onRefresh: () -> Unit,
+    errorMessage: String? = null,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    var selectedFilter by remember { mutableStateOf("All") }
+    // Entries filter and analytics range stay in sync: picking an analytics
+    // range highlights the matching entries chip (one-way, user action only).
+    var selectedFilter by rememberSaveable { mutableStateOf("Today") }
+    var analyticsRangeName by rememberSaveable { mutableStateOf(DispatchRange.TODAY.name) }
+    val analyticsRange = remember(analyticsRangeName) {
+        runCatching { DispatchRange.valueOf(analyticsRangeName) }.getOrDefault(DispatchRange.TODAY)
+    }
     var showDatePickerStart by remember { mutableStateOf(false) }
     var showDatePickerEnd by remember { mutableStateOf(false) }
     var customStartDate by remember { mutableStateOf<LocalDate?>(null) }
@@ -119,6 +133,12 @@ fun EmployeeEntriesScreen(
 
     // Delivered units follow the selected date filter (sum of outward qty).
     val deliveredUnits = remember(filtered) { filtered.sumOf { it.qty } }
+
+    // Dispatch analytics aggregate the same movement feed — memoized so the
+    // range switch never triggers an API call.
+    val dispatchData = remember(movements, products, analyticsRange, today) {
+        aggregateDispatch(movements, products, analyticsRange, today)
+    }
 
     if (showDatePickerStart) {
         val dateState = rememberDatePickerState()
@@ -173,6 +193,23 @@ fun EmployeeEntriesScreen(
     ) {
         // ── Header with refresh ─────────────────────────────────────────────
         item { EntriesTopBar(currentDate = currentDate, onRefresh = onRefresh) }
+
+        // ── Dispatch analytics (detail view above the summary card) ─────────
+        item {
+            DispatchAnalyticsCard(
+                data = dispatchData,
+                range = analyticsRange,
+                onRangeChange = { range ->
+                    analyticsRangeName = range.name
+                    selectedFilter = range.chip
+                },
+                isLoading = isLoading && movements.isEmpty(),
+                errorMessage = errorMessage,
+                onRetry = onRefresh,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(18.dp))
+        }
 
         // ── Totals card ─────────────────────────────────────────────────────
         item {
@@ -428,11 +465,21 @@ val isInward = movement.type == "inward"
 
     val displayQty = "${movement.qty} units"
 
-    Row(
+    // Product behind this movement, resolved for the expandable detail.
+    val product = remember(movement.productId, products) {
+        movement.productId?.let { id -> products.find { it.id == id } }
+    }
+    var expanded by remember(movement.id, movement.createdAt) { mutableStateOf(false) }
+
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .background(NTColors.Surface, RoundedCornerShape(14.dp))
+            .clickable { expanded = !expanded }
             .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -497,6 +544,71 @@ Box(
             fontSize   = 15.sp,
             fontWeight = FontWeight.Bold,
             color      = amtColor,
+        )
+
+        Spacer(Modifier.width(6.dp))
+
+        Icon(
+            if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+            contentDescription = if (expanded) "Collapse details" else "Expand details",
+            tint     = NTColors.TextTertiary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+
+        // ── Expandable detail: case type, quantity, shop ──
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            val isEmptyReturn = movement.source.isEmptyCansSource()
+            val caseType = product?.displayName?.ifBlank { product?.name }
+                ?: if (isEmptyReturn) "Empty cases" else "General stock"
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(NTColors.Divider.copy(alpha = 0.6f)),
+                )
+                Spacer(Modifier.height(6.dp))
+                EntryDetailRow(label = "Case type", value = caseType)
+                EntryDetailRow(label = "Quantity", value = "${movement.qty} Cases")
+                EntryDetailRow(
+                    label = "Shop",
+                    value = movement.shopName.trim().ifBlank { "—" },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EntryDetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = NTColors.TextTertiary,
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = value,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = NTColors.TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f, fill = false),
         )
     }
 }

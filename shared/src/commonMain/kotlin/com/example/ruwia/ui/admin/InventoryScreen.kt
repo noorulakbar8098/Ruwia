@@ -4,6 +4,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import com.example.ruwia.domain.CustomerProductPrice
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
@@ -24,6 +25,9 @@ fun InventoryScreen(
     onAddStockPurchase: (product: ProductCategory?, currentStock: Int) -> Unit,
     onToggleProductStatus: (ProductCategory) -> Unit = {},
     onOpenStockHistory: () -> Unit = {},
+    onSaveCustomerPrice: (CustomerProductPrice) -> Unit = {},
+    onLoadCustomerPrices: (productId: String) -> Unit = {},
+    onDeleteCustomerPrice: (customerId: String, productId: String) -> Unit = { _, _ -> },
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     Box(modifier = Modifier.fillMaxSize().background(InvColors.Background)) {
@@ -36,6 +40,9 @@ fun InventoryScreen(
             onDeleteProduct = onDeleteProduct,
             onToggleProductStatus = onToggleProductStatus,
             onOpenStockHistory = onOpenStockHistory,
+            onSaveCustomerPrice = onSaveCustomerPrice,
+            onLoadCustomerPrices = onLoadCustomerPrices,
+            onDeleteCustomerPrice = onDeleteCustomerPrice,
             contentPadding = contentPadding
         )
     }

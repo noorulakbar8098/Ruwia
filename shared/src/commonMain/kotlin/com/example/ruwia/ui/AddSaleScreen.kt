@@ -49,33 +49,7 @@ data class OutwardLineItem(
     val sellPriceText: String,
 )
 
-// ── Date helpers (KMP-compatible, no external deps) ───────────────────────────
-
-private fun Long.toDisplayDate(): String {
-    var days = (this / 86400000L).toInt()
-    var year = 1970
-    while (true) {
-        val leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
-        val diy = if (leap) 366 else 365
-        if (days < diy) break
-        days -= diy; year++
-    }
-    val leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
-    val dpm = intArrayOf(31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-    var m = 0
-    while (days >= dpm[m]) { days -= dpm[m]; m++ }
-    val dd = (days + 1).toString().padStart(2, '0')
-    val mm = (m + 1).toString().padStart(2, '0')
-    return "$dd/$mm/$year"
-}
-
-private fun formatTime(hour: Int, minute: Int): String {
-    val h = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
-    val ampm = if (hour >= 12) "PM" else "AM"
-    return "$h:${minute.toString().padStart(2, '0')} $ampm"
-}
-
-// ── Public entry-point ─────────────────────────────────────────────────────────
+// ── Public entry-point ────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,14 +59,25 @@ fun AddSaleScreen(
     /** Shop-scoped stock movements used to compute live per-product available
      *  stock. Pass the employee's `shopMovements` from the ViewModel state. */
     stockMovements: List<StockMovement> = emptyList(),
+    /** The currently selected customer for whom customer-specific pricing may apply. */
+    selectedCustomer: Customer? = null,
+    /** Callback invoked when the customer selection changes. */
+    onCustomerChange: (Customer) -> Unit = {},
+    /** Function to get the effective selling price for a customer and product.
+     *  Returns the customer-specific price if available, otherwise the product's default sell price. */
+    getEffectivePrice: (customerId: String, productId: String) -> Double = { _, _ -> 0.0 },
+    /** Live custom-price cache (product id -> price) for the selected customer.
+     *  Lines re-price whenever this map arrives/updates. */
+    customPrices: Map<String, Double> = emptyMap(),
     errorMessage: String? = null,
     onNewCustomer: (Customer) -> Unit = {},
     onClearError: () -> Unit = {},
     onBack: () -> Unit,
     /** Called when the employee taps "Save sale". The third arg is the number
      *  of empty cans the employee collected from this customer at delivery.
-     *  The fourth arg is the selected sale date in display format (e.g. "29/09/2026"). */
-    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String) -> Unit = { _, _, _, _ -> },
+     *  The fourth arg is the selected sale date in display format (e.g. "29/09/2026").
+     *  The fifth arg is the selected sale time in display format (e.g. "2:30 PM"). */
+    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String, saleTime: String) -> Unit = { _, _, _, _, _ -> },
     shopName: String = "",
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
@@ -138,7 +123,7 @@ fun AddSaleScreen(
             } else emptyList()
         )
     }
-    var selectedCustomer   by remember { mutableStateOf<Customer?>(null) }
+    var selectedCustomer   by remember { mutableStateOf(selectedCustomer) }
     var showCustomerPicker by remember { mutableStateOf(false) }
     var editingLineIdx     by remember { mutableStateOf<Int?>(null) }
     var showProductPicker  by remember { mutableStateOf(false) }
@@ -148,28 +133,40 @@ fun AddSaleScreen(
      *  movement so the admin can see returned empties immediately. */
     var emptyCansText      by remember { mutableStateOf("") }
 
-    // Date / time — use current date/time via kotlinx-datetime
-    var displayDate by remember {
-        mutableStateOf(
-            try { com.example.ruwia.util.toDisplayDate(Clock.System.now()) }
-            catch (_: Exception) { "" }
-        )
+    /** Effective per-unit price text for a product and the selected customer:
+     *  the customer's custom price when one exists, else the product default. */
+    fun priceTextFor(product: ProductCategory): String {
+        val custom = selectedCustomer?.id?.takeIf { it.isNotBlank() }?.let { cid ->
+            customPrices[product.id]?.takeIf { it > 0 } ?: getEffectivePrice(cid, product.id)
+        } ?: 0.0
+        val price = if (custom > 0) custom else product.defaultSellPrice
+        return if (price > 0) price.toInt().toString() else ""
     }
-    var displayTime by remember {
-        mutableStateOf(
-            try {
-                val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-                val h = now.hour
-                val hh = if (h == 0) 12 else if (h > 12) h - 12 else h
-                val ampm = if (h >= 12) "PM" else "AM"
-                "$hh:${now.minute.toString().padStart(2,'0')} $ampm"
-            } catch (_: Exception) { "" }
-        )
+
+    // Whenever the customer changes — or their custom prices finish loading
+    // from the database — re-price every line so a custom price is reflected
+    // immediately in each sale count.
+    LaunchedEffect(selectedCustomer?.id, customPrices) {
+        val cid = selectedCustomer?.id
+        if (!cid.isNullOrBlank() && products.isNotEmpty()) {
+            lineItems = lineItems.map { item ->
+                val product = products.getOrNull(item.productIdx) ?: return@map item
+                item.copy(sellPriceText = priceTextFor(product))
+            }
+        }
     }
-    var showDatePicker by remember { mutableStateOf(false) }
-    var showTimePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState()
-    val timePickerState = rememberTimePickerState(initialHour = 11, initialMinute = 16)
+
+    // Sale timestamp is always the present moment — the employee cannot edit
+    // it. Computed fresh at save time so it reflects the actual entry moment.
+    fun nowSaleDate(): String = try {
+        com.example.ruwia.util.toDisplayDate(Clock.System.now())
+    } catch (_: Exception) { "" }
+    fun nowSaleTime(): String = try {
+        val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+        val hh = if (now.hour == 0) 12 else if (now.hour > 12) now.hour - 12 else now.hour
+        val ampm = if (now.hour >= 12) "PM" else "AM"
+        "$hh:${now.minute.toString().padStart(2, '0')} $ampm"
+    } catch (_: Exception) { "" }
 
     val totalQty   = lineItems.sumOf { it.qty }
     val isSaveEnabled = selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
@@ -192,57 +189,6 @@ fun AddSaleScreen(
                 val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty Cases", ignoreCase = true) }.sumOf { it.qty }
                 val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
                 product.id to (inward - outward).coerceAtLeast(0)
-            }
-        }
-    }
-
-    // ── Dialogs ────────────────────────────────────────────────────────────────
-    if (showDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { millis ->
-                        displayDate = millis.toDisplayDate()
-                    }
-                    showDatePicker = false
-                }) { Text("OK") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
-            },
-        ) { DatePicker(state = datePickerState) }
-    }
-
-    if (showTimePicker) {
-        Dialog(onDismissRequest = { showTimePicker = false }) {
-            Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = RuwiaColor.Surface,
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        "Select time",
-                        fontSize   = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = RuwiaColor.TextPrimary,
-                        modifier   = Modifier.align(Alignment.Start),
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    TimePicker(state = timePickerState)
-                    Spacer(Modifier.height(8.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { showTimePicker = false }) { Text("Cancel") }
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = {
-                            displayTime = formatTime(timePickerState.hour, timePickerState.minute)
-                            showTimePicker = false
-                        }) { Text("OK") }
-                    }
-                }
             }
         }
     }
@@ -275,7 +221,7 @@ fun AddSaleScreen(
                             errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cases\nAvailable: $availRaw Cases\n\nPlease reduce the quantity and try again."
                             return@SaleBottomBar
                         }
-                        onSave(selectedCustomer!!.name, lineItems, empties, displayDate)
+                        onSave(selectedCustomer!!.name, lineItems, empties, nowSaleDate(), nowSaleTime())
                     },
                 )
             },
@@ -300,7 +246,7 @@ fun AddSaleScreen(
                 }
                 Spacer(Modifier.height(10.dp))
 
-                // ── Section 2: Products (multi) ────────────────
+                // ── Section 2: Products (multi) ────────────
                 MultiProductSection(
                     sectionNumber = 2,
                     products      = products,
@@ -326,31 +272,33 @@ fun AddSaleScreen(
                         lineItems = lineItems + OutwardLineItem(
                             productIdx    = 0,
                             qty           = 1,
-                            sellPriceText = firstProduct.defaultSellPrice.let {
-                                if (it > 0) it.toInt().toString() else ""
-                            },
+                            sellPriceText = priceTextFor(firstProduct),
                         )
                     },
                 )
                 Spacer(Modifier.height(10.dp))
 
-                // ── Section 3: Date & time ─────────────────────
-                SaleFormSection(number = 3, title = "Date & time") {
+                // ── Section 3: Entry time (locked to now, not editable) ──
+                SaleFormSection(number = 3, title = "Entry time") {
                     Row(modifier = Modifier.fillMaxWidth()) {
-                        SaleDateTimeButton(
+                        SaleTimestampView(
                             icon    = Icons.Rounded.DateRange,
-                            label   = displayDate,
-                            onClick = { showDatePicker = true },
+                            label   = nowSaleDate(),
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(Modifier.width(10.dp))
-                        SaleDateTimeButton(
+                        SaleTimestampView(
                             icon    = Icons.Rounded.Schedule,
-                            label   = displayTime,
-                            onClick = { showTimePicker = true },
+                            label   = nowSaleTime(),
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Auto-recorded at entry time · not editable",
+                        fontSize = 11.sp,
+                        color = RuwiaColor.TextMuted,
+                    )
                 }
                 Spacer(Modifier.height(20.dp))
 
@@ -377,7 +325,7 @@ fun AddSaleScreen(
                 initialCustomers = customers,
                 selectedCustomer = selectedCustomer,
                 onDismiss        = { showCustomerPicker = false },
-                onSelect         = { selectedCustomer = it },
+                onSelect         = { selectedCustomer = it; onCustomerChange(it) },
                 onNewCustomer    = onNewCustomer,
             )
         }
@@ -450,8 +398,7 @@ fun AddSaleScreen(
                                             if (i == lineIdx) {
                                                 item.copy(
                                                     productIdx    = originalIdx,
-                                                    sellPriceText = if (p.defaultSellPrice > 0)
-                                                        p.defaultSellPrice.toInt().toString() else "",
+                                                    sellPriceText = priceTextFor(p),
                                                 )
                                             } else item
                                         }
@@ -486,7 +433,7 @@ fun AddSaleScreen(
                                     val limitText = availableUnitsMap[p.id]?.let {
                                         "$it Cases available"
                                     } ?: "Available stock: ${p.stockAvailable} Cases"
-                                    Text("₹${p.defaultSellPrice.toInt()}/Case  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                                    Text(limitText, fontSize = 11.sp, color = RuwiaColor.TextMuted)
                                 }
                             }
                             if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
@@ -514,7 +461,7 @@ private fun SaleTopBar(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp)
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 16.dp),
         ) {
             Box(
                 modifier = Modifier
@@ -545,7 +492,7 @@ private fun SaleTopBar(onBack: () -> Unit) {
     }
 }
 
-// ── Hero card ──────────────────────────────────────────────────────────────────
+// ── Hero card ────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun SaleHeroCard() {
@@ -605,7 +552,7 @@ private fun SaleFormSection(
     }
 }
 
-// ── Multi-product section ──────────────────────────────────────────────────────
+// ── Multi-product section ────────────────────────────────────────────────────
 
 @Composable
 private fun MultiProductSection(
@@ -643,7 +590,7 @@ private fun MultiProductSection(
         }
         Spacer(Modifier.height(14.dp))
 
-        // ── Empty state when no products are available ─────────────────
+        // ── Empty state when no products are available ─────────────
         // Without this guard the line-item renderer below would crash
         // trying to look up a product in an empty list.
         if (products.isEmpty()) {
@@ -863,29 +810,27 @@ private fun SaleLineCard(
     }
 }
 
-// ── Date & time button ────────────────────────────────────────────────────────
+// ── Timestamp view (locked, non-interactive) ────────────────────────────────────
 
 @Composable
-private fun SaleDateTimeButton(
+private fun SaleTimestampView(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
-    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier
             .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(16.dp))
+        Icon(icon, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
-        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextSecondary)
     }
 }
 
-// ── Bottom bar ─────────────────────────────────────────────────────────────────
+// ── Bottom bar ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun SaleBottomBar(

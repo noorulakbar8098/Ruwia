@@ -6,6 +6,7 @@ import com.example.ruwia.data.AdminRepository
 import com.example.ruwia.data.awaitAuthentication
 import kotlinx.coroutines.Job
 import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.CustomerProductPrice
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.Order
@@ -73,6 +74,8 @@ data class AdminState(
     val shopName: String = "",
     /** Global baseline subtracted from the live "Empty Cases" figure. */
     val emptyCansBaseline: Int = 0,
+    /** Active customer-specific prices per product, keyed by product id. */
+    val customerPrices: Map<String, List<CustomerProductPrice>> = emptyMap(),
 )
 
 class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
@@ -316,6 +319,43 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 )
             }
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
+    }
+
+    // ── Sales ─────────────────────────────────────────────────────────────────
+
+    // ── Customer-specific pricing ─────────────────────────────────────────────
+
+    fun loadCustomerPrices(productId: String) = viewModelScope.launch {
+        runCatching { repo.getCustomerProductPricesForProduct(productId) }
+            .onSuccess { list ->
+                _state.value = _state.value.copy(
+                    customerPrices = _state.value.customerPrices + (productId to list)
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(error = pricingErrorMessage(it.message)) }
+    }
+
+    fun saveCustomerProductPrice(price: CustomerProductPrice) = viewModelScope.launch {
+        runCatching { repo.upsertCustomerProductPrice(price) }
+            .onSuccess { loadCustomerPrices(price.productId) }
+            .onFailure { _state.value = _state.value.copy(error = pricingErrorMessage(it.message)) }
+    }
+
+    fun deleteCustomerProductPrice(customerId: String, productId: String) = viewModelScope.launch {
+        runCatching { repo.deleteCustomerProductPrice(customerId, productId) }
+            .onSuccess { loadCustomerPrices(productId) }
+            .onFailure { _state.value = _state.value.copy(error = pricingErrorMessage(it.message)) }
+    }
+
+    /** Translates raw database errors into actionable admin-facing messages. */
+    private fun pricingErrorMessage(raw: String?): String {
+        val message = raw.orEmpty()
+        return if (message.contains("Could not find the table", ignoreCase = true)) {
+            "Customer pricing table is missing in the database. " +
+                "Run the setup SQL in the Supabase dashboard, then try again."
+        } else {
+            message.ifBlank { "Could not save the customer price" }
+        }
     }
 
     // ── Sales ─────────────────────────────────────────────────────────────────
