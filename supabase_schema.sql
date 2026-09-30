@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS product_categories (
     purchase_price_mb  DECIMAL(10,2) DEFAULT 0,
     default_sell_price DECIMAL(10,2) DEFAULT 0,
     stock_available  INT DEFAULT 0,
+    low_stock_alert  INT DEFAULT 5,
     is_active        BOOLEAN DEFAULT true,
     is_deleted       BOOLEAN DEFAULT false,
     created_at       TIMESTAMPTZ DEFAULT now()
@@ -174,6 +175,7 @@ SELECT migrate_to_tenant_table('product_categories');
 ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS brand_name TEXT DEFAULT '';
 ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS purchase_price DECIMAL(10,2) DEFAULT 0;
 ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false;
+ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS low_stock_alert INT DEFAULT 5;
 SELECT migrate_to_tenant_table('shop_stocks');
 SELECT migrate_to_tenant_table('suppliers');
 SELECT migrate_to_tenant_table('customers');

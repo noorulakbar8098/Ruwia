@@ -43,6 +43,19 @@ data class DashboardMetrics(
     /** Which [DashboardRange] produced these chart values. */
     val range: DashboardRange,
 
+    /** 0..1 normalised distinct-customer series for the selected [range]. */
+    val customerChartPoints: List<Float>,
+    /** Raw distinct-customer count per bucket (same length as [customerChartPoints]). */
+    val customerChartRaw: List<Double>,
+    /** X-axis labels for the customer chart (same buckets as revenue). */
+    val customerXLabels: List<String>,
+    /** Distinct customers in the selected window. */
+    val rangeCustomers: Int,
+    /** Growth for the selected customer window vs previous window. */
+    val customerRangeGrowthPercent: Double?,
+    /** Revenue growth for the selected window vs the previous equivalent window. */
+    val revenueRangeGrowthPercent: Double?,
+
     val weeklyGrowthPercent: Double?,
     val stockGrowthPercent: Double?,
     val customerGrowthPercent: Double?,
@@ -94,9 +107,19 @@ fun AdminState.toDashboardMetrics(
     val normalised   = rawSeries.map { (it / maxPt).toFloat().coerceIn(0f, 1f) }
     val yLabels      = buildYAxisLabels(maxPt)
 
+    // ── Build distinct-customer series for the same window ───────────────────
+    val (custRawSeries, custXLabels, _, _) = saleEntries.customerSeriesFor(range, current)
+    val custMax = custRawSeries.maxOrNull()?.takeIf { it > 0.0 } ?: 1.0
+    val custNormalised = custRawSeries.map { (it / custMax).toFloat().coerceIn(0f, 1f) }
+    val rangeCustTotal = saleEntries.distinctCustomersForRange(range, current)
+    val custRangeGrowth = saleEntries.customerRangeGrowth(range, current)
+
     // ── Weekly: last 7 days vs prior 7 days ──────────────────────────────────
     val (last7, prev7) = saleEntries.lastTwoWeekTotals()
     val weeklyGrowth   = pctChange(last7, prev7)
+
+    // ── Revenue growth for the selected window vs the previous one ───────────
+    val revRangeGrowth = saleEntries.revenueRangeGrowth(range, current)
 
     // ── Stock movements: net inward this/last month ──────────────────────────
     val thisStockNet = recentMovements.netInwardForMonth(current)
@@ -149,6 +172,12 @@ fun AdminState.toDashboardMetrics(
         rangeRevenue           = rangeTotal,
         rangeLabel             = rangeLabel,
         range                  = range,
+        customerChartPoints    = custNormalised,
+        customerChartRaw       = custRawSeries,
+        customerXLabels        = custXLabels,
+        rangeCustomers         = rangeCustTotal,
+        customerRangeGrowthPercent = custRangeGrowth,
+        revenueRangeGrowthPercent = revRangeGrowth,
         weeklyGrowthPercent    = weeklyGrowth,
         stockGrowthPercent     = stockGrowth,
         customerGrowthPercent  = custGrowth,
@@ -281,6 +310,241 @@ private fun List<SaleEntry>.yearSeries(currentYearMonth: String): ChartSeries {
     val markers = listOf(0, 3, 6, 9, 11)
     val labels  = markers.map { i -> monthAbbr(months[i].second) }
     return ChartSeries(raw, labels, "Last 12 months", raw.sum())
+}
+
+// ─── Customer series per window (distinct customers per bucket) ─────────────
+
+private fun List<SaleEntry>.customerSeriesFor(
+    range: DashboardRange,
+    currentYearMonth: String,
+): ChartSeries = when (range) {
+    DashboardRange.WEEK    -> customerWeekSeries()
+    DashboardRange.MONTH   -> customerMonthSeries(currentYearMonth)
+    DashboardRange.QUARTER -> customerQuarterSeries(currentYearMonth)
+    DashboardRange.YEAR    -> customerYearSeries(currentYearMonth)
+}
+
+/** Distinct customers per day for the last 7 days with sales. */
+private fun List<SaleEntry>.customerWeekSeries(): ChartSeries {
+    val byDate = groupBy { it.date }
+    val days = byDate.keys.sortedDescending().take(7).reversed()
+    val raw = days.map { d -> byDate[d]!!.distinctCustomerCount().toDouble() }
+    val labels = days.map { d ->
+        val day = d.substring(8, 10).toIntOrNull()?.toString() ?: "?"
+        val mon = d.substring(5, 7).toMonthAbbr()
+        "$day $mon"
+    }.ifEmpty { listOf("—", "—", "—", "—", "—", "—", "—") }
+    val padded = if (raw.size < 2) List(7) { 0.0 } else raw
+    val padLbls = if (labels.size < 2) List(7) { "—" } else labels
+    return ChartSeries(padded, padLbls, "Last 7 days", padded.sum())
+}
+
+/** Distinct customers per day in [yearMonth]. */
+private fun List<SaleEntry>.customerMonthSeries(yearMonth: String): ChartSeries {
+    if (yearMonth.isBlank()) {
+        return ChartSeries(List(7) { 0.0 }, listOf("1", "8", "15", "22", "30"), "This Month", 0.0)
+    }
+    val year = yearMonth.substring(0, 4).toIntOrNull() ?: return ChartSeries(
+        List(7) { 0.0 }, listOf("1", "8", "15", "22", "30"), "This Month", 0.0,
+    )
+    val month = yearMonth.substring(5, 7).toIntOrNull() ?: return ChartSeries(
+        List(7) { 0.0 }, listOf("1", "8", "15", "22", "30"), "This Month", 0.0,
+    )
+    val nDays = daysInMonth(year, month)
+    val mAbbr = monthAbbr(month)
+    val byDate = groupBy { it.date }
+    val raw = (1..nDays).map { d ->
+        val key = "$yearMonth-${d.toString().padStart(2, '0')}"
+        byDate[key]?.distinctCustomerCount()?.toDouble() ?: 0.0
+    }
+    val markers = listOf(
+        1,
+        (nDays * 0.25).toInt().coerceAtLeast(2),
+        (nDays * 0.5).toInt().coerceAtLeast(3),
+        (nDays * 0.75).toInt().coerceAtLeast(4),
+        nDays,
+    ).distinct()
+    val labels = markers.map { "$it $mAbbr" }
+    return ChartSeries(raw, labels, "$mAbbr $year", raw.sum())
+}
+
+/** Distinct customers per month for the last 3 months. */
+private fun List<SaleEntry>.customerQuarterSeries(currentYearMonth: String): ChartSeries {
+    if (currentYearMonth.isBlank()) {
+        return ChartSeries(List(3) { 0.0 }, listOf("—", "—", "—"), "Last 3 months", 0.0)
+    }
+    val year = currentYearMonth.substring(0, 4).toIntOrNull() ?: 0
+    val month = currentYearMonth.substring(5, 7).toIntOrNull() ?: 0
+    val months = (0..2).map { offset ->
+        val (y, m) = subtractMonths(year, month, 2 - offset)
+        "$y-${m.toString().padStart(2, '0')}"
+    }
+    val raw = months.map { ym -> distinctCustomersForMonth(ym).toDouble() }
+    val labels = months.map { ym -> monthAbbr(ym.substring(5, 7).toIntOrNull() ?: 0) }
+    return ChartSeries(raw, labels, "Last 3 months", raw.sum())
+}
+
+/** Distinct customers per month for the last 12 months. */
+private fun List<SaleEntry>.customerYearSeries(currentYearMonth: String): ChartSeries {
+    if (currentYearMonth.isBlank()) {
+        return ChartSeries(List(12) { 0.0 },
+            listOf("Jan", "Apr", "Jul", "Oct", "Dec"), "Last 12 months", 0.0)
+    }
+    val year = currentYearMonth.substring(0, 4).toIntOrNull() ?: 0
+    val month = currentYearMonth.substring(5, 7).toIntOrNull() ?: 0
+    val months = (0..11).map { offset ->
+        val (y, m) = subtractMonths(year, month, 11 - offset)
+        Triple(y, m, "$y-${m.toString().padStart(2, '0')}")
+    }
+    val raw = months.map { (_, _, ym) -> distinctCustomersForMonth(ym).toDouble() }
+    val markers = listOf(0, 3, 6, 9, 11)
+    val labels = markers.map { i -> monthAbbr(months[i].second) }
+    return ChartSeries(raw, labels, "Last 12 months", raw.sum())
+}
+
+/** Distinct customers across the whole selected window. */
+private fun List<SaleEntry>.distinctCustomersForRange(
+    range: DashboardRange,
+    currentYearMonth: String,
+): Int = when (range) {
+    DashboardRange.WEEK -> {
+        val days = groupBy { it.date }.keys.sortedDescending().take(7).toSet()
+        filter { it.date in days }.distinctCustomerCount()
+    }
+    DashboardRange.MONTH -> distinctCustomersForMonth(currentYearMonth)
+    DashboardRange.QUARTER -> {
+        val months = quarterMonthKeys(currentYearMonth)
+        filter { e -> months.any { e.date.startsWith(it) } }.distinctCustomerCount()
+    }
+    DashboardRange.YEAR -> {
+        val months = yearMonthKeys(currentYearMonth, 12)
+        filter { e -> months.any { e.date.startsWith(it) } }.distinctCustomerCount()
+    }
+}
+
+/** Window-over-window growth for distinct customers. Null when no baseline. */
+private fun List<SaleEntry>.customerRangeGrowth(
+    range: DashboardRange,
+    currentYearMonth: String,
+): Double? = when (range) {
+    DashboardRange.WEEK -> {
+        val days = groupBy { it.date }.keys.sortedDescending()
+        val last = days.take(7).toSet()
+        val prev = days.drop(7).take(7).toSet()
+        val lastCount = filter { it.date in last }.distinctCustomerCount().toDouble()
+        val prevCount = filter { it.date in prev }.distinctCustomerCount().toDouble()
+        pctChange(lastCount, prevCount)
+    }
+    DashboardRange.MONTH -> {
+        val prev = previousMonthKey(currentYearMonth)
+        pctChange(
+            distinctCustomersForMonth(currentYearMonth).toDouble(),
+            distinctCustomersForMonth(prev).toDouble()
+        )
+    }
+    DashboardRange.QUARTER -> {
+        val cur = quarterMonthKeys(currentYearMonth)
+        val prev = previousQuarterMonthKeys(currentYearMonth)
+        pctChange(
+            distinctCountForMonths(cur).toDouble(),
+            distinctCountForMonths(prev).toDouble()
+        )
+    }
+    DashboardRange.YEAR -> {
+        val cur = yearMonthKeys(currentYearMonth, 12)
+        val prev = previousYearMonthKeys(currentYearMonth)
+        pctChange(
+            distinctCountForMonths(cur).toDouble(),
+            distinctCountForMonths(prev).toDouble()
+        )
+    }
+}
+
+private fun List<SaleEntry>.distinctCustomerCount(): Int =
+    map { it.customerName.trim().lowercase() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .size
+
+private fun List<SaleEntry>.distinctCountForMonths(months: List<String>): Int =
+    filter { e -> months.any { e.date.startsWith(it) } }.distinctCustomerCount()
+
+/** Window-over-window revenue growth for the selected range. Null when no baseline. */
+private fun List<SaleEntry>.revenueRangeGrowth(
+    range: DashboardRange,
+    currentYearMonth: String,
+): Double? = when (range) {
+    DashboardRange.WEEK -> {
+        val (last7, prev7) = lastTwoWeekTotals()
+        pctChange(last7, prev7)
+    }
+    DashboardRange.MONTH -> {
+        val prev = previousMonthKey(currentYearMonth)
+        pctChange(sumByMonth(currentYearMonth), sumByMonth(prev))
+    }
+    DashboardRange.QUARTER -> {
+        pctChange(
+            sumForMonths(quarterMonthKeys(currentYearMonth)),
+            sumForMonths(previousQuarterMonthKeys(currentYearMonth))
+        )
+    }
+    DashboardRange.YEAR -> {
+        pctChange(
+            sumForMonths(yearMonthKeys(currentYearMonth, 12)),
+            sumForMonths(previousYearMonthKeys(currentYearMonth))
+        )
+    }
+}
+
+private fun List<SaleEntry>.sumForMonths(months: List<String>): Double =
+    filter { e -> months.any { e.date.startsWith(it) } }.sumOf { it.totalSelling }
+
+private fun quarterMonthKeys(currentYearMonth: String): List<String> {
+    if (currentYearMonth.isBlank()) return emptyList()
+    val year = currentYearMonth.substring(0, 4).toIntOrNull() ?: return emptyList()
+    val month = currentYearMonth.substring(5, 7).toIntOrNull() ?: return emptyList()
+    return (0..2).map { offset ->
+        val (y, m) = subtractMonths(year, month, 2 - offset)
+        "$y-${m.toString().padStart(2, '0')}"
+    }
+}
+
+private fun previousQuarterMonthKeys(currentYearMonth: String): List<String> {
+    if (currentYearMonth.isBlank()) return emptyList()
+    val year = currentYearMonth.substring(0, 4).toIntOrNull() ?: return emptyList()
+    val month = currentYearMonth.substring(5, 7).toIntOrNull() ?: return emptyList()
+    return (3..5).map { offset ->
+        val (y, m) = subtractMonths(year, month, offset)
+        "$y-${m.toString().padStart(2, '0')}"
+    }.reversed()
+}
+
+private fun yearMonthKeys(currentYearMonth: String, count: Int): List<String> {
+    if (currentYearMonth.isBlank()) return emptyList()
+    val year = currentYearMonth.substring(0, 4).toIntOrNull() ?: return emptyList()
+    val month = currentYearMonth.substring(5, 7).toIntOrNull() ?: return emptyList()
+    return (0 until count).map { offset ->
+        val (y, m) = subtractMonths(year, month, (count - 1) - offset)
+        "$y-${m.toString().padStart(2, '0')}"
+    }
+}
+
+private fun previousYearMonthKeys(currentYearMonth: String): List<String> {
+    if (currentYearMonth.isBlank()) return emptyList()
+    val year = currentYearMonth.substring(0, 4).toIntOrNull() ?: return emptyList()
+    val month = currentYearMonth.substring(5, 7).toIntOrNull() ?: return emptyList()
+    return (12 until 24).map { offset ->
+        val (y, m) = subtractMonths(year, month, offset)
+        "$y-${m.toString().padStart(2, '0')}"
+    }.reversed()
+}
+
+private fun previousMonthKey(currentYearMonth: String): String {
+    if (currentYearMonth.isBlank()) return ""
+    val year = currentYearMonth.substring(0, 4).toIntOrNull() ?: return ""
+    val month = currentYearMonth.substring(5, 7).toIntOrNull() ?: return ""
+    val (y, m) = subtractMonths(year, month, 1)
+    return "$y-${m.toString().padStart(2, '0')}"
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.deriveShopStockTotals
 import com.example.ruwia.domain.netStockPerProduct
+import com.example.ruwia.domain.netStockPerProductAllShops
 import com.example.ruwia.domain.netStockPerProductInShop
 import com.example.ruwia.domain.productNetStock
 import com.example.ruwia.domain.shopMatchKey
@@ -101,6 +102,50 @@ class SharedLogicJvmTest {
         assertEquals(30, shop2["p1"] ?: 0)
         // Global is the sum of both shops (empty-cans excluded).
         assertEquals(50, productNetStock(movements, "p1"))
+    }
+
+    // ── Regression: "All Shops = 330 but Shop 1 + Shop 2 = 365" ──────────────
+    // A shop-level negative net (outward recorded without matching inward at
+    // the same shop — e.g. transfers, large-quantity misattribution) used to
+    // be absorbed by the other shop's stock in the global figure, while each
+    // tab floored it to zero. All Shops must equal the tabs added up.
+
+    @Test
+    fun testAllShopsTotalEqualsSumOfShopTabs() {
+        val movements = listOf(
+            StockMovement(id = "m1", source = "Inward Purchase", qty = 100, type = "inward", shopName = "Shop 1", productId = "p1"),
+            StockMovement(id = "m2", source = "Sale · Rama", qty = 120, type = "outward", shopName = "Shop 1", productId = "p1"),
+            StockMovement(id = "m3", source = "Inward Purchase", qty = 200, type = "inward", shopName = "Shop 2", productId = "p1"),
+            StockMovement(id = "m4", source = "Sale · Sita", qty = 150, type = "outward", shopName = "Shop 2", productId = "p1"),
+        )
+        val shop1 = netStockPerProductInShop(movements, shopMatchKey("Shop 1"))
+        val shop2 = netStockPerProductInShop(movements, shopMatchKey("Shop 2"))
+        // Shop 1 net is −20 → floored to 0 on its tab; Shop 2 nets 50.
+        assertEquals(0, shop1["p1"] ?: -1)
+        assertEquals(50, shop2["p1"] ?: 0)
+        // Old cross-shop netting would report 300 − 270 = 30 here.
+        assertEquals(30, productNetStock(movements, "p1"))
+        // Bucketed All-Shops total matches the tabs added up — never negative.
+        val all = netStockPerProductAllShops(movements)
+        assertEquals(50, all["p1"] ?: 0)
+        assertEquals((shop1["p1"] ?: 0) + (shop2["p1"] ?: 0), all["p1"] ?: -1)
+        assertTrue((all["p1"] ?: 0) >= 0)
+    }
+
+    @Test
+    fun testAllShopsTotalMatchesTabsAfterTransfer() {
+        val movements = listOf(
+            StockMovement(id = "m1", source = "Inward Purchase", qty = 100, type = "inward", shopName = "Shop 1", productId = "p1"),
+            StockMovement(id = "m2", source = "Transfer to Shop 2", qty = 30, type = "outward", shopName = "Shop 1", productId = "p1"),
+            StockMovement(id = "m3", source = "Transfer from Shop 1", qty = 30, type = "inward", shopName = "Shop 2", productId = "p1"),
+        )
+        val shop1 = netStockPerProductInShop(movements, shopMatchKey("Shop 1"))
+        val shop2 = netStockPerProductInShop(movements, shopMatchKey("Shop 2"))
+        assertEquals(70, shop1["p1"] ?: 0)
+        assertEquals(30, shop2["p1"] ?: 0)
+        val all = netStockPerProductAllShops(movements)
+        assertEquals(100, all["p1"] ?: 0)
+        assertEquals((shop1["p1"] ?: 0) + (shop2["p1"] ?: 0), all["p1"] ?: -1)
     }
 
     @Test

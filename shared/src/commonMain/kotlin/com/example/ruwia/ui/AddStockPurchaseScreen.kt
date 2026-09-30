@@ -3,18 +3,20 @@ package com.example.ruwia.ui
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -22,17 +24,20 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.netStockPerProductInShop
 import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.data.getCurrentDateTimeIso
-import com.example.ruwia.theme.RuwiaColor
+import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.util.capitalizeWords
 
+// Deep teal shared with the home Business Overview card.
+private val FormTeal = Color(0xFF0F2E2C)
+
 private val skuSuggestions = listOf("20L", "2L", "1L", "500ml", "250ml")
+private const val DEFAULT_LOW_STOCK_ALERT = 5
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,7 +61,9 @@ fun AddStockPurchaseScreen(
         qty: Int,
         shopName: String,
         dateTimeIso: String,
-        emptyCans: Int
+        emptyCans: Int,
+        lowStockAlert: Int,
+        notes: String
     ) -> Unit,
 ) {
     val isEditMode = productToRestock != null
@@ -69,13 +76,18 @@ fun AddStockPurchaseScreen(
     var sellingPriceStr by remember { mutableStateOf("") }
     var qty by remember { mutableStateOf(1) }
     var emptyCans by remember { mutableStateOf(0) }
+    var notes by remember { mutableStateOf("") }
+    val skuFocus = remember { FocusRequester() }
+
+    // Low-stock alert: ON/OFF toggle + numeric threshold (default 5).
+    var alertEnabled by remember { mutableStateOf(true) }
+    var alertThresholdText by remember { mutableStateOf(DEFAULT_LOW_STOCK_ALERT.toString()) }
 
     // DateTime Iso
     val defaultDateTime = remember { getCurrentDateTimeIso() }
     var dateTimeIso by remember { mutableStateOf(defaultDateTime) }
 
     var showShopDropdown by remember { mutableStateOf(false) }
-    var showProductSelectDialog by remember { mutableStateOf(false) }
     var showErrorAlert by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(productToRestock) {
@@ -93,84 +105,65 @@ fun AddStockPurchaseScreen(
             sku = productToRestock.name
             purchasePriceStr = productToRestock.purchasePrice.toString()
             sellingPriceStr = productToRestock.defaultSellPrice.toString()
+
+            // Pre-fill the product's own alert threshold (OFF when saved as 0).
+            val saved = productToRestock.lowStockAlert.coerceIn(0, 999)
+            alertEnabled = saved > 0
+            alertThresholdText = if (saved > 0) saved.toString() else DEFAULT_LOW_STOCK_ALERT.toString()
             
             // Dynamically calculate stock for the selected shop
             qty = netStockPerProductInShop(movements, shopMatchKey(selectedShop))[productToRestock.id] ?: 0
         }
     }
 
-    if (showProductSelectDialog) {
-        ProductSelectDialog(
-            products = products,
-            onDismiss = { showProductSelectDialog = false },
-            onSelect = { p ->
-                brandName = p.brandName ?: ""
-                sku = p.name
-                purchasePriceStr = p.purchasePrice.toString()
-                sellingPriceStr = p.defaultSellPrice.toString()
-                showProductSelectDialog = false
-            }
-        )
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(RuwiaColor.Background)
+            .background(NTColors.Background)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header
-            Surface(
-                color = RuwiaColor.Surface,
-                tonalElevation = 2.dp,
-                modifier = Modifier.fillMaxWidth()
+            // Light header: back · title + subtitle · scan action.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NTColors.Surface)
+                    .statusBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .height(56.dp)
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(NTColors.SurfaceVar)
+                        .border(1.dp, NTColors.Border, RoundedCornerShape(12.dp))
+                        .clickable(onClickLabel = "Back", onClick = onBack),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(RuwiaColor.LightGray, RoundedCornerShape(10.dp))
-                            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
-                            .clickable(onClick = onBack),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back",
-                            tint = RuwiaColor.TextPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(16.dp))
+                    Icon(
+                        imageVector = Icons.Rounded.ArrowBack,
+                        contentDescription = null,
+                        tint = NTColors.TextPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (isEditMode) "Edit Product" else "Add Inward Stock",
-                        fontSize = 18.sp,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = RuwiaColor.TextPrimary,
-                        modifier = Modifier.weight(1f)
+                        letterSpacing = (-0.3).sp,
+                        color = NTColors.TextPrimary,
+                        maxLines = 1,
                     )
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(RuwiaColor.LightGray, RoundedCornerShape(10.dp))
-                            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
-                            .clickable(onClick = onClose),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "Close",
-                            tint = RuwiaColor.TextPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "Add new stock or select an existing product",
+                        fontSize = 12.sp,
+                        color = NTColors.TextSecondary,
+                        maxLines = 1,
+                    )
                 }
             }
 
@@ -182,38 +175,18 @@ fun AddStockPurchaseScreen(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Quick Picker Button
-                if (products.isNotEmpty() && productToRestock == null) {
-                    OutlinedButton(
-                        onClick = { showProductSelectDialog = true },
-                        border = BorderStroke(1.dp, RuwiaColor.TealPrimary),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = RuwiaColor.TealPrimary),
-                        modifier = Modifier.fillMaxWidth().height(48.dp)
-                    ) {
-                        Icon(Icons.Rounded.Search, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Pick Existing Product", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-                }
-
                 // Shop Location Dropdown
                 Column {
-                    Text(
-                        text = "Shop Location",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = RuwiaColor.TextSecondary
-                    )
+                    FormLabel("Shop Location")
                     Spacer(Modifier.height(6.dp))
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(RuwiaColor.Surface)
-                            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
-                            .clickable { showShopDropdown = true }
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(NTColors.Surface)
+                            .border(1.dp, NTColors.Border, RoundedCornerShape(14.dp))
+                            .clickable(onClickLabel = "Select shop", onClick = { showShopDropdown = true })
                             .padding(horizontal = 16.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
@@ -222,26 +195,39 @@ fun AddStockPurchaseScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = selectedShop,
-                                color = RuwiaColor.TextPrimary,
-                                fontSize = 14.sp
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.LocationOn,
+                                    contentDescription = null,
+                                    tint = FormTeal,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = selectedShop.ifBlank { "Select shop" },
+                                    color = if (selectedShop.isBlank()) NTColors.TextTertiary else NTColors.TextPrimary,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                )
+                            }
                             Icon(
-                                imageVector = Icons.Rounded.ArrowDropDown,
+                                imageVector = Icons.Rounded.KeyboardArrowDown,
                                 contentDescription = "Dropdown",
-                                tint = RuwiaColor.TextSecondary
+                                tint = NTColors.TextSecondary
                             )
                         }
 
                         DropdownMenu(
                             expanded = showShopDropdown,
                             onDismissRequest = { showShopDropdown = false },
-                            modifier = Modifier.background(RuwiaColor.Surface)
+                            modifier = Modifier.background(NTColors.Surface)
                         ) {
                             effectiveShops.forEach { shop ->
                                 DropdownMenuItem(
-                                    text = { Text(shop.first, color = RuwiaColor.TextPrimary) },
+                                    text = { Text(shop.first, color = NTColors.TextPrimary) },
                                     onClick = {
                                         selectedShop = shop.first
                                         showShopDropdown = false
@@ -253,73 +239,111 @@ fun AddStockPurchaseScreen(
                 }
 
                 // Brand Name Input
-                Column {
-                    Text(
-                        text = "Brand Name",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = RuwiaColor.TextSecondary
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = brandName,
-                        onValueChange = { brandName = capitalizeWords(it) },
-                        placeholder = { Text("e.g. Kinley, Aquafina", color = RuwiaColor.TextMuted) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = RuwiaColor.TealPrimary,
-                            unfocusedBorderColor = RuwiaColor.Divider,
-                            focusedTextColor = RuwiaColor.TextPrimary,
-                            unfocusedTextColor = RuwiaColor.TextPrimary,
-                            focusedContainerColor = RuwiaColor.Surface,
-                            unfocusedContainerColor = RuwiaColor.Surface
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                FormLabel("Brand Name")
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = brandName,
+                    onValueChange = { brandName = capitalizeWords(it) },
+                    placeholder = { Text("e.g. Kinley, Aquafina", color = NTColors.TextTertiary) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Rounded.Store,
+                            contentDescription = null,
+                            tint = NTColors.TextTertiary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = FormTeal,
+                        unfocusedBorderColor = NTColors.Border,
+                        focusedTextColor = NTColors.TextPrimary,
+                        unfocusedTextColor = NTColors.TextPrimary,
+                        focusedContainerColor = NTColors.Surface,
+                        unfocusedContainerColor = NTColors.Surface
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 // SKU / Size Input
                 Column {
-                    Text(
-                        text = "SKU / Size",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = RuwiaColor.TextSecondary
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        FormLabel("SKU / Size")
+                        Spacer(Modifier.weight(1f))
+                        if (!isEditMode) {
+                            Text(
+                                text = "Quick Select",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = FormTeal,
+                                modifier = Modifier.clickable(
+                                    onClickLabel = "Focus SKU field",
+                                    onClick = { skuFocus.requestFocus() }
+                                )
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(6.dp))
                     OutlinedTextField(
                         value = sku,
                         onValueChange = { if (!isEditMode) sku = it },
                         enabled = !isEditMode,
-                        placeholder = { Text("e.g. 20L, 1L, 250ml", color = RuwiaColor.TextMuted) },
+                        placeholder = { Text("e.g. 20L, 1L, 250ml", color = NTColors.TextTertiary) },
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = RuwiaColor.TealPrimary,
-                            unfocusedBorderColor = RuwiaColor.Divider,
-                            focusedTextColor = RuwiaColor.TextPrimary,
-                            unfocusedTextColor = RuwiaColor.TextPrimary,
-                            focusedContainerColor = RuwiaColor.Surface,
-                            unfocusedContainerColor = RuwiaColor.Surface,
-                            disabledTextColor = RuwiaColor.TextMuted,
-                            disabledBorderColor = RuwiaColor.Divider.copy(alpha = 0.5f),
-                            disabledContainerColor = RuwiaColor.LightGray
+                            focusedBorderColor = FormTeal,
+                            unfocusedBorderColor = NTColors.Border,
+                            focusedTextColor = NTColors.TextPrimary,
+                            unfocusedTextColor = NTColors.TextPrimary,
+                            focusedContainerColor = NTColors.Surface,
+                            unfocusedContainerColor = NTColors.Surface,
+                            disabledTextColor = NTColors.TextTertiary,
+                            disabledBorderColor = NTColors.Border.copy(alpha = 0.5f),
+                            disabledContainerColor = NTColors.SurfaceVar
                         ),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(skuFocus)
                     )
                     if (!isEditMode) {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             skuSuggestions.forEach { sug ->
-                                SuggestionChip(
-                                    onClick = { sku = sug },
-                                    label = { Text(sug, color = RuwiaColor.TextPrimary) },
-                                    border = BorderStroke(1.dp, RuwiaColor.Divider),
-                                    shape = RoundedCornerShape(8.dp)
-                                )
+                                val isSelected = sku.equals(sug, ignoreCase = true)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(44.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isSelected) FormTeal else NTColors.SurfaceVar)
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) FormTeal else NTColors.Border,
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable(
+                                            onClickLabel = "Use size $sug",
+                                            onClick = { sku = sug }
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        sug,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else NTColors.TextPrimary,
+                                        maxLines = 1,
+                                    )
+                                }
                             }
                         }
                     }
@@ -328,181 +352,358 @@ fun AddStockPurchaseScreen(
                 // Pricing Inputs Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Purchase Price (₹)",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = RuwiaColor.TextSecondary
-                        )
+                        FormLabel("Purchase Price (₹)")
                         Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
                             value = purchasePriceStr,
                             onValueChange = { purchasePriceStr = it },
-                            placeholder = { Text("0.00", color = RuwiaColor.TextMuted) },
+                            placeholder = { Text("0.00", color = NTColors.TextTertiary) },
+                            prefix = { Text("₹ ", color = NTColors.TextSecondary, fontWeight = FontWeight.Bold) },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            textStyle = LocalTextStyle.current.copy(
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            ),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = RuwiaColor.TealPrimary,
-                                unfocusedBorderColor = RuwiaColor.Divider,
-                                focusedTextColor = RuwiaColor.TextPrimary,
-                                unfocusedTextColor = RuwiaColor.TextPrimary,
-                                focusedContainerColor = RuwiaColor.Surface,
-                                unfocusedContainerColor = RuwiaColor.Surface
+                                focusedBorderColor = FormTeal,
+                                unfocusedBorderColor = NTColors.Border,
+                                focusedTextColor = NTColors.TextPrimary,
+                                unfocusedTextColor = NTColors.TextPrimary,
+                                focusedContainerColor = NTColors.Surface,
+                                unfocusedContainerColor = NTColors.Surface
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Selling Price (₹)",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = RuwiaColor.TextSecondary
-                        )
+                        FormLabel("Selling Price (₹)")
                         Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
                             value = sellingPriceStr,
                             onValueChange = { sellingPriceStr = it },
-                            placeholder = { Text("0.00", color = RuwiaColor.TextMuted) },
-                            singleLine = true,
+                            placeholder = { Text("0.00", color = NTColors.TextTertiary) },
+                            prefix = { Text("₹ ", color = NTColors.TextSecondary, fontWeight = FontWeight.Bold) },
+                            shape = RoundedCornerShape(14.dp),
+                            textStyle = LocalTextStyle.current.copy(
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            ),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = RuwiaColor.TealPrimary,
-                                unfocusedBorderColor = RuwiaColor.Divider,
-                                focusedTextColor = RuwiaColor.TextPrimary,
-                                unfocusedTextColor = RuwiaColor.TextPrimary,
-                                focusedContainerColor = RuwiaColor.Surface,
-                                unfocusedContainerColor = RuwiaColor.Surface
+                                focusedBorderColor = FormTeal,
+                                unfocusedBorderColor = NTColors.Border,
+                                focusedTextColor = NTColors.TextPrimary,
+                                unfocusedTextColor = NTColors.TextPrimary,
+                                focusedContainerColor = NTColors.Surface,
+                                unfocusedContainerColor = NTColors.Surface
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
 
-                // Quantity Select Stepper Row
+                // Low Stock Alert — ON/OFF toggle + compact numeric threshold.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(NTColors.Surface)
+                        .border(1.dp, NTColors.Border, RoundedCornerShape(16.dp))
+                        .padding(16.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(FormTeal.copy(alpha = 0.10f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.NotificationsActive,
+                                contentDescription = null,
+                                tint = FormTeal,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Low Stock Alert",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NTColors.TextPrimary
+                            )
+                            Text(
+                                text = "Get notified when inventory is running low",
+                                fontSize = 12.sp,
+                                color = NTColors.TextSecondary
+                            )
+                        }
+                        Switch(
+                            checked = alertEnabled,
+                            onCheckedChange = { alertEnabled = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = FormTeal,
+                                uncheckedThumbColor = NTColors.TextTertiary,
+                                uncheckedTrackColor = NTColors.Border,
+                                uncheckedBorderColor = Color.Transparent,
+                            )
+                        )
+                    }
+                    if (alertEnabled) {
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            text = "Alert threshold",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NTColors.TextSecondary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = alertThresholdText,
+                                onValueChange = { alertThresholdText = it.filter { c -> c.isDigit() }.take(3) },
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    textAlign = TextAlign.Center,
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = FormTeal,
+                                    unfocusedBorderColor = NTColors.Border,
+                                    focusedTextColor = NTColors.TextPrimary,
+                                    unfocusedTextColor = NTColors.TextPrimary,
+                                    focusedContainerColor = NTColors.SurfaceVar,
+                                    unfocusedContainerColor = NTColors.SurfaceVar
+                                ),
+                                modifier = Modifier.width(96.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "cases/units",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = NTColors.TextSecondary
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "You’ll be notified when available stock reaches this level.",
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = NTColors.TextTertiary
+                        )
+                    }
+                }
+
+                // Quantity card
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(RuwiaColor.Surface)
-                        .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(NTColors.Surface)
+                        .border(1.dp, NTColors.Border, RoundedCornerShape(16.dp))
                         .padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = "Quantity",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = RuwiaColor.TextPrimary
-                        )
-                        Text(
-                            text = "Number of cases/units",
-                            fontSize = 11.sp,
-                            color = RuwiaColor.TextMuted
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(FormTeal.copy(alpha = 0.10f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Inventory2,
+                                contentDescription = null,
+                                tint = FormTeal,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Quantity",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NTColors.TextPrimary
+                            )
+                            Text(
+                                text = "Number of cases/units",
+                                fontSize = 12.sp,
+                                color = NTColors.TextSecondary
+                            )
+                        }
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         IconButton(
                             onClick = { if (qty > 1) qty-- },
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(44.dp)
                                 .clip(CircleShape)
-                                .background(RuwiaColor.LightGray)
+                                .background(NTColors.SurfaceVar)
                         ) {
-                            Icon(Icons.Rounded.Remove, null, tint = RuwiaColor.TextPrimary)
+                            Icon(Icons.Rounded.Remove, null, tint = NTColors.TextPrimary)
                         }
                         Text(
                             text = qty.toString(),
-                            fontSize = 18.sp,
+                            fontSize = 22.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = RuwiaColor.TextPrimary,
+                            color = NTColors.TextPrimary,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.width(36.dp)
+                            modifier = Modifier.widthIn(min = 40.dp)
                         )
                         IconButton(
                             onClick = { qty++ },
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(44.dp)
                                 .clip(CircleShape)
-                                .background(RuwiaColor.LightGray)
+                                .background(FormTeal)
                         ) {
-                            Icon(Icons.Rounded.Add, null, tint = RuwiaColor.TextPrimary)
+                            Icon(Icons.Rounded.Add, null, tint = Color.White)
                         }
                     }
                 }
 
-                // Empty Cans Collection Row (hidden in edit mode)
+                // Empty Cases card — amber accent to distinguish from quantity.
                 if (!isEditMode) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(RuwiaColor.Surface)
-                            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(NTColors.Surface)
+                            .border(1.dp, NTColors.Border, RoundedCornerShape(16.dp))
                             .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text(
-                                text = "Empty Cases Returned",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = RuwiaColor.TextPrimary
-                            )
-                            Text(
-                                text = "Record collected empty cans",
-                                fontSize = 11.sp,
-                                color = RuwiaColor.TextMuted
-                            )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFFFF3E8)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.Undo,
+                                    contentDescription = null,
+                                    tint = Color(0xFFF97316),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Empty Cases Returned",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NTColors.TextPrimary
+                                )
+                                Text(
+                                    text = "Record collected empty cans",
+                                    fontSize = 12.sp,
+                                    color = NTColors.TextSecondary
+                                )
+                            }
                         }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             IconButton(
                                 onClick = { if (emptyCans > 0) emptyCans-- },
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(RuwiaColor.LightGray)
+                                    .background(NTColors.SurfaceVar)
                             ) {
-                                Icon(Icons.Rounded.Remove, null, tint = RuwiaColor.TextPrimary)
+                                Icon(Icons.Rounded.Remove, null, tint = NTColors.TextPrimary)
                             }
                             Text(
                                 text = emptyCans.toString(),
-                                fontSize = 18.sp,
+                                fontSize = 22.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = RuwiaColor.TextPrimary,
+                                color = NTColors.TextPrimary,
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.width(36.dp)
+                                modifier = Modifier.widthIn(min = 40.dp)
                             )
                             IconButton(
                                 onClick = { emptyCans++ },
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(RuwiaColor.LightGray)
+                                    .background(Color(0xFFF97316))
                             ) {
-                                Icon(Icons.Rounded.Add, null, tint = RuwiaColor.TextPrimary)
+                                Icon(Icons.Rounded.Add, null, tint = Color.White)
                             }
                         }
+                    }
+                }
+
+                // Notes card — optional, visually secondary (new entries only).
+                if (!isEditMode) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(NTColors.SurfaceVar)
+                            .border(1.dp, NTColors.Border, RoundedCornerShape(16.dp))
+                            .padding(16.dp),
+                    ) {
+                        Text(
+                            text = "Notes (Optional)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NTColors.TextPrimary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = notes,
+                            onValueChange = { notes = it.take(200) },
+                            placeholder = { Text("Add any additional notes…", color = NTColors.TextTertiary) },
+                            minLines = 2,
+                            maxLines = 4,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = FormTeal,
+                                unfocusedBorderColor = NTColors.Border,
+                                focusedTextColor = NTColors.TextPrimary,
+                                unfocusedTextColor = NTColors.TextPrimary,
+                                focusedContainerColor = NTColors.Surface,
+                                unfocusedContainerColor = NTColors.Surface
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
 
             // Bottom Action Bar
             Surface(
-                color = RuwiaColor.Surface,
+                color = NTColors.Surface,
                 tonalElevation = 4.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -520,6 +721,12 @@ fun AddStockPurchaseScreen(
                                 showErrorAlert = "Please fill all fields correctly."
                                 return@Button
                             }
+                            val alertLevel = if (alertEnabled) {
+                                alertThresholdText.toIntOrNull()?.coerceIn(0, 999)
+                                    ?: DEFAULT_LOW_STOCK_ALERT
+                            } else {
+                                0
+                            }
                             onSave(
                                 productToRestock?.id,
                                 sku,
@@ -529,16 +736,43 @@ fun AddStockPurchaseScreen(
                                 qty,
                                 selectedShop,
                                 dateTimeIso,
-                                emptyCans
+                                emptyCans,
+                                alertLevel,
+                                notes.trim()
                             )
                         },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = RuwiaColor.TealPrimary),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Transparent,
+                            contentColor = Color.White,
+                        ),
+                        contentPadding = PaddingValues(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(FormTeal)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.White.copy(alpha = 0.16f),
+                                        Color.White.copy(alpha = 0.04f),
+                                        Color.Transparent,
+                                    )
+                                )
+                            )
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
                     ) {
-                        Text(if (isEditMode) "Update Product" else "Save Stock Entry", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Rounded.Save,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (isEditMode) "Update Product" else "Save Stock Entry", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -548,17 +782,17 @@ fun AddStockPurchaseScreen(
         if (showErrorAlert != null) {
             AlertDialog(
                 onDismissRequest = { showErrorAlert = null },
-                title = { Text("Validation Error", fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary) },
-                text = { Text(showErrorAlert ?: "An unknown error occurred.", color = RuwiaColor.TextSecondary) },
+                title = { Text("Validation Error", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+                text = { Text(showErrorAlert ?: "An unknown error occurred.", color = NTColors.TextSecondary) },
                 confirmButton = {
                     Button(
                         onClick = { showErrorAlert = null },
-                        colors = ButtonDefaults.buttonColors(containerColor = RuwiaColor.TealPrimary)
+                        colors = ButtonDefaults.buttonColors(containerColor = FormTeal)
                     ) {
                         Text("OK", color = Color.White)
                     }
                 },
-                containerColor = RuwiaColor.Surface,
+                containerColor = NTColors.Surface,
                 shape = RoundedCornerShape(20.dp)
             )
         }
@@ -566,50 +800,12 @@ fun AddStockPurchaseScreen(
 }
 
 @Composable
-private fun ProductSelectDialog(
-    products: List<ProductCategory>,
-    onDismiss: () -> Unit,
-    onSelect: (ProductCategory) -> Unit
-) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = RuwiaColor.Surface,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 500.dp)
-        ) {
-            Column {
-                Text(
-                    text = "Select a Product",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(20.dp)
-                )
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                ) {
-                    items(products) { product ->
-                        ListItem(
-                            headlineContent = { Text(product.displayName, fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text("${product.brandName} • ${product.name}", color = RuwiaColor.TextSecondary) },
-                            modifier = Modifier.clickable { onSelect(product) }
-                        )
-                    }
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
-                }
-            }
-        }
-    }
+private fun FormLabel(text: String) {
+    Text(
+        text = text,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.3.sp,
+        color = NTColors.TextSecondary
+    )
 }

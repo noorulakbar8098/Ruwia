@@ -143,26 +143,16 @@ class AdminRepository {
             )
         }
 
-        // 2. Perform the Insert
+        // 2. Perform the Insert (retry without the alert column when the
+        // backend has not run the migration yet — the product must still save).
         return try {
-            val response = supabase.from("product_categories").insert(
-                buildJsonObject {
-                    put("name", cat.name.trim())
-                    put("display_name", cat.displayName.trim())
-                    put("brand_name", cat.brandName.trim())
-                    put("supplier_group", cat.supplierGroup.trim())
-                    put("purchase_price", cat.purchasePrice)
-                    put("default_sell_price", cat.defaultSellPrice)
-                    put("stock_available", cat.stockAvailable)
-                    put("is_active", cat.isActive)
-                    put("admin_id", tenantAdminId)
-                }
-            ) { select() }.decodeSingle<ProductCategory>()
-            
-            response.id
+            insertCategory(cat, tenantAdminId, includeAlert = true)
         } catch (e: Exception) {
             val msg = e.message ?: "Unknown database error"
-            if (msg.contains("column \"brand_name\" does not exist", ignoreCase = true) || 
+            if (msg.contains("column \"low_stock_alert\" does not exist", ignoreCase = true)) {
+                return insertCategory(cat, tenantAdminId, includeAlert = false)
+            }
+            if (msg.contains("column \"brand_name\" does not exist", ignoreCase = true) ||
                 msg.contains("column \"purchase_price\" does not exist", ignoreCase = true)) {
                 throw IllegalStateException("Database Schema Mismatch: Please run the latest SQL migration in your Supabase dashboard.")
             }
@@ -170,8 +160,42 @@ class AdminRepository {
         }
     }
 
+    private suspend fun insertCategory(
+        cat: ProductCategory,
+        tenantAdminId: String,
+        includeAlert: Boolean,
+    ): String {
+        val response = supabase.from("product_categories").insert(
+            buildJsonObject {
+                put("name", cat.name.trim())
+                put("display_name", cat.displayName.trim())
+                put("brand_name", cat.brandName.trim())
+                put("supplier_group", cat.supplierGroup.trim())
+                put("purchase_price", cat.purchasePrice)
+                put("default_sell_price", cat.defaultSellPrice)
+                put("stock_available", cat.stockAvailable)
+                if (includeAlert) put("low_stock_alert", cat.lowStockAlert)
+                put("is_active", cat.isActive)
+                put("admin_id", tenantAdminId)
+            }
+        ) { select() }.decodeSingle<ProductCategory>()
+
+        return response.id
+    }
+
     suspend fun updateProductCategory(cat: ProductCategory) {
         if (cat.id.isBlank()) return
+        try {
+            updateCategory(cat, includeAlert = true)
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (!msg.contains("column \"low_stock_alert\" does not exist", ignoreCase = true)) throw e
+            // Backend not migrated yet — persist everything except the threshold.
+            updateCategory(cat, includeAlert = false)
+        }
+    }
+
+    private suspend fun updateCategory(cat: ProductCategory, includeAlert: Boolean) {
         supabase.from("product_categories").update(
             buildJsonObject {
                 put("name", cat.name)
@@ -181,6 +205,7 @@ class AdminRepository {
                 put("purchase_price", cat.purchasePrice)
                 put("default_sell_price", cat.defaultSellPrice)
                 put("stock_available", cat.stockAvailable)
+                if (includeAlert) put("low_stock_alert", cat.lowStockAlert)
                 put("is_active", cat.isActive)
             }
         ) { filter { eq("id", cat.id) } }

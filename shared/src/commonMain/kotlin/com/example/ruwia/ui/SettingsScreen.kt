@@ -59,7 +59,6 @@ fun SettingsScreen(
     var whatsApp     by remember { mutableStateOf(true) }
     var autoBackup   by remember { mutableStateOf(true) }
     var darkMode     by remember { mutableStateOf(NTColors.isDarkMode) }
-    var showDeleteDialog by remember { mutableStateOf(false) }
     var showResetDialog  by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var isLoggingOut   by remember { mutableStateOf(false) }
@@ -79,31 +78,6 @@ fun SettingsScreen(
     val shopCount  = state.shopStocks.size.coerceAtLeast(2)
     val staffCount = state.employees.count { it.status != "inactive" }
     val custCount  = state.customers.size
-
-    if (showDeleteDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete All Data?", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
-            text = { Text("This will permanently delete all transactions, customers, suppliers, expenses, and staff accounts. Product stocks will be reset to 0. This action cannot be undone.", color = NTColors.TextSecondary) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDeleteDialog = false
-                        onDeleteAllData()
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = NTColors.Error)
-                ) {
-                    Text("Delete Everything", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("Cancel", color = NTColors.TextSecondary)
-                }
-            },
-            containerColor = NTColors.Surface
-        )
-    }
 
     if (showResetDialog) {
         AlertDialog(
@@ -175,54 +149,13 @@ fun SettingsScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
         Column(modifier = Modifier.fillMaxSize()) {
-            
+
             // ── Unified Top Bar ──
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(NTColors.Surface)
-                    .statusBarsPadding()
-                    .padding(bottom = 12.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
-                            .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
-                            .clickable(onClick = onBack),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.ArrowBack,
-                            contentDescription = "Back",
-                            tint = NTColors.TextPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Settings",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = NTColors.TextPrimary
-                        )
-                        Text(
-                            text = "Workspace & Account Customization",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = NTColors.TextTertiary
-                        )
-                    }
-                }
-            }
+            NTPrimaryTopBar(
+                title = "Settings",
+                subtitle = "Workspace & Account Customization",
+                onBack = onBack,
+            )
 
             // ── Scrollable Body ──
             LazyColumn(
@@ -238,21 +171,18 @@ fun SettingsScreen(
 
                 // ── 1. Business Hero Profile Card ──
                 item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
+                    GlossyTealBox(
                         shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-                        border = BorderStroke(1.dp, NTColors.Border),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.TopStart,
                     ) {
                         Column(modifier = Modifier.padding(20.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                // Premium Gradient Logo Avatar
+                                // Logo avatar
                                 Box(
                                     modifier = Modifier
                                         .size(60.dp)
-                                        .clip(RoundedCornerShape(20.dp))
-                                    ,
+                                        .clip(RoundedCornerShape(20.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Image(
@@ -268,7 +198,7 @@ fun SettingsScreen(
                                         text = adminName.ifEmpty { "Neerthuli Water" },
                                         fontSize = 18.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = NTColors.TextPrimary,
+                                        color = Color.White,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -276,52 +206,28 @@ fun SettingsScreen(
                                         Text(
                                             text = adminEmail,
                                             fontSize = 12.sp,
-                                            color = NTColors.TextTertiary,
+                                            color = Color.White.copy(alpha = 0.65f),
                                             fontWeight = FontWeight.Medium
                                         )
                                         Spacer(Modifier.height(4.dp))
                                     }
-//                                    Row(
-//                                        verticalAlignment = Alignment.CenterVertically,
-//                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-//                                    ) {
-//                                        Box(
-//                                            modifier = Modifier
-//                                                .clip(RoundedCornerShape(6.dp))
-//                                                .background(NTColors.AccentLight)
-//                                                .padding(horizontal = 8.dp, vertical = 2.dp)
-//                                        ) {
-//                                            Text(
-//                                                "Business Pro",
-//                                                color = NTColors.Accent,
-//                                                fontSize = 10.sp,
-//                                                fontWeight = FontWeight.Bold
-//                                            )
-//                                        }
-//                                        Text(
-//                                            "★★★★ Premium",
-//                                            fontSize = 11.sp,
-//                                            color = NTColors.Accent,
-//                                            fontWeight = FontWeight.SemiBold
-//                                        )
-//                                    }
                                 }
                             }
-                            
+
                             Spacer(Modifier.height(16.dp))
-                            HorizontalDivider(color = NTColors.Divider)
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
                             Spacer(Modifier.height(16.dp))
-                            
+
                             // Stats strip cells
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceEvenly
                             ) {
-                                StatCell("$shopCount", "SHOPS")
-                                Box(modifier = Modifier.width(1.dp).height(30.dp).background(NTColors.Border))
-                                StatCell("$staffCount", "STAFF")
-                                Box(modifier = Modifier.width(1.dp).height(30.dp).background(NTColors.Border))
-                                StatCell("$custCount", "CUSTOMERS")
+                                GlossStatCell("$shopCount", "SHOPS")
+                                Box(modifier = Modifier.width(1.dp).height(30.dp).background(Color.White.copy(alpha = 0.12f)))
+                                GlossStatCell("$staffCount", "STAFF")
+                                Box(modifier = Modifier.width(1.dp).height(30.dp).background(Color.White.copy(alpha = 0.12f)))
+                                GlossStatCell("$custCount", "CUSTOMERS")
                             }
                         }
                     }
@@ -414,51 +320,6 @@ fun SettingsScreen(
                     }
                 }
 
-                // ── 5. Danger Zone ──
-//                item {
-//                    Card(
-//                        modifier = Modifier.fillMaxWidth(),
-//                        shape = RoundedCornerShape(24.dp),
-//                        colors = CardDefaults.cardColors(containerColor = NTColors.ErrorLight),
-//                        border = BorderStroke(1.dp, NTColors.Error)
-//                    ) {
-//                        Column(modifier = Modifier.padding(20.dp)) {
-//                            Text(
-//                                "DANGER ZONE",
-//                                fontSize = 11.sp,
-//                                fontWeight = FontWeight.Bold,
-//                                color = NTColors.ErrorText,
-//                                letterSpacing = 1.2.sp
-//                            )
-//                            Spacer(Modifier.height(14.dp))
-//
-//                            Row(
-//                                modifier = Modifier
-//                                    .fillMaxWidth()
-//                                    .clickable { showDeleteDialog = true }
-//                                    .padding(vertical = 4.dp),
-//                                verticalAlignment = Alignment.CenterVertically,
-//                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-//                            ) {
-//                                Box(
-//                                    modifier = Modifier
-//                                        .size(36.dp)
-//                                        .clip(RoundedCornerShape(8.dp))
-//                                        .background(NTColors.ErrorLight),
-//                                    contentAlignment = Alignment.Center
-//                                ) {
-//                                    Icon(Icons.Rounded.DeleteForever, null, tint = NTColors.Error, modifier = Modifier.size(20.dp))
-//                                }
-//                                Column(modifier = Modifier.weight(1f)) {
-//                                    Text("Delete All Data", color = NTColors.ErrorText, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-//                                    Text("Permanently erase database transactions", color = NTColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-//                                }
-//                                Icon(Icons.Rounded.ChevronRight, null, tint = NTColors.Error, modifier = Modifier.size(20.dp))
-//                            }
-//                        }
-//                    }
-//                }
-                
                 // ── 6. Sign Out Button ──
                 item {
                     Button(
@@ -481,11 +342,11 @@ fun SettingsScreen(
 // ── Helper Mini Composables ──
 
 @Composable
-private fun StatCell(value: String, label: String) {
+private fun GlossStatCell(value: String, label: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = NTColors.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+        Text(value, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         Spacer(Modifier.height(2.dp))
-        Text(label, color = NTColors.TextTertiary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+        Text(label, color = Color.White.copy(alpha = 0.60f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
     }
 }
 

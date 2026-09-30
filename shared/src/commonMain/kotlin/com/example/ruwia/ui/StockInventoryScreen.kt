@@ -7,13 +7,13 @@ import androidx.compose.foundation.interaction.*
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,11 +43,12 @@ import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.isEmptyCansSource
-import com.example.ruwia.domain.netStockPerProduct
+import com.example.ruwia.domain.netStockPerProductAllShops
 import com.example.ruwia.domain.netStockPerProductInShop
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
+import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import ruwia.shared.generated.resources.*
@@ -56,9 +57,15 @@ import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
+// Deep-teal brand color shared with the home Business Overview card.
+// Green accents across this screen map to it via SaaSColors below.
+private val InvTeal = Color(0xFF0F2E2C)
+private val InvTealDeep = Color(0xFF0A1F1D)
+private val InvTealMint = Color(0xFF5EEAD4)
+
 private object SaaSColors {
-    val Primary       get() = NTColors.Primary
-    val PrimaryDark   get() = NTColors.PrimaryDark
+    val Primary       get() = InvTeal
+    val PrimaryDark   get() = InvTealDeep
     val PrimaryLight  get() = NTColors.PrimaryLight
     val Background    get() = NTColors.Background
     val Surface       get() = NTColors.Surface
@@ -70,7 +77,7 @@ private object SaaSColors {
     val CardShadow    get() = if (NTColors.isDarkMode) Color.Black.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.05f)
 
     // Status colors
-    val Healthy       get() = NTColors.Success
+    val Healthy       get() = InvTeal
     val HealthyLight  get() = NTColors.SuccessLight
     val LowStock      get() = NTColors.Warning
     val LowStockLight get() = NTColors.WarningLight
@@ -148,10 +155,10 @@ fun StockInventoryScreen(
     val currentShopKey = if (selectedShopName == "All Shops") null else shopKey(selectedShopName)
 
     // ── Live inventory counts filtered by shop ────────────────────────────────
-    // The "All Shops" view must agree with the Home screen and the ViewModel,
-    // which compute per-product net stock from EVERY movement regardless of the
-    // shop label it carries. Only the per-shop tabs scope to one shop, so
-    // movements recorded under an unconfigured/renamed shop never get orphaned.
+    // The "All Shops" view is the SUM of the per-shop buckets (each floored
+    // at zero), so it always equals Shop 1 + Shop 2 + … by construction.
+    // Only the per-shop tabs scope to one shop, and movements recorded under
+    // an unconfigured/renamed shop form their own bucket, never orphaned.
     val liveStockMap = remember(movements, products, currentShopKey) {
         if (currentShopKey != null) {
             // Per-shop tab: only that shop's movements count. No global fallback,
@@ -161,10 +168,10 @@ fun StockInventoryScreen(
                 p.id to (perShop[p.id] ?: 0)
             }
         } else {
-            // "All Shops": every movement counts regardless of its shop label.
-            val global = netStockPerProduct(movements)
+            // "All Shops": bucketed sum — identical to adding up every shop tab.
+            val bucketed = netStockPerProductAllShops(movements)
             products.associate { p ->
-                p.id to (global[p.id] ?: 0)
+                p.id to (bucketed[p.id] ?: 0)
             }
         }
     }
@@ -178,14 +185,6 @@ fun StockInventoryScreen(
         val units = effectiveStockMap[p.id] ?: 0
         units.toDouble()
     }
-    val totalValue = products.sumOf { p ->
-        (effectiveStockMap[p.id] ?: 0) * p.defaultSellPrice
-    }
-    val productsAvailable = products.count { (effectiveStockMap[it.id] ?: 0) > 0 }
-    val lowStockCount = products.count { p ->
-        val units = effectiveStockMap[p.id] ?: 0
-        units > 0 && units <= 5
-    }
 
     // ── UI Control States ────────────────────────────────────────────────────
     var searchQuery by remember { mutableStateOf("") }
@@ -194,6 +193,7 @@ fun StockInventoryScreen(
 
     var showFilterMenu by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showShopMenu by remember { mutableStateOf(false) }
 
     var activeTransferProduct by remember { mutableStateOf<ProductCategory?>(null) }
     var activeAdjustProduct by remember { mutableStateOf<ProductCategory?>(null) }
@@ -210,8 +210,8 @@ fun StockInventoryScreen(
 
                 val matchesFilter = when (selectedFilter) {
                     InvFilter.ALL -> true
-                    InvFilter.HEALTHY -> units > 5
-                    InvFilter.LOW -> units in 3..5
+                    InvFilter.HEALTHY -> units > p.lowStockAlert
+                    InvFilter.LOW -> units > 2 && units <= p.lowStockAlert
                     InvFilter.CRITICAL -> units in 1..2
                     InvFilter.OUT -> units <= 0
                 }
@@ -241,6 +241,7 @@ fun StockInventoryScreen(
             InventoryHeader(
                 shopName = selectedShopName,
                 location = selectedShopLocation,
+                productCount = products.size,
                 onBack = onBack,
                 searchQuery = searchQuery,
                 onSearchQueryChange = { searchQuery = it },
@@ -261,26 +262,113 @@ fun StockInventoryScreen(
                     bottom = contentPadding.calculateBottomPadding() + 32.dp,
                 )
             ) {
-                // ── Shop Selection Tabs ───────────────────────────────────────────
+                // ── Shop Selection Dropdown + Add Product ─────────────────────────
+                // Dropdown defaults to All Shops; options open on tap.
+                // The glossy Add Product button sits fixed at the row's right end.
                 item {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    item {
-                        ShopTabChip(
-                            name = "All Shops",
-                            isSelected = selectedShopName == "All Shops",
-                            onClick = { selectedShopName = "All Shops" }
-                        )
+                    Box(modifier = Modifier.weight(1f)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(SaaSColors.Surface)
+                                .border(1.dp, SaaSColors.Border, RoundedCornerShape(14.dp))
+                                .clickable(
+                                    onClickLabel = "Select shop",
+                                    onClick = { showShopMenu = true }
+                                )
+                                .padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Store,
+                                contentDescription = null,
+                                tint = SaaSColors.Primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = selectedShopName,
+                                color = SaaSColors.TextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Icon(
+                                imageVector = if (showShopMenu) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = SaaSColors.TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showShopMenu,
+                            onDismissRequest = { showShopMenu = false },
+                        ) {
+                            ShopMenuItem(
+                                text = "All Shops",
+                                selected = selectedShopName == "All Shops",
+                                onClick = {
+                                    selectedShopName = "All Shops"
+                                    showShopMenu = false
+                                },
+                            )
+                            displayShops.forEach { shop ->
+                                ShopMenuItem(
+                                    text = shop.name,
+                                    selected = selectedShopName == shop.name,
+                                    onClick = {
+                                        selectedShopName = shop.name
+                                        showShopMenu = false
+                                    },
+                                )
+                            }
+                        }
                     }
-                    items(displayShops) { shop ->
-                        ShopTabChip(
-                            name = shop.name,
-                            isSelected = selectedShopName == shop.name,
-                            onClick = { selectedShopName = shop.name }
-                        )
+                    if (!readOnly) {
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(NTDp.radFull))
+                                .background(InvTeal)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            Color.White.copy(alpha = 0.18f),
+                                            Color.White.copy(alpha = 0.04f),
+                                            Color.Transparent,
+                                        )
+                                    )
+                                )
+                                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(NTDp.radFull))
+                                .clickable(onClickLabel = "Add Product", onClick = onAddProduct)
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Rounded.Add,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "Add Product",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                     }
                 }
                 }
@@ -290,59 +378,8 @@ fun StockInventoryScreen(
                     Spacer(Modifier.height(20.dp))
                     ShopSummaryCard(
                         totalInventory = totalInventory,
-                        totalValue = totalValue,
-                        productsCount = productsAvailable,
-                        lowStockCount = lowStockCount,
                         unitLabel = "Units",
-                        readOnly = readOnly
                     )
-                }
-
-                // ── Low Stock Attention Alert Section ─────────────────────────────
-                // Hidden in read-only (employee) mode.
-                if (!readOnly) {
-                    val lowStockProducts = products.filter { p ->
-                        val units = effectiveStockMap[p.id] ?: 0
-                        units in 1..5
-                    }
-                    if (lowStockProducts.isNotEmpty()) {
-                        item {
-                            Spacer(Modifier.height(20.dp))
-                            LowStockAttentionCard(
-                                lowProducts = lowStockProducts,
-                                liveStock = effectiveStockMap,
-                                readOnly = readOnly,
-                                onRestock = { product -> activeAdjustProduct = product }
-                            )
-                        }
-                    }
-                }
-
-                // ── Analytics Insights Section ────────────────────────────────────
-                // (Top Product / Most Moving / Fastest Selling — hidden in
-                // read-only (employee) mode.)
-                if (!readOnly) {
-                    item {
-                        Spacer(Modifier.height(24.dp))
-                        InventoryAnalyticsRow(
-                            products = products,
-                            liveStock = effectiveStockMap,
-                            movements = movements,
-                            currentShopKey = currentShopKey
-                        )
-                    }
-                }
-
-                // ── Donut Chart Distribution Section ──────────────────────────────
-                if (totalInventory > 0.0) {
-                    item {
-                        Spacer(Modifier.height(24.dp))
-                        InventoryDistributionCard(
-                            products = products,
-                            liveStock = effectiveStockMap,
-                            totalInventory = totalInventory
-                        )
-                    }
                 }
 
                 // ── Product Breakdown List ────────────────────────────────────────
@@ -394,9 +431,9 @@ fun StockInventoryScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 24.dp)
-                                .clip(RoundedCornerShape(20.dp))
+                                .clip(RoundedCornerShape(24.dp))
                                 .background(SaaSColors.Surface)
-                                .border(1.dp, SaaSColors.Border, RoundedCornerShape(20.dp))
+                                .border(1.dp, SaaSColors.Border, RoundedCornerShape(24.dp))
                                 .clickable(onClick = onOpenStockHistory)
                                 .padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -574,52 +611,32 @@ fun StockInventoryScreen(
             )
         }
 
-        // ── Floating Action Button (FAB) ──────────────────────────────────
-        // Hidden in read-only (employee) mode.
-        if (!readOnly) {
-            FloatingActionButton(
-                onClick = onAddProduct,
-                containerColor = SaaSColors.Primary,
-                contentColor = Color.White,
-                shape = CircleShape,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = contentPadding.calculateBottomPadding() + 16.dp)
-                    .shadow(8.dp, CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Add,
-                    contentDescription = "Add Product",
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-        }
+        // (Add Product lives in the shop-tabs row above.)
+
     }
 }
 
-// ── Shop Selector Tab ─────────────────────────────────────────────────────────
+// ── Shop Dropdown Menu Item ─────────────────────────────────────────────────
 @Composable
-private fun ShopTabChip(
-    name: String,
-    isSelected: Boolean,
+private fun ShopMenuItem(
+    text: String,
+    selected: Boolean,
     onClick: () -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(32.dp))
-            .background(if (isSelected) SaaSColors.Primary else SaaSColors.Surface)
-            .border(1.dp, if (isSelected) SaaSColors.Primary else SaaSColors.Border, RoundedCornerShape(32.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = name,
-            color = if (isSelected) Color.White else SaaSColors.TextSecondary,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
+    DropdownMenuItem(
+        text = {
+            Text(
+                text = text,
+                color = SaaSColors.TextPrimary,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+            )
+        },
+        trailingIcon = if (selected) {
+            { Icon(Icons.Rounded.Check, null, tint = SaaSColors.Primary) }
+        } else null,
+        onClick = onClick,
+    )
 }
 
 // ── Header Component ──────────────────────────────────────────────────────────
@@ -627,6 +644,7 @@ private fun ShopTabChip(
 private fun InventoryHeader(
     shopName: String,
     location: String,
+    productCount: Int = 0,
     onBack: () -> Unit,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
@@ -639,103 +657,41 @@ private fun InventoryHeader(
     onFilterSelect: (InvFilter) -> Unit,
     onSortSelect: (InvSort) -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(SaaSColors.Surface)
-            .statusBarsPadding()
-            .padding(bottom = 12.dp)
-    ) {
-        Column {
-            // Top Title Row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
-                    .padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(SaaSColors.SurfaceVar, RoundedCornerShape(10.dp))
-                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(10.dp))
-                            .clickable(onClick = onBack),
-                        contentAlignment = Alignment.Center,
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Uniform top bar shared with every inner screen.
+        NTPrimaryTopBar(
+            title = "Inventory",
+            subtitle = if (shopName.isNotBlank() && shopName != "All Shops") "$shopName • $location" else "All Shops overview",
+            onBack = onBack,
+            trailingText = "$productCount items",
+            titleBadge = {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(32.dp))
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.ArrowBack,
-                            contentDescription = "Back",
-                            tint = SaaSColors.TextPrimary,
-                            modifier = Modifier.size(18.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .background(InvTealMint, CircleShape)
+                        )
+                        Text(
+                            text = "Live",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = "Inventory",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = SaaSColors.TextPrimary
-                            )
-                            // Live Status Indicator
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(32.dp))
-                                    .background(SaaSColors.HealthyLight)
-                                    .padding(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(5.dp)
-                                            .background(SaaSColors.Healthy, CircleShape)
-                                    )
-                                    Text(
-                                        text = "Live",
-                                        color = SaaSColors.Healthy,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(2.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = if (shopName.isNotBlank() && shopName != "All Shops") "$shopName • $location" else "All Shops overview",
-                                fontSize = 11.sp,
-                                color = SaaSColors.TextMuted,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(4.dp)
-                                    .background(SaaSColors.TextMuted, CircleShape)
-                            )
-                            Text(
-                                text = "Last updated 2m ago",
-                                fontSize = 11.sp,
-                                color = SaaSColors.TextMuted,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
                 }
-            }
+            },
+        )
 
-            Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(12.dp))
 
             // Search & Controls Row
             Row(
@@ -822,12 +778,12 @@ private fun InventoryHeader(
                         leadingIcon = { Icon(Icons.Rounded.Category, null) }
                     )
                     DropdownMenuItem(
-                        text = { Text("Healthy Stock (>5)") },
+                        text = { Text("Healthy Stock") },
                         onClick = { onFilterSelect(InvFilter.HEALTHY); onShowFilterMenuChange(false) },
                         leadingIcon = { Icon(Icons.Rounded.CheckCircle, null, tint = SaaSColors.Healthy) }
                     )
                     DropdownMenuItem(
-                        text = { Text("Low Stock (3-5)") },
+                        text = { Text("Low Stock") },
                         onClick = { onFilterSelect(InvFilter.LOW); onShowFilterMenuChange(false) },
                         leadingIcon = { Icon(Icons.Rounded.Warning, null, tint = SaaSColors.LowStock) }
                     )
@@ -886,466 +842,75 @@ private fun InventoryHeader(
                 }
             }
         }
-    }
 }
 
 // ── Shop Summary Card Component ──────────────────────────────────────────────
+//  Dark glossy teal hero — total inventory at a glance. Matches the home
+//  Business Overview card: same teal, same glassy sheen, no decoration.
+
+private val InvHeroBg = Color(0xFF0F2E2C)
+private val InvHeroSurface = Color(0xFF1A4340)
+private val InvHeroMint = Color(0xFF5EEAD4)
+
 @Composable
 private fun ShopSummaryCard(
     totalInventory: Double,
-    totalValue: Double,
-    productsCount: Int,
-    lowStockCount: Int,
     unitLabel: String,
-    readOnly: Boolean = false
 ) {
-    Card(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp)
-            .shadow(4.dp, RoundedCornerShape(20.dp), ambientColor = SaaSColors.CardShadow, spotColor = SaaSColors.CardShadow),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface)
+            .shadow(6.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(InvHeroBg)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.14f),
+                        Color.White.copy(alpha = 0.03f),
+                        Color.Transparent,
+                    )
+                )
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(24.dp))
+            .padding(20.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Total Inventory",
-                        color = SaaSColors.TextMuted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "${formatCases(totalInventory)} $unitLabel",
-                        color = SaaSColors.TextPrimary,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
-                // Sparkline Trend Widget
-                Column(horizontalAlignment = Alignment.End) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                    Icon(Icons.Rounded.ArrowUpward, null, tint = SaaSColors.Healthy, modifier = Modifier.size(14.dp))
-                    Text("12%", color = SaaSColors.Healthy, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Text("vs last week", color = SaaSColors.TextMuted, fontSize = 10.sp)
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // Premium Animated Water Bottle Inventory Visualization
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(110.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                // We use a dynamic scale: if stock is very low, max is small.
-                // This ensures "2 Units" still looks meaningful in the bottle.
-                val maxCapacity = remember(totalInventory) {
-                    max(10.0, totalInventory * 1.2).coerceAtMost(100.0)
-                }
-                PremiumWaterBottle(
-                    level = (totalInventory / maxCapacity).coerceIn(0.0, 1.0).toFloat(),
-                    modifier = Modifier.fillMaxWidth().height(90.dp)
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider(color = SaaSColors.Border)
-            Spacer(Modifier.height(16.dp))
-
-            // Sub Stats Grid (Inventory Value is hidden in read-only mode)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                if (!readOnly) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Inventory Value", color = SaaSColors.TextMuted, fontSize = 11.sp)
-                        Spacer(Modifier.height(2.dp))
-                        Text("₹${formatInventoryAmount(totalValue)}", color = SaaSColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("SKUs Available", color = SaaSColors.TextMuted, fontSize = 11.sp)
-                    Spacer(Modifier.height(2.dp))
-                    Text("$productsCount", color = SaaSColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                }
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                    Text("Low Stock", color = SaaSColors.TextMuted, fontSize = 11.sp)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = "$lowStockCount Items",
-                        color = if (lowStockCount > 0) SaaSColors.LowStock else SaaSColors.TextPrimary,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ── Low Stock Alert Card Component ────────────────────────────────────────────
-@Composable
-private fun LowStockAttentionCard(
-    lowProducts: List<ProductCategory>,
-    liveStock: Map<String, Int>,
-    readOnly: Boolean = false,
-    onRestock: (ProductCategory) -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = SaaSColors.CriticalLight.copy(alpha = 0.6f)),
-        border = BorderStroke(1.dp, SaaSColors.Critical.copy(alpha = 0.15f))
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Warning,
-                    contentDescription = "Alert",
-                    tint = SaaSColors.Critical
-                )
-                Text(
-                    text = "Attention Required",
-                    color = SaaSColors.Critical,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
-            Spacer(Modifier.height(10.dp))
-            lowProducts.forEach { p ->
-                val units = liveStock[p.id] ?: 0
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(SaaSColors.SurfaceVar)
-                        .border(1.dp, SaaSColors.Border.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                        .then(if (readOnly) Modifier else Modifier.clickable { onRestock(p) })
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = p.displayName.ifBlank { p.name },
-                            fontSize = 13.sp,
-                            color = SaaSColors.TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = if (units <= 0) "Out of Stock" else "$units Units available",
-                            fontSize = 11.sp,
-                            color = SaaSColors.Critical,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    if (!readOnly) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SaaSColors.Critical)
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Restock",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = if (readOnly) "Low stock items need attention"
-                else "Tap a product to adjust its stock level",
-                fontSize = 11.sp,
-                color = SaaSColors.TextMuted,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-        }
-    }
-}
-
-// ── Inventory Analytics Highlights Component ──────────────────────────────────
-@Composable
-private fun InventoryAnalyticsRow(
-    products: List<ProductCategory>,
-    liveStock: Map<String, Int>,
-    movements: List<StockMovement>,
-    currentShopKey: String?
-) {
-    // 1. Top Product by Stock Qty
-    val topProduct = products.maxByOrNull { liveStock[it.id] ?: 0 }
-    val topUnits = topProduct?.let { liveStock[it.id] ?: 0 } ?: 0
-    val topLabel = topProduct?.displayName?.split(" ")?.firstOrNull() ?: "-"
-
-    // 2. Most Moving Product
-    val shopMovements = movements.filter { currentShopKey == null || shopKey(it.shopName) == currentShopKey }
-    val outwardMvtGroup = shopMovements.filter { it.type == "outward" }.groupBy { it.productId }
-    val mostMovingId = outwardMvtGroup.maxByOrNull { (_, mvts) -> mvts.sumOf { it.qty } }?.key
-    val mostMovingProduct = products.find { it.id == mostMovingId }
-    val mostMovingLabel = mostMovingProduct?.displayName?.split(" ")?.firstOrNull() ?: "20L Water"
-
-    // 3. Low stock product
-    val criticalProduct = products.filter { (liveStock[it.id] ?: 0) <= 0 }.firstOrNull() ?: products.minByOrNull { liveStock[it.id] ?: 0 }
-    val criticalLabel = criticalProduct?.displayName?.split(" ")?.firstOrNull() ?: "-"
-
-    LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        item {
-            AnalyticTile(
-                title = "Top Product",
-                value = "$topUnits Units",
-                subtext = "$topLabel Water",
-                icon = Icons.Rounded.Star,
-                iconBg = Color(0xFFFFECE5),
-                iconFg = Color(0xFFFF6D3B)
-            )
-        }
-        item {
-            AnalyticTile(
-                title = "Most Moving",
-                value = "High Sales",
-                subtext = "$mostMovingLabel",
-                icon = Icons.Rounded.TrendingUp,
-                iconBg = Color(0xFFEBF7FF),
-                iconFg = Color(0xFF1D9BF0)
-            )
-        }
-        item {
-            AnalyticTile(
-                title = "Fastest Selling",
-                value = "20L Can",
-                subtext = "High Velocity",
-                icon = Icons.Rounded.Bolt,
-                iconBg = Color(0xFFFFFBE6),
-                iconFg = Color(0xFFD4A700)
-            )
-        }
-        item {
-            AnalyticTile(
-                title = "Needs Restock",
-                value = "0 Units",
-                subtext = "$criticalLabel Water",
-                icon = Icons.Rounded.Warning,
-                iconBg = SaaSColors.CriticalLight,
-                iconFg = SaaSColors.Critical
-            )
-        }
-    }
-}
-
-@Composable
-private fun AnalyticTile(
-    title: String,
-    value: String,
-    subtext: String,
-    icon: ImageVector,
-    iconBg: Color,
-    iconFg: Color
-) {
-    Box(
-        modifier = Modifier
-            .width(140.dp)
-            .height(115.dp) // Fixed height for uniformity in horizontal scroll
-            .clip(RoundedCornerShape(16.dp))
-            .background(SaaSColors.Surface)
-            .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
-            .padding(14.dp)
-    ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(iconBg),
+                modifier = Modifier.size(36.dp).clip(CircleShape).background(InvHeroSurface),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, null, tint = iconFg, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Rounded.Inventory2, null,
+                    tint = InvHeroMint, modifier = Modifier.size(18.dp)
+                )
             }
-            Spacer(Modifier.height(12.dp))
-            Text(title, color = SaaSColors.TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(2.dp))
-            Text(value, color = SaaSColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text(subtext, color = SaaSColors.TextSecondary, fontSize = 11.sp)
-        }
-    }
-}
-
-// ── Donut Chart Component ─────────────────────────────────────────────────────
-@Composable
-private fun InventoryDistributionCard(
-    products: List<ProductCategory>,
-    liveStock: Map<String, Int>,
-    totalInventory: Double
-) {
-    val nonZeroProducts = products
-        .map { p ->
-            val units = liveStock[p.id] ?: 0
-            p to units.toDouble()
-        }
-        .filter { (_, qty) -> qty > 0.0 }
-        .sortedByDescending { (_, qty) -> qty }
-
-    val chartData = remember(nonZeroProducts, totalInventory) {
-        val total = totalInventory.toFloat()
-        var cumPercent = 0f
-        val list = mutableListOf<Triple<ProductCategory, Float, Color>>()
-        val colors = listOf(
-            SaaSColors.Primary,
-            Color(0xFF8B5CF6),
-            Color(0xFF3B82F6),
-            Color(0xFFF59E0B),
-            Color(0xFFEC4899),
-            Color(0xFF10B981)
-        )
-        nonZeroProducts.forEachIndexed { index, (prod, qty) ->
-            val percent = qty.toFloat() / total
-            val color = colors[index % colors.size]
-            list.add(Triple(prod, percent, color))
-            cumPercent += percent
-        }
-        list
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp)
-            .shadow(4.dp, RoundedCornerShape(20.dp), ambientColor = SaaSColors.CardShadow, spotColor = SaaSColors.CardShadow),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface)
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
+            Spacer(Modifier.width(10.dp))
             Text(
-                text = "Inventory Distribution",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = SaaSColors.TextPrimary
+                "INVENTORY OVERVIEW",
+                color = Color.White, fontSize = 12.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp,
             )
-            Spacer(Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                // Donut Chart Canvas
-                Canvas(
-                    modifier = Modifier
-                        .size(100.dp)
-                        .padding(4.dp)
-                ) {
-                    val stroke = Stroke(width = 16.dp.toPx())
-                    var startAngle = -90f
-                    if (chartData.isEmpty()) {
-                        drawCircle(color = SaaSColors.Border, style = stroke)
-                    } else {
-                        chartData.forEach { (_, fraction, color) ->
-                            val sweepAngle = fraction * 360f
-                            drawArc(
-                                color = color,
-                                startAngle = startAngle,
-                                sweepAngle = sweepAngle,
-                                useCenter = false,
-                                style = stroke
-                            )
-                            startAngle += sweepAngle
-                        }
-                    }
-                }
-
-                // Legend Details List
-                Column(
-                    modifier = Modifier.weight(1f).padding(start = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    chartData.take(4).forEach { (prod, fraction, color) ->
-                        val percentText = "${(fraction * 100).toInt()}%"
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Box(modifier = Modifier.size(8.dp).background(color, CircleShape))
-                                Text(
-                                    text = prod.displayName.ifBlank { prod.name },
-                                    fontSize = 12.sp,
-                                    color = SaaSColors.TextSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Text(
-                                text = percentText,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = SaaSColors.TextPrimary
-                            )
-                        }
-                    }
-                    if (chartData.size > 4) {
-                        val otherPercent = ((chartData.drop(4).sumOf { it.second.toDouble() }) * 100).toInt()
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Box(modifier = Modifier.size(8.dp).background(Color.Gray, CircleShape))
-                                Text("Others", fontSize = 12.sp, color = SaaSColors.TextSecondary)
-                            }
-                            Text("$otherPercent%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-                        }
-                    }
-                }
-            }
         }
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "TOTAL STOCK",
+            color = Color.White.copy(alpha = 0.55f),
+            fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "${formatCases(totalInventory)} $unitLabel",
+            color = Color.White,
+            fontSize = 32.sp, fontWeight = FontWeight.ExtraBold,
+            letterSpacing = (-0.8).sp, lineHeight = 36.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
     }
 }
+
+
 
 private data class StatusConfig(
     val label: String,
@@ -1374,11 +939,12 @@ private fun ProductBreakdownCard(
 
     var showActions by remember { mutableStateOf(false) }
 
-    // Status config
+    // Status config — the Low bar follows each product's own alert level.
+    val lowBar = maxOf(product.lowStockAlert, 2)
     val config = when {
         cases <= 0 -> StatusConfig("Out of Stock", SaaSColors.OutOfStock, SaaSColors.OutOfStockLight, 0f)
         cases <= 2 -> StatusConfig("Critical Stock", SaaSColors.Critical, SaaSColors.CriticalLight, 0.15f)
-        cases <= 5 -> StatusConfig("Low Stock", SaaSColors.LowStock, SaaSColors.LowStockLight, 0.45f)
+        cases <= lowBar -> StatusConfig("Low Stock", SaaSColors.LowStock, SaaSColors.LowStockLight, 0.45f)
         else -> StatusConfig("Healthy Stock", SaaSColors.Healthy, SaaSColors.HealthyLight, (cases.toFloat() / 50f).coerceAtMost(1f))
     }
 
@@ -1596,22 +1162,30 @@ private fun ProductBreakdownCard(
 
                 Spacer(Modifier.height(12.dp))
 
-                // Stock Health Progress Bar
+                // Stock Health Progress Bar — glossy fill in the status color
+                // (deep teal when healthy) over the full available quantity.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(6.dp)
+                        .height(8.dp)
                         .graphicsLayer(alpha = cardAlpha)
-                    .clip(RoundedCornerShape(3.dp))
+                    .clip(RoundedCornerShape(4.dp))
                     .background(SaaSColors.Border)
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxHeight()
                             .fillMaxWidth(config.fraction)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(config.color)
                             .background(
-                                brush = Brush.horizontalGradient(listOf(config.color, config.color.copy(alpha = 0.6f))),
-                                shape = RoundedCornerShape(3.dp)
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.White.copy(alpha = 0.38f),
+                                        Color.White.copy(alpha = 0.08f),
+                                        Color.Transparent,
+                                    )
+                                )
                             )
                     )
                 }
@@ -1760,9 +1334,10 @@ private fun RecentActivityFeed(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .shadow(3.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(SaaSColors.Surface)
-            .border(1.dp, SaaSColors.Border, RoundedCornerShape(20.dp))
+            .border(1.dp, SaaSColors.Border, RoundedCornerShape(24.dp))
             .padding(16.dp)
     ) {
         movements.forEachIndexed { index, m ->
@@ -1794,7 +1369,7 @@ private fun RecentActivityFeed(
             }
 
             if (index < movements.size - 1) {
-                HorizontalDivider(color = SaaSColors.Border, modifier = Modifier.padding(start = 48.dp))
+                HorizontalDivider(color = SaaSColors.Border, modifier = Modifier.padding(start = 52.dp))
             }
         }
     }
@@ -1823,27 +1398,35 @@ internal fun StockActivityRow(
     val qtyText = "${if (isAdd) "+" else "-"}$casesCount $suffix"
     val sourceText = if (isAdd) "From ${movement.source}" else "To ${movement.source}"
 
-    val iconBg = if (isAdd) SaaSColors.HealthyLight else Color(0xFFF3E8FF)
-    val iconFg = if (isAdd) SaaSColors.Healthy else Color(0xFF8B5CF6)
-    val arrowIcon = if (isAdd) Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward
+    // Per-type icon language: teal download = inbound, violet van = outbound,
+    // amber undo = empty-can returns.
+    val (iconBg, iconFg, typeIcon) = when {
+        isReturn -> Triple(SaaSColors.LowStockLight, SaaSColors.LowStock, Icons.AutoMirrored.Rounded.Undo)
+        isAdd    -> Triple(SaaSColors.PrimaryLight, SaaSColors.Primary, Icons.Rounded.Download)
+        else     -> Triple(Color(0xFFF3E8FF), Color(0xFF8B5CF6), Icons.Rounded.LocalShipping)
+    }
+    val expandRotation by animateFloatAsState(
+        targetValue = if (isExpanded) 180f else 0f,
+        label = "activityExpand",
+    )
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClickLabel = if (isExpanded) "Collapse details" else "Expand details", onClick = onClick)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Circle type icon
+        // Rounded type icon
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
+                .size(40.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(iconBg),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(arrowIcon, null, tint = iconFg, modifier = Modifier.size(16.dp))
+            Icon(typeIcon, null, tint = iconFg, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.width(12.dp))
 
@@ -1874,13 +1457,27 @@ internal fun StockActivityRow(
                 color = SaaSColors.TextMuted
             )
         }
-        Spacer(Modifier.width(6.dp))
-        Icon(
-            imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
-            contentDescription = if (isExpanded) "Collapse details" else "Expand details",
-            tint = SaaSColors.TextMuted,
-            modifier = Modifier.size(20.dp)
-        )
+        Spacer(Modifier.width(8.dp))
+        // Glossy expand button — chevron rotates on expand.
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(SaaSColors.SurfaceVar)
+                .border(1.dp, SaaSColors.Border, CircleShape)
+                .clickable(
+                    onClickLabel = if (isExpanded) "Collapse details" else "Expand details",
+                    onClick = onClick
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.ExpandMore,
+                contentDescription = null,
+                tint = SaaSColors.TextSecondary,
+                modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = expandRotation }
+            )
+        }
     }
 }
 
@@ -2453,7 +2050,8 @@ private fun CustomerPricePickerDialog(
                                             shape = RoundedCornerShape(10.dp),
                                             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
                                             colors = ButtonDefaults.buttonColors(
-                                                containerColor = if (isSaved) SaaSColors.Healthy else SaaSColors.Primary
+                                                containerColor = if (isSaved) SaaSColors.PrimaryLight else SaaSColors.Primary,
+                                                contentColor = if (isSaved) SaaSColors.Primary else Color.White
                                             )
                                         ) {
                                             Icon(
@@ -2927,205 +2525,5 @@ private fun getAssignedShop(
             firstMov.shopName.split("·", limit = 2).firstOrNull()?.trim()?.takeIf { it.isNotBlank() }
                 ?: configuredShops.firstOrNull().orEmpty()
         else -> configuredShops.firstOrNull().orEmpty()
-    }
-}
-
-@Composable
-private fun PremiumWaterBottle(
-    level: Float, // 0.0 to 1.0
-    modifier: Modifier = Modifier
-) {
-    val infiniteTransition = rememberInfiniteTransition()
-
-    val waveOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 2 * PI.toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(2500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        )
-    )
-
-    val animatedLevel by animateFloatAsState(
-        targetValue = level.coerceIn(0f, 1f),
-        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow)
-    )
-
-    Canvas(modifier = modifier) {
-        val width = size.width
-        val height = size.height
-
-        // Horizontal Bottle Dimensions
-        val bottleWidth = width * 0.75f
-        val bottleHeight = height * 0.7f
-        val left = (width - bottleWidth - 40.dp.toPx()) / 2
-        val top = (height - bottleHeight) / 2
-
-        val neckWidth = 20.dp.toPx()
-        val neckHeight = bottleHeight * 0.45f
-        val capWidth = 10.dp.toPx()
-        val capHeight = neckHeight * 1.1f
-
-        // Single organic bottle path
-        val bottlePath = Path().apply {
-            val corner = 14.dp.toPx()
-            // Body
-            moveTo(left + corner, top)
-            lineTo(left + bottleWidth - corner * 2, top)
-            // Taper to neck
-            quadraticTo(
-                left + bottleWidth - corner, top,
-                left + bottleWidth, top + (bottleHeight - neckHeight) / 2
-            )
-            // Neck
-            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight - neckHeight) / 2)
-            // Cap
-            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight - capHeight) / 2)
-            lineTo(left + bottleWidth + neckWidth + capWidth, top + (bottleHeight - capHeight) / 2)
-            lineTo(left + bottleWidth + neckWidth + capWidth, top + (bottleHeight + capHeight) / 2)
-            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight + capHeight) / 2)
-            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight + capHeight) / 2)
-            lineTo(left + bottleWidth + neckWidth, top + (bottleHeight + neckHeight) / 2)
-            // Back to body
-            lineTo(left + bottleWidth, top + (bottleHeight + neckHeight) / 2)
-            quadraticTo(
-                left + bottleWidth - corner, top + bottleHeight,
-                left + bottleWidth - corner * 2, top + bottleHeight
-            )
-            lineTo(left + corner, top + bottleHeight)
-            // Left rounded end
-            quadraticTo(left, top + bottleHeight, left, top + bottleHeight - corner)
-            lineTo(left, top + corner)
-            quadraticTo(left, top, left + corner, top)
-            close()
-        }
-
-        // 1. Outer Bloom/Glow (#3EF7F5)
-        drawPath(
-            path = bottlePath,
-            color = Color(0xFF3EF7F5).copy(alpha = 0.15f),
-            style = Stroke(width = 12.dp.toPx())
-        )
-
-        // 2. Glass Base Tint
-        drawPath(
-            path = bottlePath,
-            color = Color(0xFFFFFFFF).copy(alpha = 0.05f)
-        )
-
-        // 3. Water Rendering
-        clipPath(bottlePath) {
-            val effectiveLevel = animatedLevel.coerceIn(0.01f, 0.99f)
-            val baseWaterY = top + bottleHeight - (bottleHeight * effectiveLevel)
-
-            // Background Wave (slightly different phase and darker)
-            val backWavePath = Path()
-            backWavePath.moveTo(left - 50f, top + bottleHeight + 50f)
-            backWavePath.lineTo(left + bottleWidth + 100f, top + bottleHeight + 50f)
-            for (i in 0..100) {
-                val x = left + bottleWidth + 100f - (i.toFloat() / 100) * (bottleWidth + 150f)
-                val relX = i.toFloat() / 100
-                val y = baseWaterY + 3.dp.toPx() * sin(relX * 2 * PI.toFloat() + waveOffset * 0.8f + 0.5f)
-                backWavePath.lineTo(x, y.toFloat())
-            }
-            backWavePath.close()
-            drawPath(backWavePath, Color(0xFF16A5B2).copy(alpha = 0.4f))
-
-            // Middle Wave (Highlight streak)
-            val midWavePath = Path()
-            midWavePath.moveTo(left - 50f, top + bottleHeight + 50f)
-            midWavePath.lineTo(left + bottleWidth + 100f, top + bottleHeight + 50f)
-            for (i in 0..100) {
-                val x = left + bottleWidth + 100f - (i.toFloat() / 100) * (bottleWidth + 150f)
-                val relX = i.toFloat() / 100
-                val y = baseWaterY + 2.dp.toPx() * sin(relX * 2.5 * PI.toFloat() + waveOffset * 1.2f)
-                midWavePath.lineTo(x, y.toFloat())
-            }
-            midWavePath.close()
-            drawPath(midWavePath, Color(0xFF59F3F0).copy(alpha = 0.2f))
-
-            // Main Liquid Gradient
-            val waterPath = Path()
-            waterPath.moveTo(left - 50f, top + bottleHeight + 50f)
-            waterPath.lineTo(left + bottleWidth + 100f, top + bottleHeight + 50f)
-            for (i in 0..100) {
-                val x = left + bottleWidth + 100f - (i.toFloat() / 100) * (bottleWidth + 150f)
-                var relX = i.toFloat() / 100
-                val amplitude = 5.dp.toPx() * (1f - abs(effectiveLevel - 0.5f))
-                val y = baseWaterY + amplitude * sin(relX * 1.8 * PI.toFloat() + waveOffset)
-                waterPath.lineTo(x, y.toFloat())
-            }
-            waterPath.close()
-
-            drawPath(
-                path = waterPath,
-                brush = Brush.verticalGradient(
-                    0.0f to Color(0xFF59F3F0).copy(alpha = 0.9f),
-                    0.4f to Color(0xFF2ED8D3).copy(alpha = 0.95f),
-                    1.0f to Color(0xFF0E7F94),
-                    startY = baseWaterY - 10.dp.toPx(),
-                    endY = top + bottleHeight
-                )
-            )
-
-            // Surface Reflection Line
-            drawPath(
-                path = waterPath,
-                color = Color(0xFFBFFFFF).copy(alpha = 0.5f),
-                style = Stroke(width = 1.5.dp.toPx())
-            )
-
-            // Bubbles (Submerged and Surface)
-            val bubbleRandom = kotlin.random.Random(42)
-            repeat(15) { i ->
-                val bRelX = bubbleRandom.nextFloat()
-                val bX = left + bottleWidth * bRelX
-                val bY = top + bottleHeight - (bottleHeight * effectiveLevel * bubbleRandom.nextFloat())
-
-                // Only draw if submerged enough
-                if (bY > baseWaterY - 5.dp.toPx()) {
-                    val size = (1f + bubbleRandom.nextFloat() * 2f).dp.toPx()
-                    val alpha = 0.2f + 0.3f * sin(waveOffset + i).coerceAtLeast(0f)
-                    drawCircle(
-                        color = Color(0xFFBFFFFF).copy(alpha = alpha),
-                        radius = size,
-                        center = Offset(bX, bY)
-                    )
-                    // Tiny glow for bubbles
-                    drawCircle(
-                        color = Color(0xFF59F3F0).copy(alpha = alpha * 0.5f),
-                        radius = size * 2,
-                        center = Offset(bX, bY)
-                    )
-                }
-            }
-
-            // 4. Glass Detail
-            // Thick edges
-            drawPath(
-                path = bottlePath,
-                color = Color(0xFF6EEEF4).copy(alpha = 0.25f),
-                style = Stroke(width = 2.5.dp.toPx())
-            )
-            // Internal highlight
-            drawPath(
-                path = bottlePath,
-                color = Color(0xFFC8FFFF).copy(alpha = 0.1f),
-                style = Stroke(width = 0.8.dp.toPx())
-            )
-
-            // Top Glossy Reflection
-            val glossPath = Path().apply {
-                moveTo(left + 20.dp.toPx(), top + 4.dp.toPx())
-                lineTo(left + bottleWidth - 40.dp.toPx(), top + 4.dp.toPx())
-            }
-            drawPath(
-                path = glossPath,
-                brush = Brush.horizontalGradient(
-                    listOf(Color.Transparent, Color(0xFFC8FFFF).copy(alpha = 0.3f), Color.Transparent)
-                ),
-                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-            )
-        }
     }
 }

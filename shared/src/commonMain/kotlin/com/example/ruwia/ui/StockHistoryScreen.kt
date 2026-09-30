@@ -1,6 +1,7 @@
 package com.example.ruwia.ui
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,6 +10,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -20,10 +23,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +40,7 @@ import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
 import com.example.ruwia.util.isoToDisplayDate
 import com.example.ruwia.util.isoToDisplayTime
 import kotlinx.datetime.Instant
@@ -46,16 +51,17 @@ import kotlinx.datetime.toLocalDateTime
 
 // ─────────────────────────────────────────────────────────────
 //  Stock History — Premium SaaS ledger view
-//  Hero stats · search · shop · employee · date range filter ·
-//  sort chip row · date-grouped, colour-coded movement cards
-//  with an expandable detail sheet (NT design tokens).
+//  Deep-teal glossy hero · stats · search · shop · employee ·
+//  date range filter · date-wise order · date-grouped,
+//  colour-coded movement cards with expandable details.
 // ─────────────────────────────────────────────────────────────
 
+// Deep teal shared with the home Business Overview card.
+private val HistTeal = Color(0xFF0F2E2C)
+
 private enum class SortMode(val label: String, val icon: ImageVector) {
-    Latest("Latest", Icons.Rounded.Refresh),
-    Date("Date", Icons.Rounded.CalendarToday),
-    Delivered("Delivered", Icons.Rounded.LocalShipping),
-    Stock("Stock", Icons.Rounded.Inventory2),
+    Newest("Newest first", Icons.Rounded.ArrowDownward),
+    Oldest("Oldest first", Icons.Rounded.ArrowUpward),
 }
 
 private class MoveStyle(
@@ -87,9 +93,9 @@ private fun classify(m: StockMovement): MoveStyle {
             amountColor = NTColors.StockIconFg,
         )
         isAdd -> MoveStyle(
-            icon = Icons.Rounded.ArrowDownward,
-            iconBg = NTColors.SuccessLight,
-            iconFg = NTColors.SuccessText,
+            icon = Icons.Rounded.Download,
+            iconBg = NTColors.PrimaryLight,
+            iconFg = HistTeal,
             badge = when {
                 m.source.contains("Opening", ignoreCase = true) -> "OPENING"
                 m.source.contains("Restock", ignoreCase = true) -> "RESTOCK"
@@ -97,7 +103,7 @@ private fun classify(m: StockMovement): MoveStyle {
                 m.source.contains("Purchase", ignoreCase = true) -> "PURCHASE"
                 else -> "STOCK IN"
             },
-            amountColor = NTColors.SuccessText,
+            amountColor = HistTeal,
         )
         else -> MoveStyle(
             icon = Icons.Rounded.ArrowUpward,
@@ -165,7 +171,8 @@ fun StockHistoryScreen(
     var dateFrom by remember { mutableStateOf("") }
     var dateTo by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
-    var sortMode by remember { mutableStateOf(SortMode.Latest) }
+    // Date-wise order only: newest first (default) or oldest first.
+    var sortMode by remember { mutableStateOf(SortMode.Newest) }
     var query by remember { mutableStateOf("") }
 
     val scoped = remember(movements, selectedShop, selectedEmployee, dateFrom, dateTo) {
@@ -190,13 +197,8 @@ fun StockHistoryScreen(
 
     val sorted = remember(scoped, sortMode) {
         when (sortMode) {
-            SortMode.Delivered -> scoped.sortedWith(
-                compareByDescending<StockMovement> { it.type == "outward" }
-                    .thenByDescending { it.qty }
-            )
-            SortMode.Stock -> scoped.sortedByDescending { it.qty }
-            SortMode.Date -> scoped.sortedBy { it.createdAt }
-            SortMode.Latest -> scoped
+            SortMode.Newest -> scoped.sortedByDescending { it.createdAt }
+            SortMode.Oldest -> scoped.sortedBy { it.createdAt ?: "9999" }
         }
     }
 
@@ -249,6 +251,7 @@ fun StockHistoryScreen(
                     onSelectSort = { sortMode = it },
                     query = query,
                     onQueryChange = { query = it },
+                    resultCount = totalMovements,
                 )
             }
 
@@ -298,69 +301,20 @@ fun StockHistoryScreen(
 private fun dateKey(m: StockMovement): String = m.createdAt?.take(10) ?: "unknown"
 
 // ── Hero header ──────────────────────────────────────────────
+//  Uniform primary top bar shared with every inner screen.
 
 @Composable
 private fun StockHistoryHeader(
     entryCount: Int,
     onBack: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                Brush.linearGradient(
-                    listOf(NTColors.PrimaryDeep, NTColors.GradStart, NTColors.GradEnd),
-                    start = Offset.Zero,
-                    end = Offset(1200f, 400f),
-                )
-            )
-            .statusBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(12.dp))
-                    .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(20.dp))
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Stock History",
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = NTColors.TextOnPrimary,
-                )
-                Text(
-                    text = "Inventory ledger · every movement across all shops",
-                    fontSize = 12.sp,
-                    color = NTColors.CancelIconBg,
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(NTColors.PrimaryLight)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            ) {
-                Text(
-                    text = "$entryCount movements",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = NTColors.Primary,
-                )
-            }
-        }
-    }
+    NTPrimaryTopBar(
+        title = "Stock History",
+        subtitle = "Inventory ledger · every movement across all shops",
+        onBack = onBack,
+        horizontalPadding = 16.dp,
+        trailingText = "$entryCount movements",
+    )
 }
 
 // ── KPI stats strip ──────────────────────────────────────────
@@ -375,7 +329,7 @@ private fun StockHistoryStats(
         HistoryStat(
             icon = Icons.Rounded.History,
             iconBg = NTColors.PrimaryLight,
-            iconFg = NTColors.Primary,
+            iconFg = HistTeal,
             value = "$movements",
             label = "MOVEMENTS",
             modifier = Modifier.weight(1f),
@@ -390,8 +344,8 @@ private fun StockHistoryStats(
         )
         HistoryStat(
             icon = Icons.Rounded.Inventory2,
-            iconBg = NTColors.SuccessLight,
-            iconFg = NTColors.SuccessText,
+            iconBg = NTColors.PrimaryLight,
+            iconFg = HistTeal,
             value = "$restocked",
             label = "RESTOCKED",
             modifier = Modifier.weight(1f),
@@ -462,7 +416,16 @@ private fun StockHistoryControls(
     onSelectSort: (SortMode) -> Unit,
     query: String,
     onQueryChange: (String) -> Unit,
+    resultCount: Int = 0,
 ) {
+    var showFilterSheet by remember { mutableStateOf(false) }
+
+    val filterCount =
+        (if (selectedShop.isNotBlank()) 1 else 0) +
+        (if (selectedEmployee.isNotBlank()) 1 else 0) +
+        (if (dateFrom.isNotBlank()) 1 else 0) +
+        (if (dateTo.isNotBlank()) 1 else 0)
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -554,18 +517,318 @@ private fun StockHistoryControls(
             onToChange = onDateToChange,
         )
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
 
-        // Sort chips
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(SortMode.entries) { mode ->
-                HistoryChip(
-                    text = mode.label,
-                    selected = sortMode == mode,
-                    icon = mode.icon,
-                    onClick = { onSelectSort(mode) },
+        // Single entry point — shop / employee / dates / sort all live
+        // in one bottom sheet instead of inline chip rows.
+        FiltersButton(
+            activeCount = filterCount,
+            onClick = { showFilterSheet = true },
+        )
+    }
+
+    if (showFilterSheet) {
+        HistoryFilterSheet(
+            shopOptions = shopOptions,
+            selectedShop = selectedShop,
+            onSelectShop = onSelectShop,
+            employees = employees,
+            selectedEmployee = selectedEmployee,
+            onSelectEmployee = onSelectEmployee,
+            dateFrom = dateFrom,
+            dateTo = dateTo,
+            onDateFromChange = onDateFromChange,
+            onDateToChange = onDateToChange,
+            sortMode = sortMode,
+            onSelectSort = onSelectSort,
+            resultCount = resultCount,
+            onClearAll = {
+                onSelectShop("")
+                onSelectEmployee("")
+                onDateFromChange("")
+                onDateToChange("")
+            },
+            onDismiss = { showFilterSheet = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FiltersButton(
+    activeCount: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(NTColors.SurfaceVar)
+            .border(1.dp, NTColors.Border, RoundedCornerShape(12.dp))
+            .clickable(onClickLabel = "Open filters", onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.Tune,
+            contentDescription = null,
+            tint = HistTeal,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Filters & sort",
+            color = NTColors.TextPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+        )
+        if (activeCount > 0) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(HistTeal)
+                    .padding(horizontal = 9.dp, vertical = 3.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "$activeCount",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
                 )
             }
+            Spacer(Modifier.width(8.dp))
+        }
+        Icon(
+            Icons.Rounded.ExpandMore,
+            contentDescription = null,
+            tint = NTColors.TextTertiary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HistoryFilterSheet(
+    shopOptions: List<String>,
+    selectedShop: String,
+    onSelectShop: (String) -> Unit,
+    employees: List<Pair<String, String>>,
+    selectedEmployee: String,
+    onSelectEmployee: (String) -> Unit,
+    dateFrom: String,
+    dateTo: String,
+    onDateFromChange: (String) -> Unit,
+    onDateToChange: (String) -> Unit,
+    sortMode: SortMode,
+    onSelectSort: (SortMode) -> Unit,
+    resultCount: Int,
+    onClearAll: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = NTColors.Surface,
+        contentColor = NTColors.TextPrimary,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Filters & sort",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.2).sp,
+                        color = NTColors.TextPrimary,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "Refine the ledger by shop, staff, date or order",
+                        fontSize = 13.sp,
+                        color = NTColors.TextSecondary,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(NTColors.SurfaceVar)
+                        .border(1.dp, NTColors.Border, CircleShape)
+                        .clickable(onClickLabel = "Close filters", onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.Close,
+                        contentDescription = null,
+                        tint = NTColors.TextSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+            FilterSectionLabel("SHOP")
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    HistoryChip(
+                        text = "All Shops",
+                        selected = selectedShop.isBlank(),
+                        icon = Icons.Rounded.Store,
+                        onClick = { onSelectShop("") },
+                    )
+                }
+                items(shopOptions) { name ->
+                    HistoryChip(
+                        text = name,
+                        selected = shopMatchKey(selectedShop) == shopMatchKey(name),
+                        onClick = { onSelectShop(name) },
+                    )
+                }
+            }
+
+            if (employees.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                FilterSectionLabel("EMPLOYEE")
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        HistoryChip(
+                            text = "All Employees",
+                            selected = selectedEmployee.isBlank(),
+                            icon = Icons.Rounded.Person,
+                            onClick = { onSelectEmployee("") },
+                        )
+                    }
+                    items(employees, key = { it.first }) { (id, name) ->
+                        HistoryChip(
+                            text = name,
+                            selected = selectedEmployee == id,
+                            icon = Icons.Rounded.Person,
+                            onClick = { onSelectEmployee(id) },
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            FilterSectionLabel("DATES")
+            Spacer(Modifier.height(8.dp))
+            DateRangeRow(
+                dateFrom = dateFrom,
+                dateTo = dateTo,
+                onFromChange = onDateFromChange,
+                onToChange = onDateToChange,
+            )
+
+            Spacer(Modifier.height(16.dp))
+            FilterSectionLabel("SORT ORDER")
+            Spacer(Modifier.height(8.dp))
+            SortMode.entries.forEach { mode ->
+                SortOptionRow(
+                    mode = mode,
+                    selected = sortMode == mode,
+                    onClick = { onSelectSort(mode) },
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                TextButton(onClick = onClearAll) {
+                    Text("Clear all", color = HistTeal, fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HistTeal,
+                        contentColor = Color.White,
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(vertical = 14.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 50.dp),
+                ) {
+                    Text(
+                        "Show $resultCount movements",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterSectionLabel(text: String) {
+    Text(
+        text = text,
+        color = NTColors.TextTertiary,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.8.sp,
+    )
+}
+
+@Composable
+private fun SortOptionRow(
+    mode: SortMode,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) NTColors.PrimaryLight else Color.Transparent)
+            .clickable(onClickLabel = mode.label, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (selected) HistTeal else NTColors.SurfaceVar),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                mode.icon,
+                contentDescription = null,
+                tint = if (selected) Color.White else NTColors.TextSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = mode.label,
+            color = NTColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Icon(
+                Icons.Rounded.Check,
+                contentDescription = null,
+                tint = HistTeal,
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }
@@ -608,7 +871,7 @@ private fun DateRangeRow(
                 TextButton(onClick = {
                     state.selectedDateMillis?.let { onFromChange(epochMillisToDateStr(it)) }
                     showFromPicker = false
-                }) { Text("OK", color = NTColors.Primary) }
+                }) { Text("OK", color = HistTeal) }
             },
             dismissButton = {
                 TextButton(onClick = { showFromPicker = false }) { Text("Cancel", color = NTColors.TextSecondary) }
@@ -628,7 +891,7 @@ private fun DateRangeRow(
                 TextButton(onClick = {
                     state.selectedDateMillis?.let { onToChange(epochMillisToDateStr(it)) }
                     showToPicker = false
-                }) { Text("OK", color = NTColors.Primary) }
+                }) { Text("OK", color = HistTeal) }
             },
             dismissButton = {
                 TextButton(onClick = { showToPicker = false }) { Text("Cancel", color = NTColors.TextSecondary) }
@@ -661,13 +924,13 @@ private fun DateFilterChip(
         Icon(
             Icons.Rounded.CalendarToday,
             null,
-            tint = if (isActive) NTColors.Primary else NTColors.TextSecondary,
+            tint = if (isActive) HistTeal else NTColors.TextSecondary,
             modifier = Modifier.size(14.dp),
         )
         Spacer(Modifier.width(5.dp))
         Text(
             text = displayText,
-            color = if (isActive) NTColors.Primary else NTColors.TextSecondary,
+            color = if (isActive) HistTeal else NTColors.TextSecondary,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
@@ -678,7 +941,7 @@ private fun DateFilterChip(
             Icon(
                 Icons.Rounded.Close,
                 "Clear",
-                tint = NTColors.Primary,
+                tint = HistTeal,
                 modifier = Modifier.size(12.dp).clickable(onClick = onClear),
             )
         }
@@ -695,7 +958,7 @@ private fun HistoryChip(
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) NTColors.Primary else NTColors.SurfaceVar)
+            .background(if (selected) HistTeal else NTColors.SurfaceVar)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -704,14 +967,14 @@ private fun HistoryChip(
             Icon(
                 icon,
                 null,
-                tint = if (selected) NTColors.TextOnPrimary else NTColors.TextSecondary,
+                tint = if (selected) Color.White else NTColors.TextSecondary,
                 modifier = Modifier.size(14.dp),
             )
             Spacer(Modifier.width(5.dp))
         }
         Text(
             text = text,
-            color = if (selected) NTColors.TextOnPrimary else NTColors.TextSecondary,
+            color = if (selected) Color.White else NTColors.TextSecondary,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
@@ -753,13 +1016,18 @@ private fun MovementCard(
     val qtyText = "${if (isAdd) "+" else "-"}${movement.qty}"
     val time = isoToDisplayTime(movement.createdAt).ifBlank { "—" }
     val shop = movement.shopName.ifBlank { "—" }
+    val expandRotation by animateFloatAsState(
+        targetValue = if (isExpanded) 180f else 0f,
+        label = "historyExpand",
+    )
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .shadow(2.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(NTColors.Surface)
-            .border(1.dp, NTColors.Border, RoundedCornerShape(20.dp))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(24.dp))
             .animateContentSize(),
     ) {
         Row(
@@ -841,13 +1109,26 @@ private fun MovementCard(
                     color = NTColors.TextTertiary,
                 )
             }
-            Spacer(Modifier.width(4.dp))
-            Icon(
-                imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
-                contentDescription = null,
-                tint = NTColors.TextTertiary,
-                modifier = Modifier.size(20.dp),
-            )
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(NTColors.SurfaceVar)
+                    .border(1.dp, NTColors.Border, CircleShape)
+                    .clickable(
+                        onClickLabel = if (isExpanded) "Collapse details" else "Expand details",
+                        onClick = onClick,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ExpandMore,
+                    contentDescription = null,
+                    tint = NTColors.TextSecondary,
+                    modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = expandRotation }
+                )
+            }
         }
     }
 }
@@ -865,7 +1146,7 @@ private fun StockHistoryEmpty() {
             Icon(
                 imageVector = Icons.Rounded.Inventory2,
                 contentDescription = null,
-                tint = NTColors.Primary,
+                tint = HistTeal,
                 modifier = Modifier.size(34.dp),
             )
         }

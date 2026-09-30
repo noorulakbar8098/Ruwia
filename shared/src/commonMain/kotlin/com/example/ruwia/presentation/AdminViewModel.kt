@@ -16,7 +16,7 @@ import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.Supplier
-import com.example.ruwia.domain.netStockPerProduct
+import com.example.ruwia.domain.netStockPerProductAllShops
 import com.example.ruwia.util.sanitizeError
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -714,6 +714,8 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         shopName: String,
         createdAt: String,
         emptyCans: Int = 0,
+        lowStockAlert: Int = 5,
+        notes: String = "",
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
@@ -741,14 +743,16 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 purchasePrice = purchasePrice,
                 defaultSellPrice = sellingPrice,
                 stockAvailable = 0, // will be updated by the movement
+                lowStockAlert = lowStockAlert.coerceIn(0, 999),
                 isActive = true
             )
             val productId = repo.addProductCategory(newProduct)
 
-            // Add stock movement
+            // Add stock movement (optional note appended so it surfaces in history).
+            val noteSuffix = notes.trim().take(120).takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
             val totalUnits = qty
             repo.addStockMovement(
-                source = "Inward Purchase",
+                source = "Inward Purchase$noteSuffix",
                 qty = totalUnits,
                 type = "inward",
                 shopName = shopName,
@@ -783,20 +787,22 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         newStock: Int,
         previousStock: Int,
         shopName: String,
+        lowStockAlert: Int,
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
             val product = _state.value.productCategories.find { it.id == productId }
                 ?: throw IllegalStateException("Product not found")
 
-            // Update product details (brand, prices)
+            // Update product details (brand, prices, low-stock threshold)
             val displayName = if (brandName.isNotBlank()) "$brandName - ${product.name}" else product.name
             val updatedProduct = product.copy(
                 brandName = brandName.trim(),
                 displayName = displayName,
                 supplierGroup = shopName.trim(),
                 purchasePrice = purchasePrice,
-                defaultSellPrice = sellingPrice
+                defaultSellPrice = sellingPrice,
+                lowStockAlert = lowStockAlert.coerceIn(0, 999)
             )
             repo.updateProductCategory(updatedProduct)
 
@@ -843,7 +849,8 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
     private fun AdminState.deriveStockFromMovements(): AdminState {
         if (recentMovements.isEmpty()) return this
 
-        val net = netStockPerProduct(recentMovements)
+        // Bucketed sum so Home totals always equal the inventory shop tabs added up.
+        val net = netStockPerProductAllShops(recentMovements)
         val updatedProducts = productCategories.map { p ->
             p.copy(stockAvailable = net[p.id] ?: 0)
         }

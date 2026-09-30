@@ -4,10 +4,13 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import kotlin.math.*
@@ -28,6 +33,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
@@ -76,7 +82,10 @@ fun NTSectionHeader(
                     color = NTColors.Primary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable(onClick = onTrailingClick)
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(NTDp.radSm))
+                        .clickable(onClickLabel = trailingText, onClick = onTrailingClick)
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
                 )
             }
         }
@@ -84,6 +93,7 @@ fun NTSectionHeader(
 }
 
 // ── Dashboard header ─────────────────────────────────────────
+//  Premium SaaS header: logo · OWNER label · brand · bell · avatar.
 
 @Composable
 fun NTDashboardHeader(
@@ -95,64 +105,192 @@ fun NTDashboardHeader(
     onNotificationClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val brandTitle = "neerthuli"
+    val ownerLabel = "OWNER · ${shopName.uppercase().ifBlank { "Admin" }}"
+    val avatarInitial = adminName.trim().firstOrNull()?.uppercase() ?: "N"
+
     Row(
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = NTDp.screenPad, vertical = NTDp.md),
+            .padding(horizontal = NTDp.screenPad, vertical = NTDp.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Spacer(modifier = Modifier.height(NTDp.md))
         Box(
             modifier = Modifier
-                .size(NTDp.kpiIconBox)
-                .clip(RoundedCornerShape(10.dp))
-                .clickable(onClick = onAvatarClick),
+                .size(44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClickLabel = "Open settings", onClick = onAvatarClick),
             contentAlignment = Alignment.Center
         ) {
             Image(
                 painter = painterResource(Res.drawable.app_icon),
-                contentDescription = "Logo",
+                contentDescription = "Neerthuli logo",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
         }
 
-        Spacer(modifier = Modifier.width(NTDp.md))
+        Spacer(modifier = Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "OWNER · ${shopName.uppercase()}",
+                text = ownerLabel,
                 color = NTColors.TextTertiary, fontSize = 10.sp,
-                fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp,
+                fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = adminName, color = NTColors.TextPrimary,
-                fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                text = brandTitle, color = NTColors.TextPrimary,
+                fontSize = 19.sp, fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.3).sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
         }
 
-//        NTIconCircleButton(icon = Icons.Rounded.Search, onClick = onSearchClick)
-//        Spacer(modifier = Modifier.width(NTDp.sm))
-//
-//        Box {
-//            NTIconCircleButton(icon = Icons.Rounded.Notifications, onClick = onNotificationClick)
-//            if (notificationCount > 0) {
-//                Box(
-//                    modifier = Modifier.align(Alignment.TopEnd)
-//                        .offset(x = (-2).dp, y = 2.dp).size(18.dp)
-//                        .clip(CircleShape).background(NTColors.Error),
-//                    contentAlignment = Alignment.Center
-//                ) {
-//                    Text(
-//                        text = if (notificationCount > 9) "9+" else notificationCount.toString(),
-//                        color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold
-//                    )
-//                }
-//            }
-//        }
+        // Notification bell with red indicator
+        Box {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(NTColors.Surface)
+                    .border(1.dp, NTColors.Border, CircleShape)
+                    .clickable(onClickLabel = "Notifications", onClick = onNotificationClick),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Rounded.Notifications,
+                    contentDescription = "Notifications",
+                    tint = NTColors.TextPrimary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            if (notificationCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = (-1).dp, y = 1.dp)
+                        .size(11.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFEF4444))
+                        .border(2.dp, NTColors.Background, CircleShape)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(10.dp))
+
+        // Circular user avatar
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF0F2E2C))
+                .clickable(onClickLabel = "Open settings", onClick = onAvatarClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = avatarInitial,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+// ── Uniform primary top bar ───────────────────────────────────
+//  Full-bleed deep-teal glossy banner shared by every inner screen:
+//  back button · title (+ optional badge) · subtitle · count pill.
+
+@Composable
+fun NTPrimaryTopBar(
+    title: String,
+    subtitle: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    horizontalPadding: Dp = NTDp.screenPad,
+    trailingText: String = "",
+    titleBadge: @Composable RowScope.() -> Unit = {},
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(OverviewBg)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.12f),
+                        Color.White.copy(alpha = 0.03f),
+                        Color.Transparent,
+                    )
+                )
+            )
+            .statusBarsPadding()
+            .padding(horizontal = horizontalPadding, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(alpha = 0.10f))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(12.dp))
+                    .clickable(onClickLabel = "Back", onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.3).sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    titleBadge()
+                }
+                if (subtitle.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        color = Color.White.copy(alpha = 0.60f),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (trailingText.isNotBlank()) {
+                Spacer(Modifier.width(12.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        text = trailingText,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -173,6 +311,107 @@ fun NTIconCircleButton(
     }
 }
 
+// ── Glossy animated arrow button ──────────────────────────────
+//  Springy press scale + glassy sheen that brightens while tapped.
+
+@Composable
+fun GlossyArrowButton(
+    onClick: () -> Unit,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.85f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "glossyArrowScale",
+    )
+    val sheen by animateFloatAsState(
+        targetValue = if (pressed) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "glossyArrowSheen",
+    )
+    Box(
+        modifier = modifier
+            .size(size)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .background(NTColors.SurfaceVar)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.10f + 0.30f * sheen),
+                        Color.White.copy(alpha = 0.02f),
+                        Color.Transparent,
+                    )
+                )
+            )
+            .border(1.dp, NTColors.Border, CircleShape)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClickLabel = contentDescription,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.ChevronRight,
+            contentDescription = contentDescription,
+            tint = NTColors.TextSecondary,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+// ── Glossy deep-teal container shared across screens ────────────
+//  Same tone + top-light sheen as the home Business Overview card.
+
+private val GlossTeal = Color(0xFF0F2E2C)
+
+private val glossSheen: Brush
+    get() = Brush.verticalGradient(
+        listOf(
+            Color.White.copy(alpha = 0.16f),
+            Color.White.copy(alpha = 0.03f),
+            Color.Transparent,
+        )
+    )
+
+@Composable
+fun GlossyTealBox(
+    modifier: Modifier = Modifier,
+    shape: RoundedCornerShape = RoundedCornerShape(20.dp),
+    enabled: Boolean = true,
+    onClick: (() -> Unit)? = null,
+    onClickLabel: String? = null,
+    contentAlignment: Alignment = Alignment.Center,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    var m = modifier
+        .clip(shape)
+        .background(if (enabled) GlossTeal else NTColors.TextDisabled)
+    if (enabled) {
+        m = m
+            .background(glossSheen)
+            .border(1.dp, Color.White.copy(alpha = 0.16f), shape)
+    }
+    if (onClick != null && enabled) {
+        m = m.clickable(onClickLabel = onClickLabel, onClick = onClick)
+    }
+    Box(modifier = m, contentAlignment = contentAlignment) {
+        content()
+    }
+}
+
 // ── Greeting ──────────────────────────────────────────────────
 
 @Composable
@@ -184,23 +423,239 @@ fun NTGreetingSection(
     Column(
         modifier = modifier.fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
-            .padding(top = NTDp.xs, bottom = NTDp.md)
+            .padding(top = NTDp.sm, bottom = NTDp.md)
     ) {
         Text(text = greeting, color = NTColors.TextPrimary,
-            fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 32.sp)
-        Spacer(modifier = Modifier.height(NTDp.xs))
+            fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 30.sp,
+            letterSpacing = (-0.4).sp)
+        Spacer(modifier = Modifier.height(4.dp))
         Text(text = subtext, color = NTColors.TextSecondary, fontSize = 14.sp, lineHeight = 20.sp)
     }
 }
 
-// ── Revenue hero card color tokens ───────────────────────────
+// ── Business overview card color tokens ──────────────────────
+//  Solid deep forest teal — no gradient, premium minimal.
 
-private val HeroBg1     = Color(0xFF0D3330)
-private val HeroBg2     = Color(0xFF091F1D)
-private val HeroSurface = Color(0xFF1A4844)
-private val HeroLine    = Color(0xFF4EECD8)
+private val OverviewBg      = Color(0xFF0F2E2C)
+private val OverviewSurface = Color(0xFF1A4340)
+private val OverviewMint    = Color(0xFF5EEAD4)
+private val OverviewMuted   = Color.White
 
-// ── Revenue hero card ─────────────────────────────────────────
+// Legacy aliases (old hero used gradients — retained only so legacy preview compiles)
+private val HeroBg1 = OverviewBg
+private val HeroBg2 = OverviewBg
+private val HeroSurface = OverviewSurface
+private val HeroLine = OverviewMint
+
+// ── Business overview card ────────────────────────────────────
+//  Premium dark-teal KPI card. NO graph — NET PROFIT + TOTAL CUSTOMERS.
+//  Period chip opens a dropdown: Month (default) · Last Month · Last Quarter · Yearly.
+
+enum class OverviewPeriod { MONTH, LAST_MONTH, LAST_QUARTER, YEARLY }
+
+fun OverviewPeriod.label(): String = when (this) {
+    OverviewPeriod.MONTH        -> "Month"
+    OverviewPeriod.LAST_MONTH   -> "Last Month"
+    OverviewPeriod.LAST_QUARTER -> "Last Quarter"
+    OverviewPeriod.YEARLY       -> "Yearly"
+}
+
+@Composable
+fun NTBusinessOverviewCard(
+    period: OverviewPeriod,
+    onPeriodChange: (OverviewPeriod) -> Unit,
+    chipLabel: String,
+    leftLabel: String,
+    leftValue: Double,
+    leftGrowth: Double?,
+    rightValue: Int,
+    rightGrowth: Double?,
+    modifier: Modifier = Modifier,
+) {
+    var dropdownOpen by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = NTDp.screenPad)
+            .clip(RoundedCornerShape(24.dp))
+            .background(OverviewBg)
+            .padding(20.dp),
+    ) {
+        // ── Top row ──────────────────────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(36.dp).clip(CircleShape).background(OverviewSurface),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.AccountBalanceWallet, null,
+                        tint = OverviewMint, modifier = Modifier.size(18.dp)
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "BUSINESS OVERVIEW",
+                    color = Color.White, fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp,
+                )
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    Icons.Rounded.Info, null,
+                    tint = Color.White.copy(alpha = 0.35f),
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            Box {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(OverviewSurface)
+                        .clickable(onClickLabel = "Change period", onClick = { dropdownOpen = true })
+                        .heightIn(min = 40.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        chipLabel.ifBlank { "This Month" },
+                        color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Icon(
+                        Icons.Rounded.KeyboardArrowDown, null,
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                DropdownMenu(
+                    expanded = dropdownOpen,
+                    onDismissRequest = { dropdownOpen = false },
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    OverviewPeriod.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    option.label(),
+                                    fontSize = 14.sp,
+                                    fontWeight = if (option == period) FontWeight.Bold else FontWeight.Medium
+                                )
+                            },
+                            trailingIcon = if (option == period) {
+                                { Icon(Icons.Rounded.Check, null, modifier = Modifier.size(18.dp)) }
+                            } else null,
+                            onClick = {
+                                dropdownOpen = false
+                                onPeriodChange(option)
+                            },
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // ── Main KPIs ────────────────────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)
+        ) {
+            OverviewMainKpi(
+                icon = Icons.Rounded.AccountBalanceWallet,
+                label = leftLabel,
+                value = formatMrr(leftValue),
+                growth = leftGrowth,
+                modifier = Modifier.weight(1f)
+            )
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .background(Color.White.copy(alpha = 0.12f))
+            )
+            OverviewMainKpi(
+                icon = Icons.Rounded.Groups,
+                label = "TOTAL CUSTOMERS",
+                value = "$rightValue",
+                growth = rightGrowth,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun OverviewMainKpi(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    growth: Double?,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = Color.White.copy(alpha = 0.45f), modifier = Modifier.size(13.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(
+                label,
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            value,
+            color = Color.White,
+            fontSize = 30.sp, fontWeight = FontWeight.ExtraBold,
+            letterSpacing = (-0.8).sp, lineHeight = 34.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(6.dp))
+        // No baseline → no delta row at all (never a bare dash).
+        if (growth != null) {
+            Text(
+                text = formatDelta(growth),
+                color = if (growth >= 0.0) OverviewMint else Color(0xFFFCA5A5),
+                fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.semantics { contentDescription = formatDeltaDescription(growth) },
+            )
+        }
+    }
+}
+
+private fun formatDelta(pct: Double?): String {
+    if (pct == null) return "—"
+    val abs = kotlin.math.abs(pct)
+    val rounded = (abs * 10).toLong() / 10.0
+    val roundedStr = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+    val arrow = if (pct >= 0) "↗" else "↘"
+    // The sign is load-bearing: + means growth, - means decline.
+    val sign = if (pct >= 0) "+" else "-"
+    return "$arrow $sign$roundedStr%"
+}
+
+/** Screen-reader wording for a delta: "Up 12 percent", "Down 80 percent", "No change". */
+private fun formatDeltaDescription(pct: Double?): String {
+    if (pct == null) return "No change"
+    val abs = kotlin.math.abs(pct)
+    val rounded = (abs * 10).toLong() / 10.0
+    val str = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+    return when {
+        pct >= 0.5  -> "Up $str percent"
+        pct <= -0.5 -> "Down $str percent"
+        else        -> "No change"
+    }
+}
+
+// ── Legacy hero card kept for compatibility (no longer used on home) ──
 @Composable
 fun NTRevenueHeroCard(
     @Suppress("UNUSED_PARAMETER") shopName: String = "",
@@ -905,28 +1360,57 @@ enum class NTDateRange { WEEKLY, MONTHLY, QUARTERLY, YEARLY }
 fun NTDateRangePicker(
     selected: NTDateRange,
     onSelect: (NTDateRange) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    options: List<NTDateRange> = NTDateRange.entries,
 ) {
     Row(
         modifier = modifier.fillMaxWidth()
             .clip(RoundedCornerShape(NTDp.radFull))
-            .background(NTColors.SurfaceVar).padding(NTDp.xs),
-        horizontalArrangement = Arrangement.spacedBy(NTDp.xs)
+            .background(NTColors.SurfaceVar)
+            .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radFull))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        NTDateRange.entries.forEach { range ->
+        options.forEach { range ->
             val isSelected = range == selected
             Box(
                 modifier = Modifier.weight(1f)
                     .clip(RoundedCornerShape(NTDp.radFull))
-                    .background(if (isSelected) NTColors.Surface else Color.Transparent)
-                    .clickable { onSelect(range) }.padding(vertical = 8.dp),
+                    .background(if (isSelected) OverviewBg else Color.Transparent)
+                    // Subtle glassy top-light sheen on the selected chip.
+                    .then(
+                        if (isSelected) Modifier.background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.18f),
+                                    Color.White.copy(alpha = 0.04f),
+                                    Color.Transparent,
+                                )
+                            )
+                        ) else Modifier
+                    )
+                    .then(
+                        if (isSelected) Modifier.border(
+                            1.dp,
+                            Color.White.copy(alpha = 0.16f),
+                            RoundedCornerShape(NTDp.radFull)
+                        ) else Modifier
+                    )
+                    .then(
+                        if (isSelected) Modifier.shadow(
+                            3.dp, RoundedCornerShape(NTDp.radFull), clip = false
+                        ) else Modifier
+                    )
+                    .clickable(onClickLabel = range.label(), onClick = { onSelect(range) })
+                    .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     range.label(),
-                    color = if (isSelected) NTColors.TextPrimary else NTColors.TextTertiary,
+                    color = if (isSelected) Color.White else NTColors.TextTertiary,
                     fontSize = 12.sp,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -981,18 +1465,19 @@ private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: (
     Column(
         modifier = Modifier
             .weight(1f)
-            .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClickLabel = tab.label, onClick = onClick)
+            .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(14.dp))
                 .background(
-                    if (isSelected) Color(0xFF155B56)
+                    if (isSelected) OverviewSurface
                     else Color.Transparent
                 )
-                .padding(horizontal = 10.dp, vertical = 5.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -1030,8 +1515,9 @@ private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: (
 fun defaultNavTabs() = listOf(
     NTNavTab(0, "Home",      Icons.Rounded.Home),
     NTNavTab(1, "Inventory", Icons.Rounded.Inventory2),
-    NTNavTab(2, "Analytics", Icons.Rounded.BarChart),
-    NTNavTab(3, "Settings",  Icons.Rounded.Settings),
+    NTNavTab(2, "Txns",      Icons.Rounded.ReceiptLong),
+    NTNavTab(3, "Analytics", Icons.Rounded.BarChart),
+    NTNavTab(4, "Settings",  Icons.Rounded.Settings),
 )
 
 // ── Shimmer brush ─────────────────────────────────────────────

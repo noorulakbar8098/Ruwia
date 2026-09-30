@@ -142,16 +142,12 @@ fun AddEmployeeScreen(
 
                 // ── Hero card ─────────────────────────────────
                 item {
-                    Box(
+                    GlossyTealBox(
+                        shape = RoundedCornerShape(NTDp.radXxl),
                         modifier = Modifier.fillMaxWidth()
-                            .padding(horizontal = NTDp.screenPad)
-                            .clip(RoundedCornerShape(NTDp.radXxl))
-                            .background(Brush.linearGradient(
-                                listOf(NTColors.PrimaryDark, NTColors.GradEnd)))
+                            .padding(horizontal = NTDp.screenPad),
+                        contentAlignment = Alignment.CenterStart,
                     ) {
-                        Box(modifier = Modifier.size(130.dp)
-                            .offset(x = 220.dp, y = (-20).dp)
-                            .clip(CircleShape).background(NTColors.GradAccent))
                         Row(
                             modifier = Modifier.padding(NTDp.cardPad),
                             verticalAlignment = Alignment.CenterVertically,
@@ -174,7 +170,7 @@ fun AddEmployeeScreen(
                             }
                             Column {
                                 Text("NEW EMPLOYEE",
-                                    color = NTColors.PrimaryLight.copy(alpha = 0.8f),
+                                    color = Color.White.copy(alpha = 0.60f),
                                     fontSize = 11.sp, fontWeight = FontWeight.Bold,
                                     letterSpacing = 1.sp)
                                 Text(
@@ -373,18 +369,18 @@ fun AddEmployeeScreen(
                     Text("Cancel", color = NTColors.TextSecondary,
                         fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 }
-                Box(
-                    modifier = Modifier.weight(2f).height(52.dp)
-                        .clip(RoundedCornerShape(NTDp.radFull))
-                        .background(if (canSave) NTColors.Primary else NTColors.TextDisabled)
-                        .clickable(enabled = canSave) {
-                            onSave(
-                                name.trim(), phone.trim(), role, shop,
-                                salary.toDoubleOrNull() ?: 0.0,
-                                email.trim(), password
-                            )
-                        },
-                    contentAlignment = Alignment.Center
+                GlossyTealBox(
+                    shape = RoundedCornerShape(NTDp.radFull),
+                    enabled = canSave,
+                    onClick = {
+                        onSave(
+                            name.trim(), phone.trim(), role, shop,
+                            salary.toDoubleOrNull() ?: 0.0,
+                            email.trim(), password
+                        )
+                    },
+                    onClickLabel = "Create account",
+                    modifier = Modifier.weight(2f).height(52.dp),
                 ) {
                     if (isSaving) {
                         CircularProgressIndicator(
@@ -457,11 +453,9 @@ private fun AESectionCard(number: Int, title: String, content: @Composable Colum
                 horizontalArrangement = Arrangement.spacedBy(NTDp.md),
                 modifier = Modifier.padding(bottom = NTDp.lg)
             ) {
-                Box(
-                    modifier = Modifier.size(30.dp)
-                        .clip(RoundedCornerShape(NTDp.radMd))
-                        .background(NTColors.PrimaryDark),
-                    contentAlignment = Alignment.Center
+                GlossyTealBox(
+                    shape = RoundedCornerShape(NTDp.radMd),
+                    modifier = Modifier.size(30.dp),
                 ) {
                     Text("$number", color = Color.White, fontSize = 13.sp,
                         fontWeight = FontWeight.Bold)
@@ -532,20 +526,34 @@ private fun AEChipGroup(options: List<String>, selected: String, onSelect: (Stri
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(NTDp.sm)) {
         options.forEach { option ->
             val isSelected = option == selected
-            Box(
-                modifier = Modifier.weight(1f)
-                    .clip(RoundedCornerShape(NTDp.radMd))
-                    .background(if (isSelected) NTColors.Primary else NTColors.Background)
-                    .border(1.dp, if (isSelected) Color.Transparent else NTColors.Border,
-                        RoundedCornerShape(NTDp.radMd))
-                    .clickable { onSelect(option) }
-                    .padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(option,
-                    color = if (isSelected) Color.White else NTColors.TextSecondary,
-                    fontSize = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal)
+            if (isSelected) {
+                GlossyTealBox(
+                    shape = RoundedCornerShape(NTDp.radMd),
+                    onClick = { onSelect(option) },
+                    onClickLabel = option,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(option,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(vertical = 10.dp))
+                }
+            } else {
+                Box(
+                    modifier = Modifier.weight(1f)
+                        .clip(RoundedCornerShape(NTDp.radMd))
+                        .background(NTColors.Background)
+                        .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radMd))
+                        .clickable(onClickLabel = option) { onSelect(option) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(option,
+                        color = NTColors.TextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Normal)
+                }
             }
         }
     }

@@ -215,7 +215,7 @@ fun EmployeeDashboardScreen(
                     onBack     = { screen = EmpScreen.Home },
                     onClose    = { screen = EmpScreen.Home },
                     isEmployee = true,
-                    onSave     = { productId, sku, brandName, purchasePrice, sellingPrice, qty, shopName, dateTimeIso, emptyCans ->
+                    onSave     = { productId, sku, brandName, purchasePrice, sellingPrice, qty, shopName, dateTimeIso, emptyCans, lowStockAlert, notes ->
                         val saveShop = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
                         isSubmittingAction = true
                         vm.addInwardStockEntry(
@@ -226,7 +226,9 @@ fun EmployeeDashboardScreen(
                             qty = qty,
                             shopName = saveShop,
                             createdAt = dateTimeIso,
-                            emptyCans = emptyCans
+                            emptyCans = emptyCans,
+                            lowStockAlert = lowStockAlert,
+                            notes = notes
                         )
                     },
                 )

@@ -156,6 +156,7 @@ data class ProductCategory(
     @SerialName("purchase_price_mb") val purchasePriceMB: Double = 0.0,
     @SerialName("default_sell_price") val defaultSellPrice: Double = 0.0,
     @SerialName("stock_available") val stockAvailable: Int = 0,
+    @SerialName("low_stock_alert") val lowStockAlert: Int = 5,
     @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("is_deleted") val isDeleted: Boolean = false,
 )
@@ -262,6 +263,32 @@ fun netStockPerProduct(movements: List<StockMovement>): Map<String?, Int> =
 /** Net live units per product for a single shop, scoped by normalized shop key. */
 fun netStockPerProductInShop(movements: List<StockMovement>, shopKey: String): Map<String?, Int> =
     netStockPerProduct(movements.filter { shopMatchKey(it.shopName) == shopKey })
+
+/**
+ * Net live units per product across ALL shops, bucketed per shop.
+ *
+ * Each shop bucket is netted and floored at zero independently, then summed.
+ * This is the single source of truth for every "All Shops" total, and it
+ * guarantees Σ(shop tabs) == All Shops by construction.
+ *
+ * Why not [netStockPerProduct] on the whole log? That nets across shops
+ * first and floors once, so a shop-level negative (e.g. a transfer or sale
+ * recorded at a shop with less recorded inward stock) is silently absorbed
+ * by another shop's stock. The result reads *lower* than the sum of the
+ * shop tabs (e.g. All = 330 while Shop 1 + Shop 2 = 365) — the exact
+ * mismatch this replaces. Bucketing floors per shop, matching what each
+ * tab displays, and movements under unknown/blank labels form their own
+ * bucket so no stock is ever orphaned.
+ */
+fun netStockPerProductAllShops(movements: List<StockMovement>): Map<String?, Int> {
+    val totals = mutableMapOf<String?, Int>()
+    movements.groupBy { shopMatchKey(it.shopName) }.forEach { (_, rows) ->
+        netStockPerProduct(rows).forEach { (productId, net) ->
+            totals[productId] = (totals[productId] ?: 0) + net
+        }
+    }
+    return totals
+}
 
 /** Net live units for one product across all shops (0 when no movement exists). */
 fun productNetStock(movements: List<StockMovement>, productId: String?): Int =

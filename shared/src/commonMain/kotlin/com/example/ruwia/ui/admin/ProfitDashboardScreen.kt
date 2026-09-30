@@ -21,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Size
@@ -35,9 +36,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -45,7 +44,9 @@ import com.example.ruwia.domain.*
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
 import kotlin.time.Clock
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.LocalDateTime
 import kotlin.time.Instant
@@ -64,9 +65,10 @@ private object SaaSColors {
     val Error         get() = NTColors.Error
     val ErrorLight    get() = NTColors.ErrorLight
     val Warning       get() = NTColors.Warning
-    val ChartCurve    get() = NTColors.Primary
-    val ChartGradient get() = Brush.verticalGradient(listOf(NTColors.Primary.copy(alpha = 0.15f), Color.Transparent))
     val PremiumCard   get() = Brush.linearGradient(listOf(NTColors.Primary, NTColors.PrimaryDark))
+    val DeepTeal      get() = Color(0xFF0F2E2C)
+    val Mint          get() = Color(0xFF5EEAD4)
+    val MintDeep      get() = Color(0xFF0B6B5E)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,6 +81,7 @@ fun ProfitDashboardScreen(
     onProductClick: (String) -> Unit = {},
     onAddStock: () -> Unit = {},
     onAddProduct: () -> Unit = {},
+    onOpenTransactions: () -> Unit = {},
     onClearData: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
 ) {
@@ -88,165 +91,213 @@ fun ProfitDashboardScreen(
     } catch (_: Exception) {
         LocalDateTime(2026, 6, 24, 12, 0)
     }
+    val todayMs = dateToMs(today.year, today.monthNumber, today.dayOfMonth)
     var selectedYear  by remember { mutableStateOf(today.year) }
-    var selectedMonth by remember { mutableStateOf(today.monthNumber - 1) }
+    var selectedMonth by remember { mutableStateOf(today.monthNumber - 1) } // 0-based
+    var periodMode    by remember { mutableStateOf(AnalyticsPeriod.MONTH) }
+    var filterFrom    by remember { mutableStateOf("") } // YYYY-MM-DD or ""
+    var filterTo      by remember { mutableStateOf("") }
+    var showRangeDialog by remember { mutableStateOf(false) }
+    // Chart-card scope: independent 7D / 30D / 3M / 1Y window ending at the analysis end.
+    var chartRange    by remember { mutableStateOf(ChartRange.M3) }
 
-    val selectedMonthKey = "$selectedYear-${(selectedMonth + 1).toString().padStart(2, '0')}"
+    val customActive = filterFrom.isNotBlank() || filterTo.isNotBlank()
+    val monthKey = ymKey(selectedYear, selectedMonth + 1)
+    val monthLen = daysInMonth(selectedYear, selectedMonth + 1)
+    val monthStartMs = dateToMs(selectedYear, selectedMonth + 1, 1)
+    val monthEndMs = dateToMs(selectedYear, selectedMonth + 1, monthLen)
+    val anchorMs = monthEndMs
 
-    // ── Date Filtering ──────────────────────────────────────────────────────
-    var filterDate by remember { mutableStateOf<String?>(null) }
-    var showDatePicker by remember { mutableStateOf(false) }
+    // Years actually present in the data (never hard-coded).
+    val availableYears = remember(state.saleEntries, state.monthlyExpenses, today.year) {
+        (state.saleEntries.mapNotNull { it.date.take(4).toIntOrNull() } +
+         state.monthlyExpenses.keys.mapNotNull { it.take(4).toIntOrNull() } +
+         today.year)
+            .distinct().sortedDescending().ifEmpty { listOf(today.year) }
+    }
+    LaunchedEffect(selectedYear, availableYears) {
+        if (selectedYear !in availableYears) selectedYear = availableYears.first()
+    }
 
-    val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = Clock.System.now().toEpochMilliseconds()
-    )
-
-    if (showDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { millis ->
-                        val localDate = Instant.fromEpochMilliseconds(millis)
-                            .toLocalDateTime(TimeZone.UTC).date
-                        filterDate = localDate.toString()
-                        selectedYear = localDate.year
-                        selectedMonth = localDate.monthNumber - 1
-                    }
-                    showDatePicker = false
-                }) { Text("Confirm") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+    // Resolve the analysis window [winStartMs, winEndMs] (inclusive, UTC).
+    val (winStartMs, winEndMs) = remember(selectedYear, selectedMonth, periodMode, filterFrom, filterTo) {
+        when {
+            customActive -> {
+                var s = filterFrom.takeIf { it.isNotBlank() }?.let { strToMs(it) } ?: 0L
+                var e = filterTo.takeIf { it.isNotBlank() }?.let { strToMs(it) } ?: todayMs
+                if (s > e) { val t = s; s = e; e = t }
+                s to e
             }
-        ) {
-            DatePicker(state = datePickerState)
+            periodMode == AnalyticsPeriod.DAY -> anchorMs to anchorMs
+            periodMode == AnalyticsPeriod.WEEK -> (anchorMs - 6 * DAY_MS) to anchorMs
+            periodMode == AnalyticsPeriod.QUARTER -> {
+                val (qy, qm) = shiftMonths(selectedYear, selectedMonth + 1, -2)
+                dateToMs(qy, qm, 1) to monthEndMs
+            }
+            periodMode == AnalyticsPeriod.YEAR -> dateToMs(selectedYear, 1, 1) to dateToMs(selectedYear, 12, 31)
+            else -> monthStartMs to monthEndMs
+        }
+    }
+    val spanDays = ((winEndMs - winStartMs) / DAY_MS + 1).toInt().coerceAtLeast(1)
+    val prevEndMs = winStartMs - DAY_MS
+    val prevStartMs = winStartMs - spanDays * DAY_MS
+
+    // Chart-card window: 7D / 30D / 3M / 1Y ending at the analysis end.
+    val (chartStartMs, chartEndMs) = remember(chartRange, winEndMs) {
+        val (ey, em) = yearMonthOf(winEndMs)
+        when (chartRange) {
+            ChartRange.D7 -> (winEndMs - 6 * DAY_MS) to winEndMs
+            ChartRange.D30 -> (winEndMs - 29 * DAY_MS) to winEndMs
+            ChartRange.M3 -> {
+                val (sy, sm) = shiftMonths(ey, em, -2)
+                dateToMs(sy, sm, 1) to winEndMs
+            }
+            ChartRange.Y1 -> {
+                val (sy, sm) = shiftMonths(ey, em, -11)
+                dateToMs(sy, sm, 1) to winEndMs
+            }
         }
     }
 
-    LaunchedEffect(selectedMonthKey) {
-        onExpenseMonthSelected(selectedMonthKey)
+    // Months touched by analysis + previous + chart windows (expense lazy-load).
+    val windowMonthKeys = remember(winStartMs, winEndMs, prevStartMs, chartStartMs) {
+        monthKeysBetween(minOf(prevStartMs, chartStartMs), winEndMs)
+    }
+    LaunchedEffect(windowMonthKeys) {
+        windowMonthKeys.forEach { key ->
+            if (!state.monthlyExpenses.containsKey(key)) onExpenseMonthSelected(key)
+        }
     }
 
-    // ── Data Processing ──────────────────────────────────────────────────────
-    val monthSales = state.saleEntries.filter { 
-        if (filterDate != null) it.date == filterDate
-        else it.date.startsWith(selectedMonthKey) 
-    }
-    val todaySales = monthSales.filter { it.date == today.date.toString() }
+    // ── Single source of truth: figures derive from saleEntries + ────────────
+    // monthlyExpenses (+ movements for in/out) and recompute on any change.
+    fun salesIn(s: Long, e: Long): List<SaleEntry> =
+        state.saleEntries.filter { saleMs(it.date)?.let { ms -> ms in s..e } == true }
 
-    val todayRevenue = todaySales.sumOf { it.totalSelling }
-    val todayMargin  = todaySales.sumOf { it.totalMargin }
-    
-    val selectedExpense = state.monthlyExpenses[selectedMonthKey] 
-        ?: state.currentMonthExpense?.takeIf { it.month == selectedMonthKey } 
-        ?: MonthlyExpense(month = selectedMonthKey)
-        
-    val dailyExpenseFactor = selectedExpense.total / 30.0
-    val todayExpense = if (todaySales.isNotEmpty()) dailyExpenseFactor else 0.0
-    val todayProfit = todayMargin - todayExpense
+    fun monthlyTotal(key: String): Double =
+        state.monthlyExpenses[key]?.total
+            ?: state.currentMonthExpense?.takeIf { it.month == key }?.total
+            ?: state.lastMonthExpense?.takeIf { it.month == key }?.total
+            ?: 0.0
 
-    val totalRevenue = monthSales.sumOf { it.totalSelling }
-    val totalProfit  = monthSales.sumOf { it.totalMargin } - selectedExpense.total
-    val profitMargin = if (totalRevenue > 0) (totalProfit / totalRevenue) * 100 else 0.0
-    val prevMonthIndex = if (selectedMonth == 0) 11 else selectedMonth - 1
-    val prevYear = if (selectedMonth == 0) selectedYear - 1 else selectedYear
-    val prevMonthKey = "$prevYear-${(prevMonthIndex + 1).toString().padStart(2, '0')}"
-    val prevMonthSales = state.saleEntries.filter { it.date.startsWith(prevMonthKey) }
-    val prevMonthRevenue = prevMonthSales.sumOf { it.totalSelling }
-    val prevMonthExpense = state.monthlyExpenses[prevMonthKey]
-        ?: state.currentMonthExpense?.takeIf { it.month == prevMonthKey }
-        ?: MonthlyExpense(month = prevMonthKey)
-    val prevMonthProfit  = prevMonthSales.sumOf { it.totalMargin } - prevMonthExpense.total
-    val prevMonthMargin  = if (prevMonthRevenue > 0) (prevMonthProfit / prevMonthRevenue) * 100 else 0.0
-
-    val growthRate = if (prevMonthRevenue > 0) {
-        ((totalRevenue - prevMonthRevenue) / prevMonthRevenue) * 100
-    } else {
-        if (totalRevenue > 0) 100.0 else 0.0
+    fun expenseForRange(s: Long, e: Long): Double {
+        val (sy, sm) = yearMonthOf(s)
+        val (ey, em) = yearMonthOf(e)
+        var (y, m) = sy to sm
+        var total = 0.0
+        while (ymKey(y, m) <= ymKey(ey, em)) {
+            val mStart = dateToMs(y, m, 1)
+            val mEnd = dateToMs(y, m, daysInMonth(y, m))
+            val overlap = (minOf(e, mEnd) - maxOf(s, mStart)) / DAY_MS + 1
+            if (overlap > 0) total += monthlyTotal(ymKey(y, m)) * overlap / daysInMonth(y, m)
+            val (ny, nm) = shiftMonths(y, m, 1)
+            y = ny; m = nm
+        }
+        return total
     }
 
-    // Stock Activity (Case-Wise).
-    // Empty-can/case movements (customer returns, "Empty cases · Direct Entry",
-    // plant exchanges) are NOT stock coming in or going out — they are tracked
-    // separately by the "Empty Cases" figure — so they are excluded here to
-    // keep the case-wise inward/outward counts accurate.
-    val monthMvts = state.recentMovements.filter { it.createdAt?.startsWith(selectedMonthKey) == true }
-    val inward    = monthMvts.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { mvt ->
-        mvt.qty.toDouble()
+    // Day revenue caches for cost matching below.
+    val dateRevenueCache = remember(state.saleEntries) {
+        state.saleEntries.groupBy { it.date }
+            .mapValues { (_, rows) -> rows.sumOf { it.totalSelling } }
     }
-    val outward   = monthMvts.filter { it.type == "outward" && !it.source.isEmptyCansSource() }.sumOf { mvt ->
-        mvt.qty.toDouble()
+    val monthRevenueCache = remember(dateRevenueCache) {
+        dateRevenueCache.entries.groupBy({ it.key.take(7) }, { it.value })
+            .mapValues { (_, v) -> v.sum() }
     }
 
-    // Top Products
-    val topProducts = monthSales.groupBy { it.productName }
+    /**
+     * Day-wise expense for one calendar day.
+     *
+     * Expenses are recorded monthly, so each day bears its revenue share of
+     * its month's total (cost matched to the sales it supported): a day with
+     * half the month's revenue carries half the expense, a zero-sale day
+     * carries zero. Months with no revenue fall back to an even spread.
+     * Either way the days always sum back to the exact monthly total.
+     */
+    fun dailyExpense(dayMs: Long): Double {
+        val (y, m) = yearMonthOf(dayMs)
+        val key = ymKey(y, m)
+        val total = monthlyTotal(key)
+        if (total <= 0.0) return 0.0
+        val monthRev = monthRevenueCache[key] ?: 0.0
+        if (monthRev <= 0.0) return total / daysInMonth(y, m)
+        val dayRev = dateRevenueCache[msToDateStr(dayMs)] ?: 0.0
+        return total * dayRev / monthRev
+    }
+
+    fun expenseDaysIn(s: Long, e: Long): Double {
+        var total = 0.0
+        var d = s
+        while (d <= e) {
+            total += dailyExpense(d)
+            d += DAY_MS
+        }
+        return total
+    }
+
+    fun customersIn(s: Long, e: Long): Int =
+        state.saleEntries.filter { saleMs(it.date)?.let { ms -> ms in s..e } == true }
+            .map { it.customerName.trim().lowercase() }
+            .filter { it.isNotEmpty() }.distinct().size
+
+    fun movementsIn(s: Long, e: Long) = state.recentMovements.filter { m ->
+        val d = m.createdAt?.take(10) ?: return@filter false
+        val ms = strToMs(d)
+        ms in s..e && !m.source.isEmptyCansSource()
+    }
+
+    val wSales = salesIn(winStartMs, winEndMs)
+    val revenue = wSales.sumOf { it.totalSelling }
+    val gross = wSales.sumOf { it.totalMargin }
+    val expenses = expenseForRange(winStartMs, winEndMs)
+    val netProfit = revenue - expenses
+    val netMarginPct = if (revenue > 0) netProfit / revenue * 100.0 else 0.0
+    val customers = customersIn(winStartMs, winEndMs)
+
+    val pSales = salesIn(prevStartMs, prevEndMs)
+    val prevRevenue = pSales.sumOf { it.totalSelling }
+    val prevExpenses = expenseForRange(prevStartMs, prevEndMs)
+    val prevProfit = prevRevenue - prevExpenses
+    val prevNetMargin = if (prevRevenue > 0) prevProfit / prevRevenue * 100.0 else 0.0
+    val prevCustomers = customersIn(prevStartMs, prevEndMs)
+    val hasPrevBaseline = prevRevenue > 0.0 || prevExpenses > 0.0
+
+    val revenueGrowth = pctOrNull(revenue, prevRevenue)
+    val profitGrowth = pctOrNull(netProfit, prevProfit)
+    val expenseGrowth = pctOrNull(expenses, prevExpenses)
+    val customerGrowth = pctOrNull(customers.toDouble(), prevCustomers.toDouble())
+    val marginDeltaPp = if (hasPrevBaseline) netMarginPct - prevNetMargin else null
+    val prevRangeLabel = rangeLabel(prevStartMs, prevEndMs)
+    val windowLabel = rangeLabel(winStartMs, winEndMs)
+
+    // Chart buckets follow the chart-card range (independent of analysis window).
+    val buckets = remember(chartStartMs, chartEndMs) { buildBuckets(chartStartMs, chartEndMs) }
+    val bucketRevenue = buckets.map { b -> salesIn(b.startMs, b.endMs).sumOf { it.totalSelling } }
+    // Day-wise costs: each bucket sums its days' revenue-matched expenses,
+    // so the bars always reconcile exactly with the window totals.
+    val bucketExpenses = buckets.map { b -> expenseDaysIn(b.startMs, b.endMs) }
+    // Monthly buckets get the fixed Jan · Mar · May · … · Dec rhythm.
+    val chartMonthly = ((chartEndMs - chartStartMs) / DAY_MS + 1) > 92
+    val tickIndices = remember(buckets, chartMonthly) {
+        chartTickIndices(buckets.size, chartMonthly)
+    }
+
+    // Month-scoped expense record kept for the editor (edits one month).
+    val selectedExpense = state.monthlyExpenses[monthKey]
+        ?: state.currentMonthExpense?.takeIf { it.month == monthKey }
+        ?: MonthlyExpense(month = monthKey)
+
+    // Report helpers: product ranks + in/out for the window.
+    val wMovements = movementsIn(winStartMs, winEndMs)
+    val inwardUnits = wMovements.filter { it.type == "inward" }.sumOf { it.qty }
+    val outwardUnits = wMovements.filter { it.type == "outward" }.sumOf { it.qty }
+    val topSellers = wSales.groupBy { it.productName }
         .map { (name, entries) ->
-            ProductRank(
-                name     = name,
-                qty      = entries.sumOf { it.qty },
-                revenue  = entries.sumOf { it.totalSelling },
-                profit   = entries.sumOf { it.totalMargin }
-            )
+            TopProduct(name = name, qty = entries.sumOf { it.qty }, revenue = entries.sumOf { it.totalSelling })
         }
         .sortedByDescending { it.revenue }
         .take(5)
-
-    // Low Stock
-    val lowStock = state.stockItems.filter { it.stockAvailable <= 10 }
-
-    // Daily Performance Metrics
-    val dailySalesMap = monthSales.groupBy { it.date }
-    val daysInMonth = when (selectedMonth + 1) {
-        1, 3, 5, 7, 8, 10, 12 -> 31
-        4, 6, 9, 11 -> 30
-        2 -> if (selectedYear % 4 == 0 && (selectedYear % 100 != 0 || selectedYear % 400 == 0)) 29 else 28
-        else -> 30
-    }
-    val daysRange = (1..daysInMonth).toList() // Oldest to newest (chronological)
-    
-    val dailyRevenueList = daysRange.map { day ->
-        val dateStr = "$selectedMonthKey-${day.toString().padStart(2, '0')}"
-        dailySalesMap[dateStr]?.sumOf { it.totalSelling }?.toFloat() ?: 0f
-    }
-    val dailyRevenueLabels = daysRange.map { it.toString() }
-    
-    val dailyProfitList = (1..30).map { day ->
-        val dateStr = "$selectedMonthKey-${day.toString().padStart(2, '0')}"
-        val margin = dailySalesMap[dateStr]?.sumOf { it.totalMargin } ?: 0.0
-        val cost = if (margin > 0) dailyExpenseFactor else 0.0
-        (margin - cost).toFloat()
-    }
-    val dailyExpenseList = (1..30).map { day ->
-        val dateStr = "$selectedMonthKey-${day.toString().padStart(2, '0')}"
-        if (dailySalesMap[dateStr]?.isNotEmpty() == true) dailyExpenseFactor.toFloat() else 0f
-    }
-
-    var showClearConfirm by remember { mutableStateOf(false) }
-    var reportViewMode by remember { mutableStateOf("product") }
-    var transactionSortOrder by remember { mutableStateOf("oldest") }
-
-    if (showClearConfirm) {
-        AlertDialog(
-            onDismissRequest = { showClearConfirm = false },
-            title = { Text("Clear Stock & Revenue?", fontWeight = FontWeight.Bold) },
-            text = { Text("This will permanently delete all sale entries and stock movements. Product stock counts will be reset to zero.") },
-            confirmButton = {
-                Button(
-                    onClick = { 
-                        onClearData()
-                        showClearConfirm = false 
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Error)
-                ) { Text("Clear All", color = Color.White) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearConfirm = false }) { Text("Cancel") }
-            },
-            containerColor = SaaSColors.Surface,
-            shape = RoundedCornerShape(24.dp)
-        )
-    }
 
     // Expense Editing State
     var editingField by remember { mutableStateOf<String?>(null) }
@@ -254,169 +305,194 @@ fun ProfitDashboardScreen(
     var customName by remember { mutableStateOf("") }
     var customAmount by remember { mutableStateOf("") }
 
+    val onCategoryTap: (String) -> Unit = { field ->
+        editingField = field
+        editValue = when (field) {
+            "shopRent"      -> selectedExpense.shopRent.toInt().toString()
+            "adminSalary"   -> selectedExpense.adminSalary.toInt().toString()
+            "deliveryStaff" -> selectedExpense.deliveryStaff.toInt().toString()
+            "misc"          -> selectedExpense.miscellaneous.toInt().toString()
+            "bike"          -> selectedExpense.bikeExpense.toInt().toString()
+            else -> ""
+        }
+    }
+    val onDeleteField: (String) -> Unit = { field ->
+        val updated = when (field) {
+            "shopRent"      -> selectedExpense.copy(shopRent = 0.0)
+            "adminSalary"   -> selectedExpense.copy(adminSalary = 0.0)
+            "deliveryStaff" -> selectedExpense.copy(deliveryStaff = 0.0)
+            "misc"          -> selectedExpense.copy(miscellaneous = 0.0)
+            "bike"          -> selectedExpense.copy(bikeExpense = 0.0)
+            else -> {
+                val idx = field.substringAfter("custom_").toIntOrNull()
+                val list = selectedExpense.customExpensesList.toMutableList()
+                if (idx != null && idx in list.indices) {
+                    list.removeAt(idx)
+                    selectedExpense.copy(customExpenses = jsonEncode(list))
+                } else {
+                    selectedExpense
+                }
+            }
+        }
+        if (updated != selectedExpense) onExpenseSave(updated)
+    }
+
+    var reportNewestFirst by remember { mutableStateOf(false) }
+
     Box(modifier = Modifier.fillMaxSize().background(SaaSColors.Background)) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopBarSection(
-                title    = "Sales & Profit",
                 year     = selectedYear,
+                availableYears = availableYears,
                 onYearChange = { selectedYear = it },
                 onBack   = onBack,
-                onClear  = { showClearConfirm = true },
-                filterDate = filterDate,
-                onOpenPicker = { showDatePicker = true },
-                onClearFilter = { filterDate = null }
+                onOpenRange = { showRangeDialog = true },
+                customActive = customActive,
+                customLabel = if (customActive) rangeLabel(
+                    filterFrom.takeIf { it.isNotBlank() }?.let { strToMs(it) } ?: winStartMs,
+                    filterTo.takeIf { it.isNotBlank() }?.let { strToMs(it) } ?: winEndMs,
+                ) else "",
+                onClearCustom = { filterFrom = ""; filterTo = "" },
             )
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(
-                    bottom = contentPadding.calculateBottomPadding() + 80.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 32.dp,
                 )
             ) {
-                // ── Top Section ──────────────────────────────────────────────────
+                // ── Period presets ─────────────────────────────────────────
+                item {
+                    PeriodPills(
+                        selected = periodMode,
+                        customActive = customActive,
+                        onSelect = {
+                            periodMode = it
+                            filterFrom = ""
+                            filterTo = ""
+                        },
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
+
+                // ── Month anchor ───────────────────────────────────────────
                 item {
                     MonthSelectorRow(
                         months   = months,
                         selected = selectedMonth,
-                        onSelect = { selectedMonth = it }
+                        onSelect = {
+                            selectedMonth = it
+                            filterFrom = ""
+                            filterTo = ""
+                            periodMode = AnalyticsPeriod.MONTH
+                        }
                     )
                     Spacer(Modifier.height(16.dp))
                 }
 
-            // ── Business Summary Card ────────────────────────────────────────
-            item {
-                TodaySummaryCard(
-                    revenue  = totalRevenue,
-                    expenses = selectedExpense.total,
-                    profit   = totalProfit
-                )
-                Spacer(Modifier.height(20.dp))
-            }
-
-            // ── Revenue Analytics ────────────────────────────────────────────
-            item {
-                RevenueAnalyticsSection(
-                    totalRev     = totalRevenue,
-                    totalProfit  = totalProfit,
-                    margin       = profitMargin,
-                    growth       = growthRate,
-                    chartData    = dailyRevenueList,
-                    labels       = dailyRevenueLabels
-                )
-                Spacer(Modifier.height(24.dp))
-            }
-
-            // ── AI Business Insights ─────────────────────────────────────────
-            item {
-                AIInsightsSection(
-                    totalRevenue = totalRevenue,
-                    profitMargin = profitMargin,
-                    growthRate = growthRate,
-                    selectedExpense = selectedExpense,
-                    topProducts = topProducts,
-                    prevMonthRevenue = prevMonthRevenue,
-                    prevMonthMargin = prevMonthMargin
-                )
-                Spacer(Modifier.height(24.dp))
-            }
-
-            // ── Daily Performance (Sparklines) ───────────────────────────────
-            item {
-                DailyPerformanceSection(
-                    revData = dailyRevenueList,
-                    expData = dailyExpenseList,
-                    profitData = dailyProfitList,
-                    avgRev = if (dailyRevenueList.any { it > 0 }) dailyRevenueList.filter { it > 0 }.average() else 0.0,
-                    avgExp = dailyExpenseFactor,
-                    avgProfit = if (dailyProfitList.any { it != 0f }) dailyProfitList.filter { it != 0f }.average() else 0.0
-                )
-                Spacer(Modifier.height(24.dp))
-            }
-
-            // ── Stock Activity Section ───────────────────────────────────────
-            item {
-                StockActivitySection(inward = inward, outward = outward)
-                Spacer(Modifier.height(24.dp))
-            }
-
-            // ── Top Products Section ─────────────────────────────────────────
-            item {
-                TopProductsSection(products = topProducts)
-                Spacer(Modifier.height(24.dp))
-            }
-
-            // ── Low Stock Alerts ─────────────────────────────────────────────
-            if (lowStock.isNotEmpty()) {
+                // A. Business Summary ──────────────────────────────────────
                 item {
-                    LowStockAlertSection(items = lowStock)
+                    BusinessSummaryCard(
+                        windowLabel = windowLabel,
+                        revenue = revenue,
+                        expenses = expenses,
+                        profit = netProfit,
+                        marginPct = netMarginPct,
+                        growth = revenueGrowth,
+                        prevLabel = prevRangeLabel,
+                        hasPrevBaseline = hasPrevBaseline,
+                        prevRevenue = prevRevenue,
+                    )
+                    Spacer(Modifier.height(20.dp))
+                }
+
+                // B. Revenue Analytics ─────────────────────────────────────
+                item {
+                    RevenueAnalyticsSection(
+                        totalRev = revenue,
+                        totalProfit = netProfit,
+                        margin = netMarginPct,
+                        growth = revenueGrowth,
+                        profitGrowth = profitGrowth,
+                        chartRange = chartRange,
+                        onChartRangeChange = { chartRange = it },
+                        chartBuckets = buckets,
+                        chartRevenue = bucketRevenue,
+                        chartExpenses = bucketExpenses,
+                        tickIndices = tickIndices,
+                    )
                     Spacer(Modifier.height(24.dp))
                 }
-            }
 
-            // ── Expense Analytics ────────────────────────────────────────────
-            item {
-                ExpenseAnalyticsSection(
-                    expense = selectedExpense,
-                    onCategoryTap = { field ->
-                        editingField = field
-                        editValue = when (field) {
-                            "shopRent"      -> selectedExpense.shopRent.toInt().toString()
-                            "adminSalary"   -> selectedExpense.adminSalary.toInt().toString()
-                            "deliveryStaff" -> selectedExpense.deliveryStaff.toInt().toString()
-                            "misc"          -> selectedExpense.miscellaneous.toInt().toString()
-                            "bike"          -> selectedExpense.bikeExpense.toInt().toString()
-                            else -> ""
-                        }
-                    },
-                    onDeleteField = { field ->
-                        val updated = when (field) {
-                            "shopRent"      -> selectedExpense.copy(shopRent = 0.0)
-                            "adminSalary"   -> selectedExpense.copy(adminSalary = 0.0)
-                            "deliveryStaff" -> selectedExpense.copy(deliveryStaff = 0.0)
-                            "misc"          -> selectedExpense.copy(miscellaneous = 0.0)
-                            "bike"          -> selectedExpense.copy(bikeExpense = 0.0)
-                            else -> {
-                                val idx = field.substringAfter("custom_").toIntOrNull()
-                                val list = selectedExpense.customExpensesList.toMutableList()
-                                if (idx != null && idx in list.indices) {
-                                    list.removeAt(idx)
-                                    selectedExpense.copy(customExpenses = jsonEncode(list))
-                                } else {
-                                    selectedExpense
-                                }
-                            }
-                        }
-                        if (updated != selectedExpense) onExpenseSave(updated)
-                    }
-                )
-                Spacer(Modifier.height(24.dp))
-            }
+                // D. Report Summary (+ inward / outward) ───────────────────
+                item {
+                    ReportSummarySection(
+                        sales = wSales,
+                        inward = inwardUnits,
+                        outward = outwardUnits,
+                        windowLabel = windowLabel,
+                        newestFirst = reportNewestFirst,
+                        onOrderChange = { reportNewestFirst = it },
+                        onProductClick = onProductClick,
+                        onOpenTransactions = onOpenTransactions,
+                        movements = wMovements,
+                        products = state.productCategories,
+                    )
+                    Spacer(Modifier.height(24.dp))
+                }
 
-            // ── Report Summary ───────────────────────────────────────────────
-            item {
-                ReportSummarySection(
-                    sales = monthSales,
-                    employees = state.employees,
-                    viewMode = reportViewMode,
-                    onViewModeChange = { reportViewMode = it },
-                    sortOrder = transactionSortOrder,
-                    onSortOrderChange = { transactionSortOrder = it },
-                    onProductClick = onProductClick
-                )
+                // E. Expense Analytics (+ Add Expense) ─────────────────────
+                item {
+                    ExpenseAnalyticsSection(
+                        expense = selectedExpense,
+                        onCategoryTap = onCategoryTap,
+                        onDeleteField = onDeleteField,
+                        onAddExpense = {
+                            customName = ""
+                            customAmount = ""
+                            editingField = "new"
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                // AI Insights ──────────────────────────────────────────────
+                item {
+                    AIInsightsSection(
+                        revenue = revenue,
+                        profit = netProfit,
+                        marginPct = netMarginPct,
+                        revenueGrowth = revenueGrowth,
+                        profitGrowth = profitGrowth,
+                        expenses = expenses,
+                        topSellers = topSellers,
+                        customerGrowth = customerGrowth,
+                        hasPrevBaseline = hasPrevBaseline,
+                    )
+                    Spacer(Modifier.height(24.dp))
+                }
+
+                // Top Best Sellers ─────────────────────────────────────────
+                item {
+                    TopSellersSection(
+                        products = topSellers,
+                        onProductClick = onProductClick,
+                    )
+                }
             }
         }
-        }
-
-        // Quick Actions FAB
-        QuickActionsFAB(
-            onAddStock = onAddStock,
-            onAddProduct = onAddProduct,
-            onAddExpense = { editingField = "new" },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 20.dp, bottom = contentPadding.calculateBottomPadding() + 20.dp)
-        )
     }
 
+    // From/To range dialog (calendar entry point).
+    if (showRangeDialog) {
+        DateRangeDialog(
+            from = filterFrom,
+            to = filterTo,
+            onFromChange = { filterFrom = it },
+            onToChange = { filterTo = it },
+            onClear = { filterFrom = ""; filterTo = "" },
+            onDismiss = { showRangeDialog = false },
+        )
+    }
     // ── Edit Expense Dialog ──────────────────────────────────────────────────
     if (editingField != null) {
         val field = editingField!!
@@ -536,129 +612,857 @@ fun ProfitDashboardScreen(
     }
 }
 
-// ── Components ───────────────────────────────────────────────────────────────
+// ── Analytics window engine (all dynamic, single source of truth) ─────────
 
+private enum class AnalyticsPeriod { DAY, WEEK, MONTH, QUARTER, YEAR }
+
+/** Chart-card scope: independent 7D / 30D / 3M / 1Y window. */
+private enum class ChartRange(val label: String) {
+    D7("7D"), D30("30D"), M3("3M"), Y1("1Y"),
+}
+
+private data class TopProduct(val name: String, val qty: Int, val revenue: Double)
+private data class ChartBucket(val label: String, val startMs: Long, val endMs: Long)
+
+private const val DAY_MS = 86_400_000L
+
+private fun dateToMs(year: Int, month: Int, day: Int): Long =
+    LocalDate(year, month, day).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
+
+private fun msToDateStr(ms: Long): String {
+    val d = Instant.fromEpochMilliseconds(ms).toLocalDateTime(TimeZone.UTC).date
+    return "%04d-%02d-%02d".format(d.year, d.monthNumber, d.dayOfMonth)
+}
+
+private fun strToMs(s: String): Long {
+    val p = s.split("-")
+    return dateToMs(p[0].toInt(), p[1].toInt(), p[2].toInt())
+}
+
+private fun saleMs(date: String): Long? = try {
+    val p = date.split("-")
+    if (p.size < 3) null else dateToMs(p[0].toInt(), p[1].toInt(), p[2].toInt())
+} catch (_: Exception) {
+    null
+}
+
+private fun ymKey(year: Int, month: Int): String = "%04d-%02d".format(year, month)
+
+private fun daysInMonth(year: Int, month: Int): Int {
+    val leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    return when (month) {
+        1, 3, 5, 7, 8, 10, 12 -> 31
+        4, 6, 9, 11 -> 30
+        2 -> if (leap) 29 else 28
+        else -> 30
+    }
+}
+
+private fun shiftMonths(year: Int, month: Int, delta: Int): Pair<Int, Int> {
+    val total = (year * 12 + (month - 1)) + delta
+    return (total / 12) to (total % 12 + 1)
+}
+
+private fun yearMonthOf(ms: Long): Pair<Int, Int> {
+    val d = Instant.fromEpochMilliseconds(ms).toLocalDateTime(TimeZone.UTC).date
+    return d.year to d.monthNumber
+}
+
+private fun monthKeysBetween(startMs: Long, endMs: Long): List<String> {
+    val (sy, sm) = yearMonthOf(startMs)
+    val (ey, em) = yearMonthOf(endMs)
+    val out = mutableListOf<String>()
+    var (y, m) = sy to sm
+    while (ymKey(y, m) <= ymKey(ey, em)) {
+        out.add(ymKey(y, m))
+        val (ny, nm) = shiftMonths(y, m, 1)
+        y = ny; m = nm
+    }
+    return out
+}
+
+private val monthAbbr = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+private fun displayDate(ms: Long): String {
+    val d = Instant.fromEpochMilliseconds(ms).toLocalDateTime(TimeZone.UTC).date
+    return "${monthAbbr[d.monthNumber - 1]} ${d.dayOfMonth.toString().padStart(2, '0')}"
+}
+
+private fun displayDateFull(ms: Long): String {
+    val d = Instant.fromEpochMilliseconds(ms).toLocalDateTime(TimeZone.UTC).date
+    return "${monthAbbr[d.monthNumber - 1]} ${d.dayOfMonth}, ${d.year}"
+}
+
+/** Human window label: "Jan 2026", "Jan 5 – Jan 11", "Q1 2026" style range text. */
+private fun rangeLabel(startMs: Long, endMs: Long): String {
+    if (startMs == endMs) return displayDateFull(startMs)
+    val (sy, sm, sd) = Triple(
+        Instant.fromEpochMilliseconds(startMs).toLocalDateTime(TimeZone.UTC).date.year,
+        Instant.fromEpochMilliseconds(startMs).toLocalDateTime(TimeZone.UTC).date.monthNumber,
+        Instant.fromEpochMilliseconds(startMs).toLocalDateTime(TimeZone.UTC).date.dayOfMonth,
+    )
+    val (ey, em, ed) = Triple(
+        Instant.fromEpochMilliseconds(endMs).toLocalDateTime(TimeZone.UTC).date.year,
+        Instant.fromEpochMilliseconds(endMs).toLocalDateTime(TimeZone.UTC).date.monthNumber,
+        Instant.fromEpochMilliseconds(endMs).toLocalDateTime(TimeZone.UTC).date.dayOfMonth,
+    )
+    if (sy == ey && sm == em) {
+        if (sd == 1 && ed == daysInMonth(sy, sm)) return "${monthAbbr[sm - 1]} $sy"
+        return "${monthAbbr[sm - 1]} $sd–$ed, $sy"
+    }
+    return "${monthAbbr[sm - 1]} $sd – ${monthAbbr[em - 1]} $ed, $ey"
+}
+
+/** Buckets adapt to span: 1 day, daily (≤31d), weekly (≤92d), else monthly. */
+/**
+ * X-axis tick indices for a bucket count.
+ * Monthly buckets use the fixed Jan · Mar · May · Jul · Sep · Nov · Dec
+ * rhythm (even indices plus the last month); everything else shows at most
+ * 6 evenly spaced ticks so neighbours never collapse into each other.
+ */
+private fun chartTickIndices(count: Int, monthly: Boolean): List<Int> {
+    if (count <= 0) return emptyList()
+    if (monthly) {
+        return ((0 until count) step 2).toList().let {
+            if (it.last() == count - 1) it else it + (count - 1)
+        }
+    }
+    if (count <= 6) return (0 until count).toList()
+    val every = ((count - 1) / 5 + 1)
+    return ((0 until count) step every).toList().let {
+        if (it.last() == count - 1) it else it + (count - 1)
+    }
+}
+
+private fun buildBuckets(startMs: Long, endMs: Long): List<ChartBucket> {
+    val days = ((endMs - startMs) / DAY_MS + 1).toInt().coerceAtLeast(1)
+    if (days <= 1) return listOf(ChartBucket(displayDate(startMs), startMs, endMs))
+    if (days <= 31) {
+        return (0 until days).map { i ->
+            val ms = startMs + i * DAY_MS
+            val dd = Instant.fromEpochMilliseconds(ms).toLocalDateTime(TimeZone.UTC).date
+            val label = "${monthAbbr[dd.monthNumber - 1]} ${dd.dayOfMonth.toString().padStart(2, '0')}"
+            ChartBucket(label, ms, ms)
+        }
+    }
+    if (days <= 92) {
+        val out = mutableListOf<ChartBucket>()
+        var s = startMs
+        while (s <= endMs) {
+            val e = minOf(s + 6 * DAY_MS, endMs)
+            out.add(ChartBucket(displayDate(s), s, e))
+            s = e + DAY_MS
+        }
+        return out
+    }
+    val (sy, sm) = yearMonthOf(startMs)
+    val (ey, em) = yearMonthOf(endMs)
+    val sameYear = sy == ey
+    val out = mutableListOf<ChartBucket>()
+    var (y, m) = sy to sm
+    while (ymKey(y, m) <= ymKey(ey, em)) {
+        val label = if (sameYear) monthAbbr[m - 1] else "${monthAbbr[m - 1]} ${y.toString().takeLast(2)}"
+        out.add(ChartBucket(label, dateToMs(y, m, 1), dateToMs(y, m, daysInMonth(y, m))))
+        val (ny, nm) = shiftMonths(y, m, 1)
+        y = ny; m = nm
+    }
+    return out
+}
+
+/**
+ * Period-over-period change. Null = no previous baseline ("No previous
+ * data"), never a fabricated 100%. Both-zero reads as flat 0%.
+ */
+private fun pctOrNull(current: Double, previous: Double): Double? = when {
+    previous == 0.0 && current == 0.0 -> 0.0
+    previous == 0.0 -> null
+    else -> (current - previous) / previous * 100.0
+}
+
+private fun trim2(d: Double): String {
+    val r = round(d * 100.0) / 100.0
+    return if (r % 1.0 == 0.0) r.toInt().toString() else r.toString()
+}
+
+/** Indian compact currency: ₹950 · ₹12.5K · ₹86.99K · ₹1.72L · ₹12.4L · ₹1.2Cr. */
+private fun formatINR(v: Double): String {
+    if (v.isNaN()) return "₹0"
+    val a = abs(v)
+    val sign = if (v < 0) "-" else ""
+    return when {
+        a >= 1_00_00_000.0 -> "$sign₹${trim2(a / 1_00_00_000.0)}Cr"
+        a >= 1_00_000.0    -> "$sign₹${trim2(a / 1_00_000.0)}L"
+        a >= 1_000.0       -> "$sign₹${trim2(a / 1_000.0)}K"
+        else               -> "$sign₹${a.toLong()}"
+    }
+}
+
+/** "+12.5%" / "-3.2%" / "0.0%" — one decimal, sign always shown. */
+private fun formatSignedPct1(p: Double): String {
+    val r = round(abs(p) * 10.0) / 10.0
+    val s = if (r % 1.0 == 0.0) r.toInt().toString() else r.toString()
+    return (if (p >= 0) "+" else "-") + s + "%"
+}
+
+/**
+ * Clean Y-axis for a dataset: returns (ceiling, step) with 1/2/2.5/5 steps so
+ * ticks read like ₹20K · ₹40K · ₹60K · ₹80K, with headroom above the max.
+ * Fully data-driven — rescales from ₹0 to crores+.
+ */
+private fun niceYAxis(maxValue: Double, lines: Int = 5): Pair<Double, Double> {
+    val intervals = (lines - 1).coerceAtLeast(1)
+    val raw = maxValue * 1.12 / intervals
+    if (raw <= 0.0) return 100.0 to 25.0
+    val mag = Math.pow(10.0, floor(log10(raw)))
+    val norm = raw / mag
+    val step = when {
+        norm <= 1.0 -> 1.0
+        norm <= 2.0 -> 2.0
+        norm <= 2.5 -> 2.5
+        norm <= 5.0 -> 5.0
+        else -> 10.0
+    } * mag
+    var ceiling = step * ceil(maxValue / step)
+    if (ceiling <= maxValue) ceiling += step
+    return ceiling to step
+}
+
+// ── Top bar (white, calendar → range, dynamic years) ───────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TopBarSection(
-    title: String, 
-    year: Int, 
-    onYearChange: (Int) -> Unit, 
-    onBack: () -> Unit, 
-    onClear: () -> Unit,
-    filterDate: String? = null,
-    onOpenPicker: () -> Unit = {},
-    onClearFilter: () -> Unit = {}
+private fun BusinessSummaryCard(
+    windowLabel: String,
+    revenue: Double,
+    expenses: Double,
+    profit: Double,
+    marginPct: Double,
+    growth: Double?,
+    prevLabel: String,
+    hasPrevBaseline: Boolean,
+    prevRevenue: Double,
 ) {
-    var dropdownExpanded by remember { mutableStateOf(false) }
-    
-    Box(
+    val profitUp = profit >= 0.0
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SaaSColors.Surface)
-            .statusBarsPadding()
-            .padding(bottom = 12.dp)
+            .padding(horizontal = 20.dp)
+            .shadow(
+                6.dp, RoundedCornerShape(24.dp),
+                ambientColor = Color.Black.copy(alpha = 0.08f),
+                spotColor = Color.Black.copy(alpha = 0.08f),
+            )
+            .clip(RoundedCornerShape(24.dp))
+            .background(SaaSColors.PremiumCard)
+            .padding(20.dp),
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(38.dp).clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.AccountBalanceWallet, null,
+                    tint = Color.White, modifier = Modifier.size(19.dp)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Business Summary",
+                    color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    windowLabel,
+                    color = Color.White.copy(alpha = 0.60f), fontSize = 11.sp,
+                    maxLines = 1,
+                )
+            }
+            SummaryGrowthPill(growth = growth)
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        Text(
+            "NET PROFIT",
+            color = Color.White.copy(alpha = 0.60f),
+            fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp,
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                formatINR(profit),
+                color = Color.White,
+                fontSize = 32.sp, fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.8).sp, lineHeight = 36.sp,
+                maxLines = 1, modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                if (profitUp) Icons.AutoMirrored.Rounded.TrendingUp else Icons.AutoMirrored.Rounded.TrendingDown,
+                null,
+                tint = if (profitUp) Color(0xFF6EE7B7) else Color(0xFFFB7185),
+                modifier = Modifier.size(22.dp).padding(bottom = 6.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        if (hasPrevBaseline && growth != null) {
+            Text(
+                "${formatSignedPct1(growth)}  vs $prevLabel ${formatINR(prevRevenue)}",
+                color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
+                maxLines = 1,
+            )
+        } else {
+            Text(
+                "No previous data",
+                color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.12f)))
+        Spacer(Modifier.height(16.dp))
+
         Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            HeroSplitCard(
+                label = "Total Revenue",
+                value = formatINR(revenue),
+                modifier = Modifier.weight(1f),
+            )
+            HeroSplitCard(
+                label = "Total Expenses",
+                value = formatINR(expenses),
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                "Profitability Ratio",
+                color = Color.White.copy(alpha = 0.70f),
+                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "${trim2(marginPct.coerceIn(0.0, 100.0))}% net margin",
+                color = Color.White,
+                fontSize = 12.sp, fontWeight = FontWeight.Bold,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp)
-                .padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color.White.copy(alpha = 0.14f))
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .background(SaaSColors.SurfaceVar, RoundedCornerShape(10.dp))
-                        .border(1.dp, SaaSColors.Border, RoundedCornerShape(10.dp))
-                        .clickable(onClick = onBack),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = SaaSColors.TextPrimary, modifier = Modifier.size(18.dp))
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = title,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = SaaSColors.TextPrimary
-                    )
-                    Text(
-                        text = "Revenue and expense insights",
-                        fontSize = 12.sp,
-                        color = SaaSColors.TextMuted,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-            
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (filterDate != null) {
-                    Surface(
-                        onClick = onClearFilter,
-                        shape = RoundedCornerShape(10.dp),
-                        color = SaaSColors.Error.copy(alpha = 0.1f),
-                        border = BorderStroke(1.dp, SaaSColors.Error.copy(alpha = 0.3f)),
-                        modifier = Modifier.height(38.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(Icons.Rounded.EventAvailable, null, tint = SaaSColors.Error, modifier = Modifier.size(16.dp))
-                            Text(formatDateString(filterDate), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Error)
-                            Icon(Icons.Rounded.Close, null, tint = SaaSColors.Error, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                } else {
-                    IconButton(
-                        onClick = onOpenPicker,
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(SaaSColors.SurfaceVar, RoundedCornerShape(10.dp))
-                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(10.dp))
-                    ) {
-                        Icon(Icons.Rounded.CalendarToday, "Filter by Date", tint = SaaSColors.Primary, modifier = Modifier.size(18.dp))
-                    }
-                }
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth((marginPct / 100.0).toFloat().coerceIn(0f, 1f))
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFF5EEAD4))
+            )
+        }
+    }
+}
 
-//                IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
-//                    Icon(Icons.Rounded.DeleteSweep, "Clear Data", tint = SaaSColors.Error, modifier = Modifier.size(20.dp))
-//                }
-                Box {
-                    Surface(
-                        onClick = { dropdownExpanded = true },
-                        shape = RoundedCornerShape(10.dp),
-                        color = SaaSColors.Surface,
-                        border = BorderStroke(1.dp, SaaSColors.Border),
-                        modifier = Modifier.height(38.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("$year", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextSecondary)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = SaaSColors.TextSecondary, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                    DropdownMenu(
-                        expanded = dropdownExpanded,
-                        onDismissRequest = { dropdownExpanded = false },
-                        modifier = Modifier.background(SaaSColors.Surface)
-                    ) {
-                        listOf(2025, 2026, 2027).forEach { y ->
-                            DropdownMenuItem(
-                                text = { Text("$y", fontWeight = FontWeight.Medium, color = SaaSColors.TextPrimary) },
-                                onClick = {
-                                    onYearChange(y)
-                                    dropdownExpanded = false
+@Composable
+private fun SummaryGrowthPill(growth: Double?) {
+    if (growth == null) {
+        Text(
+            "—",
+            color = Color.White.copy(alpha = 0.60f),
+            fontSize = 13.sp, fontWeight = FontWeight.Bold,
+        )
+        return
+    }
+    val isPos = growth >= 0.0
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(100.dp))
+            .background(Color.White.copy(alpha = 0.14f))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            if (isPos) Icons.AutoMirrored.Rounded.TrendingUp else Icons.AutoMirrored.Rounded.TrendingDown,
+            null,
+            tint = if (isPos) Color(0xFF6EE7B7) else Color(0xFFFB7185),
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            formatSignedPct1(growth),
+            color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun HeroSplitCard(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = 0.08f))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(16.dp))
+            .padding(14.dp),
+    ) {
+        Text(
+            label,
+            color = Color.White.copy(alpha = 0.60f),
+            fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            value,
+            color = Color.White,
+            fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+            letterSpacing = (-0.4).sp,
+            maxLines = 1,
+        )
+    }
+}
+
+// ── B. Revenue Analytics (2×2 + grouped bars) ──────────────────────────────
+
+@Composable
+private fun RevenueAnalyticsSection(
+    totalRev: Double,
+    totalProfit: Double,
+    margin: Double,
+    growth: Double?,
+    profitGrowth: Double?,
+    chartRange: ChartRange,
+    onChartRangeChange: (ChartRange) -> Unit,
+    chartBuckets: List<ChartBucket>,
+    chartRevenue: List<Double>,
+    chartExpenses: List<Double>,
+    tickIndices: List<Int>,
+) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+        Text("Revenue Analytics", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
+
+        Spacer(Modifier.height(16.dp))
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MiniMetricCard(
+                label = "Total Revenue",
+                value = formatINR(totalRev),
+                growth = growth,
+                modifier = Modifier.weight(1f),
+            )
+            MiniMetricCard(
+                label = "Total Profit",
+                value = formatINR(totalProfit),
+                growth = profitGrowth,
+                isProfit = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MiniMetricCard(
+                label = "Profit Margin",
+                value = "${trim2(margin)}%",
+                growth = null,
+                modifier = Modifier.weight(1f),
+            )
+            MiniMetricCard(
+                label = "Growth",
+                value = if (growth == null) "—" else formatSignedPct1(growth),
+                growth = growth,
+                isGrowth = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        SaaSBarChart(
+            revenues = chartRevenue,
+            expenses = chartExpenses,
+            labels = chartBuckets.map { it.label },
+            tickIndices = tickIndices,
+            chartRange = chartRange,
+            onChartRangeChange = onChartRangeChange,
+            modifier = Modifier.fillMaxWidth().height(340.dp),
+        )
+    }
+}
+
+@Composable
+private fun MiniMetricCard(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    growth: Double? = null,
+    isProfit: Boolean = false,
+    isGrowth: Boolean = false,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = SaaSColors.Surface,
+        border = BorderStroke(1.dp, SaaSColors.Border)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(label, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = SaaSColors.TextMuted)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                value,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = when {
+                    isProfit -> SaaSColors.Primary
+                    isGrowth && (growth ?: 0.0) >= 0.0 -> SaaSColors.Success
+                    isGrowth -> SaaSColors.Error
+                    else -> SaaSColors.TextPrimary
+                },
+                maxLines = 1,
+            )
+            if (growth != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    formatSignedPct1(growth),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (growth >= 0) SaaSColors.Success else SaaSColors.Error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SaaSBarChart(
+    revenues: List<Double>,
+    expenses: List<Double>,
+    labels: List<String>,
+    tickIndices: List<Int>,
+    chartRange: ChartRange,
+    onChartRangeChange: (ChartRange) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val textMeasurer = rememberTextMeasurer()
+    var tapped by remember { mutableStateOf<Int?>(null) }
+    val maxV = (revenues + expenses).maxOrNull()?.takeIf { it > 0 } ?: 0.0
+    // Clean dynamic ticks (e.g. ₹20K · ₹40K · ₹60K · ₹80K), headroom included.
+    val (ceiling, step) = remember(maxV) { niceYAxis(maxV, lines = 5) }
+    // Axis ticks come pre-computed (Jan · Mar · May · … rhythm for months).
+    val labelIdx = remember(tickIndices, labels.size) {
+        tickIndices.filter { it in labels.indices }
+    }
+    // Measured gutter so long labels (₹78.1K) never clip.
+    val tickStyle = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.TextSecondary)
+    val axisTick = SaaSColors.Border
+    val density = LocalDensity.current
+    val gutterPx = remember(maxV) {
+        ((0..4).maxOf { textMeasurer.measure(formatINR(step * it), tickStyle).size.width } +
+            with(density) { 12.dp.toPx() })
+    }.coerceAtLeast(with(density) { 46.dp.toPx() })
+
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface),
+        border = BorderStroke(1.dp, SaaSColors.Border),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    ) {
+        Column(modifier = Modifier.padding(24.dp).fillMaxSize()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Revenue vs Expenses",
+                        color = SaaSColors.TextPrimary,
+                        fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.2).sp,
+                        maxLines = 1,
+                    )
+                    Text(
+                        "Track your sales and expenses over time",
+                        color = SaaSColors.TextMuted,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                ChartRangeSegment(
+                    selected = chartRange,
+                    onSelect = onChartRangeChange,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LegendDot(color = SaaSColors.Primary, label = "Revenue")
+                LegendDot(color = Color(0xFF64748B), label = "Expenses")
+            }
+            Spacer(Modifier.height(8.dp))
+            if (maxV <= 0.0) {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Text(
+                        "No revenue data for this period",
+                        color = SaaSColors.TextMuted, fontSize = 13.sp,
+                    )
+                }
+            } else {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .pointerInput(revenues, expenses, gutterPx) {
+                            detectTapGestures { offset ->
+                                val gutter = gutterPx
+                                val plotW = size.width - gutter
+                                val n = revenues.size
+                                if (n == 0 || offset.x < gutter) {
+                                    tapped = null
+                                } else {
+                                    val i = (((offset.x - gutter) / plotW) * n).toInt()
+                                        .coerceIn(0, n - 1)
+                                    tapped = if (tapped == i) null else i
                                 }
+                            }
+                        }
+                ) {
+                    val gutter = gutterPx
+                    val labelH = 26.dp.toPx()
+                    val topPad = 14.dp.toPx()
+                    val w = size.width
+                    val h = size.height
+                    val plotW = w - gutter
+                    val plotH = (h - labelH).coerceAtLeast(10f)
+                    val n = revenues.size
+                    if (n == 0) return@Canvas
+                    fun frac(v: Double) = (v / ceiling).toFloat().coerceIn(0f, 1f)
+                    fun xAt(i: Int) = if (n == 1) gutter + plotW / 2f
+                        else gutter + plotW * i / (n - 1).toFloat()
+                    fun yAt(v: Double) = topPad + plotH * (1f - frac(v))
+
+                    // Subtle dashed gridlines + clean ticks.
+                    val dash = PathEffect.dashPathEffect(floatArrayOf(5f, 5f))
+                    repeat(5) { i ->
+                        val value = step * i
+                        val y = yAt(value)
+                        drawLine(
+                            color = Color(0xFFE8EFED),
+                            start = Offset(gutter, y), end = Offset(w, y),
+                            strokeWidth = 1.dp.toPx(),
+                            pathEffect = dash,
+                        )
+                        drawLine(
+                            color = axisTick,
+                            start = Offset(gutter - 5.dp.toPx(), y), end = Offset(gutter, y),
+                            strokeWidth = 1.5.dp.toPx(),
+                            cap = StrokeCap.Round,
+                        )
+                        val layout = textMeasurer.measure(text = formatINR(value), style = tickStyle)
+                        drawText(
+                            textLayoutResult = layout,
+                            topLeft = Offset(gutter - 8.dp.toPx() - layout.size.width, y - layout.size.height / 2f),
+                        )
+                    }
+                    // Zero baseline, slightly stronger.
+                    val baseY = topPad + plotH
+                    drawLine(
+                        color = axisTick,
+                        start = Offset(gutter, baseY), end = Offset(w, baseY),
+                        strokeWidth = 1.5.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
+                    // Solid vertical axis line.
+                    drawLine(
+                        color = axisTick,
+                        start = Offset(gutter, topPad), end = Offset(gutter, baseY),
+                        strokeWidth = 1.5.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
+
+                    val revLine = SaaSColors.Primary
+                    val expLine = Color(0xFF64748B)
+                    val revPts = revenues.mapIndexed { i, v -> Offset(xAt(i), yAt(v)) }
+                    val expPts = expenses.mapIndexed { i, v -> Offset(xAt(i), yAt(v)) }
+
+                    // Translucent area fills under each line.
+                    drawPath(
+                        smoothLinePath(revPts, baseY),
+                        brush = Brush.verticalGradient(
+                            colors = listOf(revLine.copy(alpha = 0.16f), revLine.copy(alpha = 0.0f)),
+                            startY = topPad, endY = baseY,
+                        ),
+                    )
+                    drawPath(
+                        smoothLinePath(expPts, baseY),
+                        brush = Brush.verticalGradient(
+                            colors = listOf(expLine.copy(alpha = 0.12f), expLine.copy(alpha = 0.0f)),
+                            startY = topPad, endY = baseY,
+                        ),
+                    )
+                    // Smooth strokes, ~2.75px.
+                    drawPath(
+                        smoothLinePath(revPts, baseY, close = false),
+                        color = revLine,
+                        style = Stroke(width = 2.75.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
+                    drawPath(
+                        smoothLinePath(expPts, baseY, close = false),
+                        color = expLine,
+                        style = Stroke(width = 2.75.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
+
+                    // Small data-point markers (non-zero only, keeps flat stretches clean).
+                    revenues.forEachIndexed { i, v ->
+                        if (v <= 0.0 || tapped == i) return@forEachIndexed
+                        drawCircle(color = revLine, radius = 2.5.dp.toPx(), center = revPts[i])
+                    }
+                    expenses.forEachIndexed { i, v ->
+                        if (v <= 0.0 || tapped == i) return@forEachIndexed
+                        drawCircle(color = expLine, radius = 2.5.dp.toPx(), center = expPts[i])
+                    }
+
+                    // Tapped point: vertical dashed guide + enlarged white-ringed dots.
+                    tapped?.let { idx ->
+                        if (idx in revenues.indices) {
+                            val cx = xAt(idx)
+                            drawLine(
+                                color = SaaSColors.TextMuted.copy(alpha = 0.55f),
+                                start = Offset(cx, topPad), end = Offset(cx, baseY),
+                                strokeWidth = 1.dp.toPx(),
+                                pathEffect = dash,
+                            )
+                            listOf(revLine to revPts[idx], expLine to expPts[idx]).forEach { (col, pt) ->
+                                drawCircle(color = Color.White, radius = 6.dp.toPx(), center = pt)
+                                drawCircle(color = col, radius = 4.dp.toPx(), center = pt)
+                            }
+                            // White tooltip card with soft shadow.
+                            val titleLayout = textMeasurer.measure(
+                                text = labels.getOrElse(idx) { "" },
+                                style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = SaaSColors.TextPrimary),
+                            )
+                            val revLayout = textMeasurer.measure(
+                                text = "Revenue",
+                                style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Medium, color = SaaSColors.TextSecondary),
+                            )
+                            val revValLayout = textMeasurer.measure(
+                                text = formatINR(revenues[idx]),
+                                style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary),
+                            )
+                            val expLayout = textMeasurer.measure(
+                                text = "Expenses",
+                                style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Medium, color = SaaSColors.TextSecondary),
+                            )
+                            val expValLayout = textMeasurer.measure(
+                                text = formatINR(expenses.getOrElse(idx) { 0.0 }),
+                                style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary),
+                            )
+                            val profitVal = revenues[idx] - expenses.getOrElse(idx) { 0.0 }
+                            val profitDot = if (profitVal >= 0) SaaSColors.MintDeep else SaaSColors.Error
+                            val profitLayout = textMeasurer.measure(
+                                text = "Profit",
+                                style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Medium, color = SaaSColors.TextSecondary),
+                            )
+                            val profitValLayout = textMeasurer.measure(
+                                text = formatINR(profitVal),
+                                style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary),
+                            )
+                            val dotR = 3.dp.toPx()
+                            val rowH = maxOf(revLayout.size.height, revValLayout.size.height)
+                            val tw = maxOf(
+                                titleLayout.size.width.toFloat(),
+                                2 * dotR + 6.dp.toPx() + maxOf(revLayout.size.width, expLayout.size.width, profitLayout.size.width) +
+                                    8.dp.toPx() + maxOf(revValLayout.size.width, expValLayout.size.width, profitValLayout.size.width),
+                            ) + 24.dp.toPx()
+                            val th = titleLayout.size.height + 6.dp.toPx() + 3 * rowH + 2 * 3.dp.toPx() + 14.dp.toPx()
+                            val left = (cx - tw / 2f).coerceIn(0f, (w - tw).coerceAtLeast(0f))
+                            val top = (minOf(revPts[idx].y, expPts[idx].y) - th - 10.dp.toPx()).coerceAtLeast(0f)
+                            // Soft shadow + white body + hairline border.
+                            drawRoundRect(
+                                color = Color.Black.copy(alpha = 0.10f),
+                                topLeft = Offset(left, top + 2.dp.toPx()),
+                                size = Size(tw, th),
+                                cornerRadius = CornerRadius(12.dp.toPx()),
+                            )
+                            drawRoundRect(
+                                color = Color.White,
+                                topLeft = Offset(left, top),
+                                size = Size(tw, th),
+                                cornerRadius = CornerRadius(12.dp.toPx()),
+                            )
+                            drawRoundRect(
+                                color = SaaSColors.Border,
+                                topLeft = Offset(left, top),
+                                size = Size(tw, th),
+                                cornerRadius = CornerRadius(12.dp.toPx()),
+                                style = Stroke(width = 1.dp.toPx()),
+                            )
+                            var ty = top + 7.dp.toPx()
+                            drawText(textLayoutResult = titleLayout, topLeft = Offset(left + 12.dp.toPx(), ty))
+                            ty += titleLayout.size.height + 3.dp.toPx()
+                            drawCircle(color = revLine, radius = dotR, center = Offset(left + 12.dp.toPx() + dotR, ty + rowH / 2f))
+                            drawText(textLayoutResult = revLayout, topLeft = Offset(left + 12.dp.toPx() + 2 * dotR + 6.dp.toPx(), ty + (rowH - revLayout.size.height) / 2f))
+                            drawText(
+                                textLayoutResult = revValLayout,
+                                topLeft = Offset(left + tw - 12.dp.toPx() - revValLayout.size.width, ty + (rowH - revValLayout.size.height) / 2f),
+                            )
+                            ty += rowH + 3.dp.toPx()
+                            drawCircle(color = expLine, radius = dotR, center = Offset(left + 12.dp.toPx() + dotR, ty + rowH / 2f))
+                            drawText(textLayoutResult = expLayout, topLeft = Offset(left + 12.dp.toPx() + 2 * dotR + 6.dp.toPx(), ty + (rowH - expLayout.size.height) / 2f))
+                            drawText(
+                                textLayoutResult = expValLayout,
+                                topLeft = Offset(left + tw - 12.dp.toPx() - expValLayout.size.width, ty + (rowH - expValLayout.size.height) / 2f),
+                            )
+                            ty += rowH + 3.dp.toPx()
+                            drawCircle(color = profitDot, radius = dotR, center = Offset(left + 12.dp.toPx() + dotR, ty + rowH / 2f))
+                            drawText(textLayoutResult = profitLayout, topLeft = Offset(left + 12.dp.toPx() + 2 * dotR + 6.dp.toPx(), ty + (rowH - profitLayout.size.height) / 2f))
+                            drawText(
+                                textLayoutResult = profitValLayout,
+                                topLeft = Offset(left + tw - 12.dp.toPx() - profitValLayout.size.width, ty + (rowH - profitValLayout.size.height) / 2f),
                             )
                         }
+                    }
+
+                    // X labels with tick marks; tapped label highlighted teal.
+                    labelIdx.forEach { i ->
+                        val isTapped = tapped == i
+                        val cx = xAt(i)
+                        drawLine(
+                            color = if (isTapped) SaaSColors.MintDeep else axisTick,
+                            start = Offset(cx, baseY),
+                            end = Offset(cx, baseY + 4.dp.toPx()),
+                            strokeWidth = if (isTapped) 2.dp.toPx() else 1.5.dp.toPx(),
+                            cap = StrokeCap.Round,
+                        )
+                        val layout = textMeasurer.measure(
+                            text = labels.getOrElse(i) { "" },
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                fontWeight = if (isTapped) FontWeight.Bold else FontWeight.SemiBold,
+                                color = if (isTapped) SaaSColors.MintDeep else SaaSColors.TextSecondary,
+                            ),
+                        )
+                        drawText(
+                            textLayoutResult = layout,
+                            topLeft = Offset(
+                                (cx - layout.size.width / 2f).coerceIn(gutter, w - layout.size.width),
+                                baseY + 7.dp.toPx(),
+                            ),
+                        )
                     }
                 }
             }
@@ -666,12 +1470,837 @@ private fun TopBarSection(
     }
 }
 
+/** Smooth cubic path through points; optionally closed down to [baseY] for fills. */
+private fun smoothLinePath(pts: List<Offset>, baseY: Float, close: Boolean = true): Path {
+    val path = Path()
+    if (pts.isEmpty()) return path
+    if (pts.size == 1) {
+        if (!close) return path
+        path.moveTo(pts.first().x, pts.first().y)
+        path.lineTo(pts.first().x, baseY)
+        path.close()
+        return path
+    }
+    path.moveTo(pts.first().x, pts.first().y)
+    for (i in 1 until pts.size) {
+        val midX = (pts[i - 1].x + pts[i].x) / 2f
+        path.cubicTo(midX, pts[i - 1].y, midX, pts[i].y, pts[i].x, pts[i].y)
+    }
+    if (close) {
+        path.lineTo(pts.last().x, baseY)
+        path.lineTo(pts.first().x, baseY)
+        path.close()
+    }
+    return path
+}
 @Composable
-private fun MonthSelectorRow(months: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+private fun ChartRangeSegment(
+    selected: ChartRange,
+    onSelect: (ChartRange) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(100.dp))
+            .background(SaaSColors.SurfaceVar)
+            .border(1.dp, SaaSColors.Border, RoundedCornerShape(100.dp))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ChartRange.entries.forEach { range ->
+            val isSelected = range == selected
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(if (isSelected) SaaSColors.DeepTeal else Color.Transparent)
+                    .then(
+                        if (isSelected) Modifier.background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.16f),
+                                    Color.White.copy(alpha = 0.03f),
+                                    Color.Transparent,
+                                )
+                            )
+                        ) else Modifier
+                    )
+                    .clickable(onClickLabel = "Last ${range.label}", onClick = { onSelect(range) })
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    range.label,
+                    color = if (isSelected) Color.White else SaaSColors.TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LegendDot(color: Color, label: String) {    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = SaaSColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+// ── C. Daily Performance sparklines ────────────────────────────────────────
+
+// ── D. Report Summary (+ inward / outward) ────────────────────────────────
+
+@Composable
+private fun ReportSummarySection(
+    sales: List<SaleEntry>,
+    inward: Int,
+    outward: Int,
+    windowLabel: String,
+    newestFirst: Boolean,
+    onOrderChange: (Boolean) -> Unit,
+    onProductClick: (String) -> Unit,
+    onOpenTransactions: () -> Unit,
+    movements: List<StockMovement> = emptyList(),
+    products: List<ProductCategory> = emptyList(),
+) {
+    // Per-product window in/out (empty-can movements already excluded upstream).
+    val prodById = remember(products) { products.associateBy { it.id } }
+    val inwardById = remember(movements) {
+        movements.filter { it.type == "inward" }.groupBy { it.productId }
+            .mapValues { (_, rows) -> rows.sumOf { it.qty } }
+    }
+    val outwardById = remember(movements) {
+        movements.filter { it.type == "outward" }.groupBy { it.productId }
+            .mapValues { (_, rows) -> rows.sumOf { it.qty } }
+    }
+    fun displayNameOf(id: String?, fallback: String): String =
+        prodById[id]?.displayName?.takeIf { it.isNotBlank() }
+            ?: prodById[id]?.name?.takeIf { it.isNotBlank() }
+            ?: fallback
+    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+        Text("Report Summary", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
+        Spacer(Modifier.height(2.dp))
+        Text(windowLabel, fontSize = 12.sp, color = SaaSColors.TextMuted)
+        Spacer(Modifier.height(12.dp))
+
+        // Inward / outward strip for the window.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(SaaSColors.Surface)
+                .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            StockFlowCell(
+                label = "Inward",
+                value = "$inward units",
+                icon = Icons.Rounded.ArrowDownward,
+                tint = SaaSColors.MintDeep,
+                bg = SaaSColors.Mint.copy(alpha = 0.16f),
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                modifier = Modifier.width(1.dp).height(40.dp).align(Alignment.CenterVertically)
+                    .background(SaaSColors.Border)
+            )
+            StockFlowCell(
+                label = "Outward",
+                value = "$outward units",
+                icon = Icons.Rounded.ArrowUpward,
+                tint = SaaSColors.Error,
+                bg = SaaSColors.Error.copy(alpha = 0.10f),
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                modifier = Modifier.width(1.dp).height(40.dp).align(Alignment.CenterVertically)
+                    .background(SaaSColors.Border)
+            )
+            StockFlowCell(
+                label = "Net",
+                value = "${if (inward - outward >= 0) "+" else ""}${inward - outward} units",
+                icon = Icons.Rounded.Sync,
+                tint = SaaSColors.Primary,
+                bg = SaaSColors.Primary.copy(alpha = 0.10f),
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        if (sales.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SaaSColors.Surface)
+                    .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
+                    .padding(20.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("No sales in this period", color = SaaSColors.TextMuted, fontSize = 13.sp)
+            }
+        } else {
+            // Top products — one row per product, ranked by revenue.
+            Text(
+                "Top products",
+                fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                color = SaaSColors.TextPrimary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Ranked by revenue · tap a product for details",
+                fontSize = 11.sp, color = SaaSColors.TextMuted,
+            )
+            Spacer(Modifier.height(8.dp))
+            val ranked = sales.groupBy { it.productId }
+                .map { (id, entries) ->
+                    val name = displayNameOf(id, entries.firstOrNull()?.productName.orEmpty())
+                    val revenue = entries.sumOf { it.totalSelling }
+                    ReportProductRow(
+                        id = id,
+                        name = name,
+                        qty = entries.sumOf { it.qty },
+                        revenue = revenue,
+                        inward = inwardById[id] ?: 0,
+                        outward = outwardById[id] ?: 0,
+                    )
+                }
+                .sortedByDescending { it.revenue }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SaaSColors.Surface)
+                    .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
+                    .padding(vertical = 6.dp),
+            ) {
+                ranked.forEachIndexed { idx, row ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClickLabel = row.name, onClick = { onProductClick(row.name) })
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(SaaSColors.SurfaceVar),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "${idx + 1}",
+                                fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                color = SaaSColors.TextSecondary,
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                row.name.ifBlank { "Product" },
+                                fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                color = SaaSColors.TextPrimary, maxLines = 1,
+                            )
+                            Text(
+                                "${row.qty} units sold",
+                                fontSize = 11.sp, color = SaaSColors.TextMuted,
+                            )
+                            Text(
+                                "In ↑${row.inward} · Out ↓${row.outward}",
+                                fontSize = 11.sp, color = SaaSColors.TextMuted,
+                                maxLines = 1,
+                            )
+                        }
+                        Text(
+                            formatINR(row.revenue),
+                            fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            color = SaaSColors.TextPrimary,
+                        )
+                    }
+                    if (idx < ranked.lastIndex) {
+                        HorizontalDivider(
+                            color = SaaSColors.Border,
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Recent sales — latest individual transactions with full history one tap away.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Recent sales",
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        color = SaaSColors.TextPrimary,
+                    )
+                    Text(
+                        "Every sale in this period, latest first",
+                        fontSize = 11.sp, color = SaaSColors.TextMuted,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                ReportToggleChip(
+                    text = if (newestFirst) "Newest" else "Oldest",
+                    selected = true,
+                    icon = if (newestFirst) Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward,
+                    onClick = { onOrderChange(!newestFirst) },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            val recent = (if (newestFirst) sales.sortedByDescending { it.date } else sales.sortedBy { it.date })
+                .take(8)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SaaSColors.Surface)
+                    .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
+                    .padding(vertical = 6.dp),
+            ) {
+                recent.forEachIndexed { idx, s ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                s.productName.ifBlank { "Sale" },
+                                fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                color = SaaSColors.TextPrimary, maxLines = 1,
+                            )
+                            Text(
+                                "${s.date} · ${s.qty} units",
+                                fontSize = 11.sp, color = SaaSColors.TextMuted,
+                                maxLines = 1,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(SaaSColors.SurfaceVar)
+                                .padding(horizontal = 7.dp, vertical = 3.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "OUT",
+                                fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp,
+                                color = SaaSColors.TextSecondary,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            formatINR(s.totalSelling),
+                            fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            color = SaaSColors.MintDeep,
+                        )
+                    }
+                    if (idx < recent.lastIndex) {
+                        HorizontalDivider(
+                            color = SaaSColors.Border,
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                        )
+                    }
+                }
+                HorizontalDivider(
+                    color = SaaSColors.Border,
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClickLabel = "Open all transactions", onClick = onOpenTransactions)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        "View all in Transactions",
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        color = SaaSColors.Primary,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.Rounded.ChevronRight, null,
+                        tint = SaaSColors.Primary, modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class ReportProductRow(
+    val id: String?,
+    val name: String,
+    val qty: Int,
+    val revenue: Double,
+    val inward: Int,
+    val outward: Int,
+)
+
+@Composable
+private fun StockFlowCell(
+    label: String,
+    value: String,
+    icon: ImageVector,
+    tint: Color,
+    bg: Color,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(bg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(
+                label, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp, color = SaaSColors.TextMuted,
+            )
+            Text(
+                value, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold,
+                color = SaaSColors.TextPrimary, maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReportToggleChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) SaaSColors.DeepTeal else SaaSColors.SurfaceVar)
+            .border(
+                1.dp,
+                if (selected) SaaSColors.DeepTeal else SaaSColors.Border,
+                RoundedCornerShape(50)
+            )
+            .clickable(onClickLabel = text, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        if (icon != null) {
+            Icon(
+                icon, null,
+                tint = if (selected) Color.White else SaaSColors.TextSecondary,
+                modifier = Modifier.size(15.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+        Text(
+            text,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) Color.White else SaaSColors.TextSecondary,
+            maxLines = 1,
+        )
+    }
+}
+
+// ── AI Insights + Top Best Sellers (bottom) ────────────────────────────────
+
+@Composable
+private fun AIInsightsSection(
+    revenue: Double,
+    profit: Double,
+    marginPct: Double,
+    revenueGrowth: Double?,
+    profitGrowth: Double?,
+    expenses: Double,
+    topSellers: List<TopProduct>,
+    customerGrowth: Double?,
+    hasPrevBaseline: Boolean,
+) {
+    val insights = remember(revenue, profit, marginPct, revenueGrowth, profitGrowth, expenses, topSellers, customerGrowth, hasPrevBaseline) {
+        buildList {
+            if (revenueGrowth != null && revenueGrowth >= 0.5) {
+                add("Revenue is up ${formatSignedPct1(revenueGrowth)} versus the previous period.")
+            } else if (revenueGrowth != null && revenueGrowth <= -0.5) {
+                add("Revenue is down ${formatSignedPct1(revenueGrowth).drop(1)} versus the previous period — review pricing or stock.")
+            }
+            if (profitGrowth != null && profitGrowth >= 0.5) {
+                add("Profit is up ${formatSignedPct1(profitGrowth)} versus the previous period.")
+            } else if (profitGrowth != null && profitGrowth <= -0.5) {
+                add("Profit is down ${formatSignedPct1(profitGrowth).drop(1)} — check margins and spend.")
+            }
+            if (revenue > 0 && marginPct >= 40.0) {
+                add("Healthy ${trim2(marginPct)}% net margin — the business is in the green.")
+            } else if (revenue > 0 && marginPct < 0.0) {
+                add("Running at a loss — expenses exceed revenue this period.")
+            }
+            topSellers.firstOrNull()?.let {
+                add("${it.name} leads sales at ${formatINR(it.revenue)} (${it.qty} units).")
+            }
+            if (revenue > 0 && expenses > revenue) {
+                add("Expenses (${formatINR(expenses)}) exceed revenue — check discretionary spend.")
+            }
+            if (customerGrowth != null && customerGrowth >= 0.5) {
+                add("Customer base grew ${formatSignedPct1(customerGrowth)} versus the previous period.")
+            }
+            if (!hasPrevBaseline && revenue > 0) {
+                add("No previous-period data yet — trends will appear once history builds up.")
+            }
+            if (revenue <= 0.0) {
+                add("No sales recorded in this period yet.")
+            }
+        }.take(4)
+    }
+
+    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("AI Insights", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
+            Spacer(Modifier.width(8.dp))
+            AIInsightBadge(text = "${insights.size} tips", icon = Icons.Rounded.AutoAwesome, color = SaaSColors.Primary)
+        }
+        Spacer(Modifier.height(12.dp))
+        if (insights.isEmpty()) {
+            Text("Not enough data for insights yet.", fontSize = 13.sp, color = SaaSColors.TextMuted)
+        } else {
+            insights.forEach { tip ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(SaaSColors.Primary.copy(alpha = 0.07f))
+                        .border(1.dp, SaaSColors.Primary.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        Icons.Rounded.Lightbulb, null,
+                        tint = SaaSColors.Primary, modifier = Modifier.size(16.dp).padding(top = 2.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(tip, fontSize = 12.sp, lineHeight = 17.sp, color = SaaSColors.TextPrimary)
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun AIInsightBadge(text: String, icon: ImageVector, color: Color) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(color.copy(alpha = 0.12f))
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = color, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(text, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = color)
+    }
+}
+
+@Composable
+private fun TopSellersSection(
+    products: List<TopProduct>,
+    onProductClick: (String) -> Unit,
+) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+        Text("Top Best Sellers", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
+        Spacer(Modifier.height(4.dp))
+        Text("Ranked by revenue in this period", fontSize = 12.sp, color = SaaSColors.TextMuted)
+        Spacer(Modifier.height(12.dp))
+        if (products.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SaaSColors.Surface)
+                    .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
+                    .padding(20.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("No sales in this period", color = SaaSColors.TextMuted, fontSize = 13.sp)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SaaSColors.Surface)
+                    .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
+                    .padding(vertical = 6.dp),
+            ) {
+                products.forEachIndexed { idx, p ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClickLabel = p.name, onClick = { onProductClick(p.name) })
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (idx == 0) Color(0xFFFFF3E8) else SaaSColors.SurfaceVar
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (idx == 0) {
+                                Icon(Icons.Rounded.Star, null, tint = Color(0xFFF97316), modifier = Modifier.size(16.dp))
+                            } else {
+                                Text(
+                                    "${idx + 1}",
+                                    fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                    color = SaaSColors.TextSecondary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                p.name.ifBlank { "Product" },
+                                fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                color = SaaSColors.TextPrimary, maxLines = 1,
+                            )
+                            Text(
+                                "${p.qty} units sold",
+                                fontSize = 11.sp, color = SaaSColors.TextMuted,
+                            )
+                        }
+                        Text(
+                            formatINR(p.revenue),
+                            fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            color = SaaSColors.MintDeep,
+                        )
+                    }
+                    if (idx < products.lastIndex) {
+                        HorizontalDivider(
+                            color = SaaSColors.Border,
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+// ── Top bar (white, calendar → range, dynamic years) ───────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TopBarSection(
+    year: Int,
+    availableYears: List<Int>,
+    onYearChange: (Int) -> Unit,
+    onBack: () -> Unit,
+    onOpenRange: () -> Unit,
+    customActive: Boolean,
+    customLabel: String,
+    onClearCustom: () -> Unit,
+) {
+    var yearOpen by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(SaaSColors.Surface)
+            .statusBarsPadding()
+            .padding(bottom = 12.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(SaaSColors.SurfaceVar)
+                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(12.dp))
+                            .clickable(onClickLabel = "Back", onClick = onBack),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = SaaSColors.TextPrimary, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Sales & Profit",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = (-0.3).sp,
+                            color = SaaSColors.TextPrimary
+                        )
+                        Text(
+                            text = "Revenue and expense insights",
+                            fontSize = 12.sp,
+                            color = SaaSColors.TextMuted,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (customActive) SaaSColors.Primary.copy(alpha = 0.12f)
+                                else SaaSColors.SurfaceVar
+                            )
+                            .border(
+                                1.dp,
+                                if (customActive) SaaSColors.Primary else SaaSColors.Border,
+                                RoundedCornerShape(12.dp)
+                            )
+                            .clickable(onClickLabel = "Select date range", onClick = onOpenRange),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.CalendarToday, null, tint = SaaSColors.Primary, modifier = Modifier.size(18.dp))
+                    }
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(SaaSColors.SurfaceVar)
+                                .border(1.dp, SaaSColors.Border, RoundedCornerShape(12.dp))
+                                .clickable(onClickLabel = "Select year", onClick = { yearOpen = true })
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("$year", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = SaaSColors.TextSecondary, modifier = Modifier.size(16.dp))
+                        }
+                        DropdownMenu(
+                            expanded = yearOpen,
+                            onDismissRequest = { yearOpen = false },
+                        ) {
+                            availableYears.forEach { y ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "$y",
+                                            fontWeight = if (y == year) FontWeight.Bold else FontWeight.Normal,
+                                        )
+                                    },
+                                    trailingIcon = if (y == year) {
+                                        { Icon(Icons.Rounded.Check, null, modifier = Modifier.size(18.dp)) }
+                                    } else null,
+                                    onClick = { onYearChange(y); yearOpen = false },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (customActive) {
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(SaaSColors.Error.copy(alpha = 0.10f))
+                            .border(1.dp, SaaSColors.Error.copy(alpha = 0.30f), RoundedCornerShape(50))
+                            .clickable(onClickLabel = "Clear custom range", onClick = onClearCustom)
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.DateRange, null, tint = SaaSColors.Error, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(customLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Error)
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Rounded.Close, null, tint = SaaSColors.Error, modifier = Modifier.size(14.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Period presets: Day · Week · Month · Quarter · Year ────────────────────
+
+@Composable
+private fun PeriodPills(
+    selected: AnalyticsPeriod,
+    customActive: Boolean,
+    onSelect: (AnalyticsPeriod) -> Unit,
+) {
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 16.dp),
+            .graphicsLayer { alpha = if (customActive) 0.45f else 1f },
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(AnalyticsPeriod.entries) { mode ->
+            val isSelected = selected == mode
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(if (isSelected) SaaSColors.Primary else SaaSColors.Surface)
+                    .border(
+                        1.dp,
+                        if (isSelected) SaaSColors.Primary else SaaSColors.Border,
+                        RoundedCornerShape(50)
+                    )
+                    .clickable(onClickLabel = mode.label, onClick = { onSelect(mode) })
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    mode.label,
+                    fontSize = 13.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isSelected) Color.White else SaaSColors.TextMuted,
+                )
+            }
+        }
+    }
+}
+
+private val AnalyticsPeriod.label: String
+    get() = when (this) {
+        AnalyticsPeriod.DAY -> "Day"
+        AnalyticsPeriod.WEEK -> "Week"
+        AnalyticsPeriod.MONTH -> "Month"
+        AnalyticsPeriod.QUARTER -> "Quarter"
+        AnalyticsPeriod.YEAR -> "Year"
+    }
+
+// ── Month anchor pills ─────────────────────────────────────────────────────
+
+@Composable
+private fun MonthSelectorRow(months: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -681,7 +2310,7 @@ private fun MonthSelectorRow(months: List<String>, selected: Int, onSelect: (Int
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .background(if (isSelected) SaaSColors.Primary else Color.Transparent)
-                    .clickable { onSelect(idx) }
+                    .clickable(onClickLabel = months[idx], onClick = { onSelect(idx) })
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -696,642 +2325,187 @@ private fun MonthSelectorRow(months: List<String>, selected: Int, onSelect: (Int
     }
 }
 
+// ── From / To range dialog ─────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TodaySummaryCard(revenue: Double, expenses: Double, profit: Double) {
-    val marginPercentage = if (revenue > 0) ((profit / revenue) * 100).toInt().coerceIn(0, 100) else 0
-    val progressValue = if (revenue > 0) (profit / revenue).toFloat().coerceIn(0f, 1f) else 0f
-    
-    val netProfitColor = if (profit >= 0) Color(0xFF6EE7B7) else Color(0xFFFB7185)
-    val trendIcon = if (profit >= 0) Icons.AutoMirrored.Rounded.TrendingUp else Icons.AutoMirrored.Rounded.TrendingDown
-    
-    val backgroundBrush = if (NTColors.isDarkMode) {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color(0xFF1E293B), // Slate 800
-                Color(0xFF0F172A)  // Slate 900
-            )
-        )
-    } else {
-        Brush.linearGradient(
-            colors = listOf(
-                NTColors.Primary,
-                NTColors.PrimaryDark
-            )
-        )
-    }
+private fun DateRangeDialog(
+    from: String,
+    to: String,
+    onFromChange: (String) -> Unit,
+    onToChange: (String) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var picking by remember { mutableStateOf<String?>(null) }
 
-    val shadowColor = if (NTColors.isDarkMode) Color.Black else NTColors.Primary.copy(alpha = 0.2f)
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .shadow(
-                elevation = 12.dp,
-                shape = RoundedCornerShape(24.dp),
-                clip = false,
-                ambientColor = shadowColor,
-                spotColor = shadowColor
-            ),
-        shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-    ) {
-        Box(
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
             modifier = Modifier
-                .background(backgroundBrush)
-                .padding(24.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(SaaSColors.Surface)
+                .border(1.dp, SaaSColors.Border, RoundedCornerShape(24.dp))
+                .padding(20.dp),
         ) {
-            Column {
-                // Header row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Pulsing active dot
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .background(Color(0xFF34D399), CircleShape)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "BUSINESS SUMMARY",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White.copy(alpha = 0.7f),
-                            letterSpacing = 1.5.sp
-                        )
-                    }
-                    
-                    // Efficiency badge
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White.copy(alpha = 0.08f))
-                            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "Margin: $marginPercentage%",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-                
-                Spacer(Modifier.height(20.dp))
-                
-                // Net Profit Hero Metric
-                Column {
-                    Text(
-                        text = "Net Profit",
-                        fontSize = 13.sp,
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "₹${formatValue(profit)}",
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White,
-                            letterSpacing = (-0.5).sp
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Icon(
-                            imageVector = trendIcon,
-                            contentDescription = null,
-                            tint = netProfitColor,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-                
-                Spacer(Modifier.height(20.dp))
-                
-                // Divider
-                HorizontalDivider(color = Color.White.copy(alpha = 0.10f), thickness = 1.dp)
-                
-                Spacer(Modifier.height(20.dp))
-                
-                // Split columns for Revenue & Expenses
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Revenue Card
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color.White.copy(alpha = 0.05f))
-                            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(16.dp))
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .background(Color.White.copy(alpha = 0.12f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.ArrowDownward,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            }
-                            Text(
-                                text = "Revenue",
-                                fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "₹${formatValue(revenue)}",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
-                        )
-                    }
-                    
-                    // Expenses Card
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color.White.copy(alpha = 0.05f))
-                            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(16.dp))
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .background(Color.White.copy(alpha = 0.12f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.ArrowUpward,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            }
-                            Text(
-                                text = "Expenses",
-                                fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "₹${formatValue(expenses)}",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
-                        )
-                    }
-                }
-                
-                Spacer(Modifier.height(20.dp))
-                
-                // Efficiency bar description
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Profitability Ratio",
-                        fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.6f),
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = "$marginPercentage% net margin",
-                        fontSize = 11.sp,
-                        color = netProfitColor,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { progressValue },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(CircleShape),
-                    color = netProfitColor,
-                    trackColor = Color.White.copy(alpha = 0.15f)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RevenueAnalyticsSection(totalRev: Double, totalProfit: Double, margin: Double, growth: Double, chartData: List<Float>, labels: List<String>) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Revenue Analytics", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-            Spacer(Modifier.weight(1f))
-            Badge(containerColor = SaaSColors.Primary.copy(alpha = 0.1f), contentColor = SaaSColors.Primary) {
-                Text("Last 30 Days", modifier = Modifier.padding(4.dp))
-            }
-        }
-        
-        Spacer(Modifier.height(16.dp))
-        
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MiniMetricCard(label = "Total Revenue", value = "₹${formatValue(totalRev)}", modifier = Modifier.weight(1f))
-            MiniMetricCard(label = "Total Profit",  value = "₹${formatValue(totalProfit)}", modifier = Modifier.weight(1f), isProfit = true)
-        }
-        
-        Spacer(Modifier.height(12.dp))
-        
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MiniMetricCard(label = "Profit Margin", value = "${margin.toInt()}%", modifier = Modifier.weight(1f))
-            MiniMetricCard(label = "Growth",        value = "+$growth%", modifier = Modifier.weight(1f), isGrowth = true)
-        }
-        
-        Spacer(Modifier.height(24.dp))
-        
-        SaaSBarChart(points = chartData, labels = labels, modifier = Modifier.fillMaxWidth().height(180.dp))
-    }
-}
-
-@Composable
-private fun MiniMetricCard(label: String, value: String, modifier: Modifier = Modifier, isProfit: Boolean = false, isGrowth: Boolean = false) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = SaaSColors.Surface,
-        border = BorderStroke(1.dp, SaaSColors.Border)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(label, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = SaaSColors.TextMuted)
+            Text(
+                "Custom date range",
+                fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
+                color = SaaSColors.TextPrimary,
+            )
             Spacer(Modifier.height(4.dp))
             Text(
-                value, 
-                fontSize = 18.sp, 
-                fontWeight = FontWeight.ExtraBold, 
-                color = when {
-                    isProfit -> SaaSColors.Primary
-                    isGrowth -> SaaSColors.Success
-                    else -> SaaSColors.TextPrimary
+                "Analyse any duration — analytics compare against the previous equal window.",
+                fontSize = 12.sp, color = SaaSColors.TextSecondary, lineHeight = 17.sp,
+            )
+            Spacer(Modifier.height(16.dp))
+            RangeFieldRow(
+                label = "From",
+                value = from,
+                onClick = { picking = "from" },
+                onClear = { onFromChange("") },
+            )
+            Spacer(Modifier.height(10.dp))
+            RangeFieldRow(
+                label = "To",
+                value = to,
+                onClick = { picking = "to" },
+                onClear = { onToChange("") },
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TextButton(onClick = onClear, modifier = Modifier.weight(1f)) {
+                    Text("Clear", color = SaaSColors.TextSecondary, fontWeight = FontWeight.Bold)
                 }
-            )
-        }
-    }
-}
-
-@Composable
-private fun AIInsightsSection(
-    totalRevenue: Double,
-    profitMargin: Double,
-    growthRate: Double,
-    selectedExpense: MonthlyExpense,
-    topProducts: List<ProductRank>,
-    prevMonthRevenue: Double,
-    prevMonthMargin: Double
-) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Text("AI Business Insights", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-        Spacer(Modifier.height(12.dp))
-        
-        // 1. Growth Insight
-        val (growthText, growthIcon, growthColor) = if (prevMonthRevenue > 0) {
-            when {
-                growthRate >= 0.5 -> Triple(
-                    "Revenue increased ${growthRate.absoluteValue.toInt()}% vs last month",
-                    Icons.AutoMirrored.Rounded.TrendingUp,
-                    SaaSColors.Success
-                )
-                growthRate <= -0.5 -> Triple(
-                    "Revenue decreased ${growthRate.absoluteValue.toInt()}% vs last month",
-                    Icons.AutoMirrored.Rounded.TrendingDown,
-                    SaaSColors.Error
-                )
-                else -> Triple(
-                    "Revenue remained stable vs last month",
-                    Icons.Rounded.Remove,
-                    SaaSColors.TextSecondary
-                )
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
+                ) {
+                    Text("Apply", fontWeight = FontWeight.Bold)
+                }
             }
-        } else {
-            Triple(
-                "First month analytics: Revenue is ₹${totalRevenue.toInt()}",
-                Icons.AutoMirrored.Rounded.TrendingUp,
-                SaaSColors.Success
-            )
         }
-        AIInsightBadge(text = growthText, icon = growthIcon, color = growthColor)
-
-        // 2. Expense Insight
-        val expenseItems = listOf(
-            "Shop Rent" to selectedExpense.shopRent,
-            "Admin Salary" to selectedExpense.adminSalary,
-            "Delivery Staff" to selectedExpense.deliveryStaff,
-            "Miscellaneous" to selectedExpense.miscellaneous,
-            "Bike Expense" to selectedExpense.bikeExpense
-        ) + selectedExpense.customExpensesList.map { it.name to it.amount }
-        
-        val highestExpense = expenseItems.maxByOrNull { it.second }
-        if (selectedExpense.total > 0.0 && highestExpense != null && highestExpense.second > 0.0) {
-            val highestExpensePercent = (highestExpense.second / selectedExpense.total) * 100
-            AIInsightBadge(
-                text = "${highestExpense.first} is your highest expense (${highestExpensePercent.toInt()}%)",
-                icon = Icons.Rounded.PieChart,
-                color = SaaSColors.Warning
-            )
-        } else {
-            AIInsightBadge(
-                text = "No operational expenses recorded yet for this period",
-                icon = Icons.Rounded.PieChart,
-                color = SaaSColors.TextMuted
-            )
-        }
-
-        // 3. Top-selling product
-        if (topProducts.isNotEmpty()) {
-            val topProduct = topProducts.first()
-            AIInsightBadge(
-                text = "${topProduct.name} is the top-selling product (${topProduct.qty} sold)",
-                icon = Icons.Rounded.Star,
-                color = SaaSColors.Primary
-            )
-        } else {
-            AIInsightBadge(
-                text = "No sales entries registered for this period",
-                icon = Icons.Rounded.Star,
-                color = SaaSColors.TextMuted
-            )
-        }
-
-        // 4. Margin Insight
-        val marginChange = profitMargin - prevMonthMargin
-        val (marginText, marginIcon, marginColor) = if (prevMonthRevenue > 0) {
-            when {
-                marginChange >= 0.5 -> Triple(
-                    "Margin rose ${marginChange.absoluteValue.toInt()}% vs last month",
-                    Icons.AutoMirrored.Rounded.TrendingUp,
-                    SaaSColors.Success
-                )
-                marginChange <= -0.5 -> Triple(
-                    "Margin dropped ${marginChange.absoluteValue.toInt()}% vs last month",
-                    Icons.AutoMirrored.Rounded.TrendingDown,
-                    SaaSColors.Error
-                )
-                else -> Triple(
-                    "Margin remained stable vs last month",
-                    Icons.Rounded.Remove,
-                    SaaSColors.TextSecondary
-                )
-            }
-        } else {
-            Triple(
-                "Average profit margin is at a healthy ${profitMargin.toInt()}%",
-                Icons.AutoMirrored.Rounded.TrendingUp,
-                SaaSColors.Success
-            )
-        }
-        AIInsightBadge(text = marginText, icon = marginIcon, color = marginColor)
     }
-}
 
-@Composable
-private fun AIInsightBadge(text: String, icon: ImageVector, color: Color) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = color.copy(alpha = 0.08f)
-    ) {
-        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(text, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = SaaSColors.TextPrimary)
+    if (picking != null) {
+        val tag = picking!!
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = runCatching {
+                val cur = if (tag == "from") from else to
+                if (cur.isBlank()) null
+                else LocalDate.parse(cur).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
+            }.getOrNull(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { picking = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { millis ->
+                        val v = msToDateStr(millis)
+                        if (tag == "from") onFromChange(v) else onToChange(v)
+                    }
+                    picking = null
+                }) { Text("OK", color = SaaSColors.Primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { picking = null }) { Text("Cancel", color = SaaSColors.TextSecondary) }
+            },
+        ) {
+            DatePicker(state = pickerState)
         }
     }
 }
 
 @Composable
-private fun DailyPerformanceSection(
-    revData: List<Float>,
-    expData: List<Float>,
-    profitData: List<Float>,
-    avgRev: Double,
-    avgExp: Double,
-    avgProfit: Double
-) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Text("Daily Performance", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-        Spacer(Modifier.height(12.dp))
-        
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            DailySparkCard(
-                label = "Avg Revenue",
-                value = "₹${avgRev.toInt()}",
-                points = revData,
-                color = SaaSColors.Primary,
-                modifier = Modifier.weight(1f)
-            )
-            DailySparkCard(
-                label = "Avg Expense",
-                value = "₹${avgExp.toInt()}",
-                points = expData,
-                color = SaaSColors.Warning,
-                modifier = Modifier.weight(1f)
-            )
-            DailySparkCard(
-                label = "Avg Net Profit",
-                value = "₹${avgProfit.toInt()}",
-                points = profitData,
-                color = SaaSColors.Success,
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun DailySparkCard(
+private fun RangeFieldRow(
     label: String,
     value: String,
-    points: List<Float>,
-    color: Color,
-    modifier: Modifier = Modifier
+    onClick: () -> Unit,
+    onClear: () -> Unit,
 ) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = SaaSColors.Surface,
-        border = BorderStroke(1.dp, SaaSColors.Border)
+    val active = value.isNotBlank()
+    val display = if (active) isoToDisplay(value) else when (label) {
+        "From" -> "Start date"
+        else -> "End date"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (active) SaaSColors.Primary.copy(alpha = 0.08f) else SaaSColors.SurfaceVar)
+            .border(
+                1.dp,
+                if (active) SaaSColors.Primary else SaaSColors.Border,
+                RoundedCornerShape(12.dp)
+            )
+            .clickable(onClickLabel = "Pick $label date", onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(label, fontSize = 10.sp, color = SaaSColors.TextMuted)
-            Text(value, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = SaaSColors.TextPrimary)
-            Spacer(Modifier.height(12.dp))
-            
-            Canvas(modifier = Modifier.fillMaxWidth().height(30.dp)) {
-                if (points.isEmpty()) return@Canvas
-                val width = size.width
-                val height = size.height
-                val spacing = width / (points.size - 1)
-                val maxPoint = points.maxOrNull()?.coerceAtLeast(1f) ?: 1f
-                val minPoint = points.minOrNull() ?: 0f
-                val delta = (maxPoint - minPoint).coerceAtLeast(1f)
-                
-                val path = Path()
-                points.forEachIndexed { i, p ->
-                    val x = i * spacing
-                    val y = height - ((p - minPoint) / delta * height)
-                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                }
-                drawPath(path, color, style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round))
-            }
+        Icon(
+            Icons.Rounded.CalendarToday, null,
+            tint = if (active) SaaSColors.Primary else SaaSColors.TextMuted,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label.uppercase(),
+                fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                letterSpacing = 0.6.sp, color = SaaSColors.TextMuted,
+            )
+            Text(
+                display,
+                fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                color = if (active) SaaSColors.TextPrimary else SaaSColors.TextMuted,
+            )
+        }
+        if (active) {
+            Icon(
+                Icons.Rounded.Close, "Clear",
+                tint = SaaSColors.TextMuted,
+                modifier = Modifier.size(16.dp).clickable(onClick = onClear),
+            )
         }
     }
 }
 
-private fun formatCases(value: Double): String {
-    return if (value % 1.0 == 0.0) {
-        value.toInt().toString()
-    } else {
-        val rounded = (value * 10).toLong() / 10.0
-        if (rounded % 1.0 == 0.0) {
-            rounded.toInt().toString()
-        } else {
-            rounded.toString()
-        }
-    }
+private fun isoToDisplay(iso: String): String {
+    val p = iso.split("-")
+    if (p.size != 3) return iso
+    val m = monthAbbr.getOrElse((p[1].toIntOrNull() ?: 1) - 1) { "" }
+    return "$m ${p[2].toIntOrNull() ?: p[2]}, ${p[0]}"
 }
-
-@Composable
-private fun StockActivitySection(inward: Double, outward: Double) {
-    val net = inward - outward
-    val inwardStr = formatCases(inward)
-    val outwardStr = formatCases(outward)
-    val netStr = if (net >= 0) "+${formatCases(net)}" else formatCases(net)
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Text("Stock Activity (This Month)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-        Text("Movements logged by your team for the selected month", fontSize = 11.sp, color = SaaSColors.TextMuted)
-        Spacer(Modifier.height(12.dp))
-        
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StockKPICard(label = "Inward (Cases)", value = inwardStr, icon = Icons.Rounded.ArrowDownward, color = SaaSColors.Success, modifier = Modifier.weight(1f))
-            StockKPICard(label = "Outward (Cases)", value = outwardStr, icon = Icons.Rounded.ArrowUpward, color = SaaSColors.Error, modifier = Modifier.weight(1f))
-            StockKPICard(label = "Net (Cases)", value = netStr, icon = Icons.Rounded.Sync, color = SaaSColors.Primary, modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun StockKPICard(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = SaaSColors.Surface,
-        border = BorderStroke(1.dp, SaaSColors.Border)
-    ) {
-        Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier.size(24.dp).clip(CircleShape).background(color.copy(alpha = 0.1f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, null, tint = color, modifier = Modifier.size(13.dp))
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(value, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = SaaSColors.TextPrimary)
-            Text(label, fontSize = 10.sp, color = SaaSColors.TextMuted)
-        }
-    }
-}
-
-@Composable
-private fun TopProductsSection(products: List<ProductRank>) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Text("Top Best Sellers", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-        Spacer(Modifier.height(12.dp))
-        
-        products.forEachIndexed { index, product ->
-            Surface(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = SaaSColors.Surface,
-                border = BorderStroke(1.dp, SaaSColors.Border)
-            ) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier.size(32.dp).clip(CircleShape).background(SaaSColors.Primary.copy(alpha = 0.1f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("${index + 1}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Primary)
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(product.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-                        Text("${product.qty} units sold", fontSize = 11.sp, color = SaaSColors.TextMuted)
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("₹${product.revenue.toInt()}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-                        Text("+₹${product.profit.toInt()} profit", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Success)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LowStockAlertSection(items: List<StockItem>) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Text("Low Stock Alerts", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-        Spacer(Modifier.height(12.dp))
-        
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(items) { item ->
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = SaaSColors.ErrorLight,
-                    border = BorderStroke(1.dp, Color(0xFFFFC0C0))
-                ) {
-                    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Warning, null, tint = SaaSColors.Error, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(item.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Error)
-                        Spacer(Modifier.width(4.dp))
-                        Text("(${item.stockAvailable} left)", fontSize = 12.sp, color = SaaSColors.Error.copy(alpha = 0.7f))
-                    }
-                }
-            }
-        }
-    }
-}
+// ── Components ───────────────────────────────────────────────────────────────
 
 @Composable
 private fun ExpenseAnalyticsSection(
     expense: MonthlyExpense,
     onCategoryTap: (String) -> Unit,
-    onDeleteField: (String) -> Unit
+    onDeleteField: (String) -> Unit,
+    onAddExpense: () -> Unit = {},
 ) {
     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Text("Expense Analytics", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("Expense Analytics", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
+            Button(
+                onClick = onAddExpense,
+                colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier.heightIn(min = 40.dp),
+            ) {
+                Icon(Icons.Rounded.Add, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Add Expense", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
         Spacer(Modifier.height(16.dp))
         
         Surface(
@@ -1344,7 +2518,7 @@ private fun ExpenseAnalyticsSection(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Total Monthly", fontSize = 12.sp, color = SaaSColors.TextMuted)
-                        Text("₹${expense.total.toInt()}", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = SaaSColors.TextPrimary)
+                        Text(formatINR(expense.total), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = SaaSColors.TextPrimary)
                     }
                     SaaSPieChart(
                         data = listOf(
@@ -1415,556 +2589,7 @@ private fun ExpenseCategoryRow(
     }
 }
 
-@Composable
-private fun ReportSummarySection(
-    sales: List<SaleEntry>,
-    employees: List<EmployeeInfo>,
-    viewMode: String,
-    onViewModeChange: (String) -> Unit,
-    sortOrder: String,
-    onSortOrderChange: (String) -> Unit,
-    onProductClick: (String) -> Unit
-) {
-    val aggregated = remember(sales) {
-        sales.groupBy { it.productId }
-            .mapNotNull { (pid, entries) ->
-                if (pid.isEmpty()) return@mapNotNull null
-                val pName = entries.firstOrNull()?.productName ?: "Product"
-                val qty = entries.sumOf { it.qty }
-                val cost = entries.sumOf { it.purchasePricePerUnit * it.qty }
-                val sell = entries.sumOf { it.totalSelling }
-                val profit = entries.sumOf { it.totalMargin }
-                ProductSummary(pid, pName, qty, cost, sell, profit)
-            }
-            .sortedByDescending { it.profit }
-    }
-
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Report Summary", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-            Spacer(Modifier.weight(1f))
-            
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(SaaSColors.SurfaceVar)
-                    .padding(2.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (viewMode == "product") SaaSColors.Primary else Color.Transparent)
-                        .clickable { onViewModeChange("product") }
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        "By Product",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (viewMode == "product") Color.White else SaaSColors.TextSecondary
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (viewMode == "transaction") SaaSColors.Primary else Color.Transparent)
-                        .clickable { onViewModeChange("transaction") }
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        "Transactions",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (viewMode == "transaction") Color.White else SaaSColors.TextSecondary
-                    )
-                }
-            }
-        }
-        
-        Spacer(Modifier.height(12.dp))
-        
-        if (viewMode == "product") {
-            if (aggregated.isEmpty()) {
-                Text(
-                    "No sales entries logged for this period.",
-                    fontSize = 13.sp,
-                    color = SaaSColors.TextMuted,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
-                )
-            } else {
-                aggregated.forEach { p ->
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp)
-                            .clickable { onProductClick(p.id) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = SaaSColors.Surface,
-                        border = BorderStroke(1.dp, SaaSColors.Border)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            val productMargin = if (p.sell > 0) (p.profit / p.sell) * 100.0 else 0.0
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(p.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary,
-                                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Spacer(Modifier.width(8.dp))
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("${p.qty} sold", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Primary)
-                                    Text(if (productMargin > 0) "${formatMarginPct(productMargin)} margin" else "—",
-                                        fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.Success)
-                                }
-                            }
-                            Spacer(Modifier.height(12.dp))
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Column {
-                                    Text("Cost", fontSize = 10.sp, color = SaaSColors.TextMuted)
-                                    Text("₹${p.cost.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.TextSecondary)
-                                }
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Sales", fontSize = 10.sp, color = SaaSColors.TextMuted)
-                                    Text("₹${p.sell.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.TextSecondary)
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("Profit", fontSize = 10.sp, color = SaaSColors.TextMuted)
-                                    Text("₹${p.profit.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = SaaSColors.Success)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            val sortedSales = remember(sales, sortOrder) {
-                if (sortOrder == "newest") sales.sortedByDescending { it.date }
-                else sales.sortedBy { it.date }
-            }
-            
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "${sales.size} transactions logged",
-                    fontSize = 12.sp,
-                    color = SaaSColors.TextMuted,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(Modifier.weight(1f))
-                
-                Surface(
-                    onClick = {
-                        val nextOrder = if (sortOrder == "newest") "oldest" else "newest"
-                        onSortOrderChange(nextOrder)
-                    },
-                    shape = RoundedCornerShape(8.dp),
-                    color = SaaSColors.Surface,
-                    border = BorderStroke(1.dp, SaaSColors.Border)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (sortOrder == "newest") Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward,
-                            contentDescription = null,
-                            tint = SaaSColors.TextSecondary,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = if (sortOrder == "newest") "Date: Newest" else "Date: Oldest",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = SaaSColors.TextSecondary
-                        )
-                    }
-                }
-            }
-            
-            if (sortedSales.isEmpty()) {
-                Text(
-                    "No transactions logged for this period.",
-                    fontSize = 13.sp,
-                    color = SaaSColors.TextMuted,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
-                )
-            } else {
-                val employeeById = remember(employees) { employees.associateBy { it.id } }
-                sortedSales.forEach { tx ->
-                    val emp = employeeById[tx.employeeId]
-                    val shop = when {
-                        tx.shopId.isNotBlank() && !tx.shopId.equals("shop1", ignoreCase = true) -> tx.shopId
-                        emp?.shopName?.isNotBlank() == true -> emp.shopName
-                        else -> tx.shopId.ifBlank { "—" }
-                    }
-val marginColor = when {
-                        tx.totalMargin > 100 -> SaaSColors.Success
-                        tx.totalMargin > 0   -> SaaSColors.Primary
-                        else                 -> SaaSColors.Error
-                    }
-                    val marginPct = if (tx.totalSelling > 0) (tx.totalMargin / tx.totalSelling) * 100.0 else 0.0
-                    val cost = tx.purchasePricePerUnit * tx.qty
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 10.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        color = SaaSColors.Surface,
-                        border = BorderStroke(1.dp, SaaSColors.Border)
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(formatDateString(tx.date), fontSize = 11.sp, color = SaaSColors.TextMuted)
-                                Spacer(Modifier.weight(1f))
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(marginColor.copy(alpha = 0.12f))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text("${formatMarginPct(marginPct)} margin", fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold, color = marginColor)
-                                }
-                            }
-                            Spacer(Modifier.height(6.dp))
-                            Text(tx.customerName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(2.dp))
-                            Text("${tx.productName} · ${tx.qty} ${if (tx.qty == 1) "unit" else "units"}",
-                                fontSize = 12.sp, color = SaaSColors.TextSecondary,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(12.dp))
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Column {
-                                    Text("Cost", fontSize = 10.sp, color = SaaSColors.TextMuted)
-                                    Text("₹${cost.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.TextSecondary)
-                                }
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Sales", fontSize = 10.sp, color = SaaSColors.TextMuted)
-                                    Text("₹${tx.totalSelling.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SaaSColors.TextSecondary)
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("Profit", fontSize = 10.sp, color = SaaSColors.TextMuted)
-                                    Text("₹${tx.totalMargin.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = marginColor)
-                                }
-                            }
-                            Spacer(Modifier.height(10.dp))
-                            HorizontalDivider(color = SaaSColors.Border.copy(alpha = 0.5f))
-                            Spacer(Modifier.height(8.dp))
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Rounded.Person, null, tint = SaaSColors.TextMuted, modifier = Modifier.size(13.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(emp?.name ?: "—", fontSize = 11.sp, color = SaaSColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Rounded.Storefront, null, tint = SaaSColors.TextMuted, modifier = Modifier.size(13.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(shop, fontSize = 11.sp, color = SaaSColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun QuickActionsFAB(
-    onAddStock: () -> Unit,
-    onAddProduct: () -> Unit,
-    onAddExpense: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var expanded by remember { mutableStateOf(false) }
-    
-    Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        AnimatedVisibility(
-            visible = expanded,
-            enter   = expandVertically() + fadeIn(),
-            exit    = shrinkVertically() + fadeOut()
-        ) {
-            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                FABActionItem(label = "Add Stock", icon = Icons.Rounded.Inventory2, onClick = { onAddStock(); expanded = false })
-                FABActionItem(label = "Add Product", icon = Icons.Rounded.Category, onClick = { onAddProduct(); expanded = false })
-                FABActionItem(label = "Add Expense", icon = Icons.Rounded.Receipt, onClick = { onAddExpense(); expanded = false })
-                Spacer(Modifier.height(10.dp))
-            }
-        }
-        
-        FloatingActionButton(
-            onClick = { expanded = !expanded },
-            containerColor = SaaSColors.Primary,
-            contentColor = Color.White,
-            shape = CircleShape,
-            modifier = Modifier.size(60.dp)
-        ) {
-            Icon(
-                imageVector = if (expanded) Icons.Rounded.Close else Icons.Rounded.Add,
-                contentDescription = null,
-                modifier = Modifier.size(28.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun FABActionItem(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = SaaSColors.TextPrimary,
-            modifier = Modifier.padding(end = 12.dp)
-        ) {
-            Text(label, fontSize = 12.sp, color = Color.White, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-        }
-        FloatingActionButton(
-            onClick = onClick,
-            containerColor = SaaSColors.Surface,
-            contentColor = SaaSColors.Primary,
-            shape = CircleShape,
-            modifier = Modifier.size(44.dp)
-        ) {
-            Icon(icon, null, modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
 // ── Custom Charts ────────────────────────────────────────────────────────────
-
-@Composable
-private fun SaaSBarChart(points: List<Float>, labels: List<String>, modifier: Modifier = Modifier) {
-    val textMeasurer = rememberTextMeasurer()
-    val textStyle = TextStyle(
-        fontSize = 9.sp,
-        fontWeight = FontWeight.Medium,
-        color = SaaSColors.TextMuted
-    )
-    val maxPoint = points.maxOrNull()?.coerceAtLeast(1f) ?: 1f
-    
-    // Touch interaction state
-    var selectedIndex by remember { mutableStateOf(-1) }
-    val scrollState = rememberScrollState()
-
-    // 1. Remove tooltip when scrolling
-    LaunchedEffect(scrollState.isScrollInProgress) {
-        if (scrollState.isScrollInProgress) {
-            selectedIndex = -1
-        }
-    }
-
-    // 2. Auto-scroll to today's date on first load so user sees recent data first
-    LaunchedEffect(points) {
-        if (points.isNotEmpty()) {
-            scrollState.animateScrollTo(Int.MAX_VALUE)
-        }
-    }
-    
-    Row(modifier = modifier) {
-        // 1. Fixed Y-axis (Left)
-        Canvas(modifier = Modifier.width(52.dp).fillMaxHeight()) {
-            val height = size.height
-            val bottomPadding = 24.dp.toPx()
-            val topPadding = 16.dp.toPx()
-            val graphHeight = height - bottomPadding - topPadding
-            
-            val yTicks = 5
-            for (i in 0 until yTicks) {
-                val fraction = i.toFloat() / (yTicks - 1)
-                val y = height - bottomPadding - (fraction * graphHeight)
-                
-                val labelValue = fraction * maxPoint
-                val labelText = "₹${formatValue(labelValue.toDouble())}"
-                val textLayoutResult = textMeasurer.measure(labelText, style = textStyle)
-                
-                drawText(
-                    textLayoutResult = textLayoutResult,
-                    color = SaaSColors.TextMuted.copy(alpha = 0.8f),
-                    topLeft = Offset(
-                        x = size.width - textLayoutResult.size.width - 12.dp.toPx(),
-                        y = y - textLayoutResult.size.height / 2f
-                    )
-                )
-            }
-        }
-        
-        // 2. Scrollable Graph Area (Right)
-        val barWidth = 24.dp
-        val barGap = 8.dp
-        val stepWidth = barWidth + barGap
-        
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .horizontalScroll(scrollState)
-        ) {
-            val totalContentWidth = (points.size * stepWidth.value).dp
-            Canvas(
-                modifier = Modifier
-                    .width(totalContentWidth)
-                    .fillMaxHeight()
-                    .pointerInput(points) {
-                        detectTapGestures { offset ->
-                            val idx = (offset.x / stepWidth.toPx()).toInt()
-                            selectedIndex = if (idx in points.indices) {
-                                if (selectedIndex == idx) -1 else idx
-                            } else -1
-                        }
-                    }
-            ) {
-                val width = size.width
-                val height = size.height
-                
-                val bottomPadding = 24.dp.toPx()
-                val topPadding = 16.dp.toPx()
-                val graphHeight = height - bottomPadding - topPadding
-                
-                // Draw background horizontal grid lines
-                val yTicks = 5
-                for (i in 0 until yTicks) {
-                    val fraction = i.toFloat() / (yTicks - 1)
-                    val y = height - bottomPadding - (fraction * graphHeight)
-                    
-                    drawLine(
-                        color = SaaSColors.Border.copy(alpha = 0.3f),
-                        start = Offset(0f, y),
-                        end = Offset(width, y),
-                        strokeWidth = 0.8.dp.toPx()
-                    )
-                }
-                
-                points.forEachIndexed { i, p ->
-                    val barHeight = (p / maxPoint) * graphHeight
-                    val left = i * stepWidth.toPx() + (barGap.toPx() / 2f)
-                    val top = height - bottomPadding - barHeight
-                    val right = left + barWidth.toPx()
-                    val bottom = height - bottomPadding
-                    
-                    // Selected bar highlight (vertical background line)
-                    if (i == selectedIndex) {
-                        drawRect(
-                            color = SaaSColors.Primary.copy(alpha = 0.05f),
-                            topLeft = Offset(left - (barGap.toPx() / 4f), topPadding),
-                            size = Size(barWidth.toPx() + (barGap.toPx() / 2f), graphHeight)
-                        )
-                    }
-
-                    if (barHeight > 0f) {
-                        val path = Path().apply {
-                            addRoundRect(
-                                RoundRect(
-                                    left = left,
-                                    top = top,
-                                    right = right,
-                                    bottom = bottom,
-                                    topLeftCornerRadius = CornerRadius(6.dp.toPx()),
-                                    topRightCornerRadius = CornerRadius(6.dp.toPx()),
-                                    bottomLeftCornerRadius = CornerRadius(0f),
-                                    bottomRightCornerRadius = CornerRadius(0f)
-                                )
-                            )
-                        }
-                        
-                        // Professional Gradient
-                        val barColor = if (i == selectedIndex) SaaSColors.Primary else SaaSColors.Primary.copy(alpha = 0.85f)
-                        drawPath(
-                            path = path,
-                            brush = Brush.verticalGradient(
-                                colors = listOf(barColor, barColor.copy(alpha = 0.7f)),
-                                startY = top,
-                                endY = bottom
-                            )
-                        )
-                    }
-                    
-                    // X-Axis Labels
-                    val labelText = labels.getOrNull(i) ?: ""
-                    if (i == 0 || i == points.size - 1 || i % 5 == 0 || i == selectedIndex) {
-                        val textLayoutResult = textMeasurer.measure(labelText, style = textStyle.copy(
-                            fontWeight = if (i == selectedIndex) FontWeight.Bold else FontWeight.Medium,
-                            color = if (i == selectedIndex) SaaSColors.TextPrimary else SaaSColors.TextMuted
-                        ))
-                        drawText(
-                            textLayoutResult = textLayoutResult,
-                            topLeft = Offset(
-                                x = left + (barWidth.toPx() - textLayoutResult.size.width) / 2f,
-                                y = height - bottomPadding + 6.dp.toPx()
-                            )
-                        )
-                    }
-                }
-
-                // Draw Enhanced Tooltip
-                if (selectedIndex != -1 && selectedIndex in points.indices) {
-                    val p = points[selectedIndex]
-                    val barHeight = (p / maxPoint) * graphHeight
-                    val left = selectedIndex * stepWidth.toPx() + (barGap.toPx() / 2f)
-                    val top = height - bottomPadding - barHeight
-                    
-                    val tooltipText = "₹${formatValue(p.toDouble())}"
-                    val textResult = textMeasurer.measure(tooltipText, style = textStyle.copy(
-                        color = Color.White, 
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 10.sp
-                    ))
-                    
-                    val hPadding = 10.dp.toPx()
-                    val vPadding = 6.dp.toPx()
-                    val tooltipWidth = textResult.size.width + hPadding * 2
-                    val tooltipHeight = textResult.size.height + vPadding * 2
-                    
-                    val tooltipLeft = (left + barWidth.toPx() / 2f - tooltipWidth / 2f).coerceIn(4.dp.toPx(), width - tooltipWidth - 4.dp.toPx())
-                    val tooltipTop = (top - tooltipHeight - 10.dp.toPx()).coerceAtLeast(4.dp.toPx())
-                    
-                    // Tooltip Shadow (Simulated)
-                    drawRoundRect(
-                        color = Color.Black.copy(alpha = 0.15f),
-                        topLeft = Offset(tooltipLeft + 2.dp.toPx(), tooltipTop + 2.dp.toPx()),
-                        size = Size(tooltipWidth, tooltipHeight),
-                        cornerRadius = CornerRadius(8.dp.toPx())
-                    )
-
-                    // Tooltip Container
-                    drawRoundRect(
-                        color = Color(0xFF1E293B), // Dark blue-grey professional color
-                        topLeft = Offset(tooltipLeft, tooltipTop),
-                        size = Size(tooltipWidth, tooltipHeight),
-                        cornerRadius = CornerRadius(8.dp.toPx())
-                    )
-                    
-                    // Tooltip Arrow (Small triangle)
-                    val arrowPath = Path().apply {
-                        val centerX = left + barWidth.toPx() / 2f
-                        moveTo(centerX - 6.dp.toPx(), tooltipTop + tooltipHeight)
-                        lineTo(centerX + 6.dp.toPx(), tooltipTop + tooltipHeight)
-                        lineTo(centerX, tooltipTop + tooltipHeight + 6.dp.toPx())
-                        close()
-                    }
-                    drawPath(arrowPath, Color(0xFF1E293B))
-
-                    drawText(
-                        textLayoutResult = textResult,
-                        topLeft = Offset(
-                            x = tooltipLeft + (tooltipWidth - textResult.size.width) / 2f,
-                            y = tooltipTop + (tooltipHeight - textResult.size.height) / 2f
-                        )
-                    )
-                }
-                
-                // Base line
-                drawLine(
-                    color = SaaSColors.Border.copy(alpha = 0.8f),
-                    start = Offset(0f, height - bottomPadding),
-                    end = Offset(width, height - bottomPadding),
-                    strokeWidth = 1.2.dp.toPx()
-                )
-            }
-        }
-    }
-}
 
 @Composable
 private fun SaaSPieChart(data: List<Float>, modifier: Modifier = Modifier) {
@@ -1991,36 +2616,6 @@ private fun SaaSPieChart(data: List<Float>, modifier: Modifier = Modifier) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-private fun formatMarginPct(v: Double): String {
-    val rounded = round(v * 100.0) / 100.0
-    return if (rounded % 1.0 == 0.0) "${rounded.toInt()}%" else "${rounded}%"
-}
-
-private fun formatValue(v: Double): String = when {
-    v >= 100000.0 -> {
-        val l = v / 100000.0
-        val rounded = round(l * 100.0) / 100.0
-        val s = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
-        "${s}L"
-    }
-    v >= 1000.0 -> {
-        val k = v / 1000.0
-        val rounded = round(k * 100.0) / 100.0
-        val s = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
-        "${s}K"
-    }
-    else -> {
-        val rounded = round(v * 100.0) / 100.0
-        if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
-    }
-}
-
 private fun jsonEncode(list: List<CustomExpense>): String {
     return "[" + list.joinToString(",") { "{\"name\":\"${it.name}\",\"amount\":${it.amount}}" } + "]"
 }
-
-private fun formatDateString(dateStr: String): String =
-    com.example.ruwia.util.dbToDisplayDate(dateStr)
-
-private data class ProductRank(val name: String, val qty: Int, val revenue: Double, val profit: Double)
-private data class ProductSummary(val id: String, val name: String, val qty: Int, val cost: Double, val sell: Double, val profit: Double)

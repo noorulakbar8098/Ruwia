@@ -644,6 +644,21 @@ class EmployeeRepository {
     suspend fun addProductCategory(cat: ProductCategory): ProductCategory {
         val uid = currentUserId() ?: ""
         val tenantAdminId = getAdminIdForUser(uid) ?: uid
+        return try {
+            insertCategory(cat, tenantAdminId, includeAlert = true)
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (!msg.contains("column \"low_stock_alert\" does not exist", ignoreCase = true)) throw e
+            // Backend not migrated yet — save without the threshold (defaults to 5).
+            insertCategory(cat, tenantAdminId, includeAlert = false)
+        }
+    }
+
+    private suspend fun insertCategory(
+        cat: ProductCategory,
+        tenantAdminId: String,
+        includeAlert: Boolean,
+    ): ProductCategory {
         return supabase.from("product_categories").insert(
             buildJsonObject {
                 put("name", cat.name.trim())
@@ -652,6 +667,7 @@ class EmployeeRepository {
                 put("purchase_price", cat.purchasePrice)
                 put("default_sell_price", cat.defaultSellPrice)
                 put("stock_available", cat.stockAvailable)
+                if (includeAlert) put("low_stock_alert", cat.lowStockAlert)
                 put("is_active", cat.isActive)
                 put("admin_id", tenantAdminId)
             }

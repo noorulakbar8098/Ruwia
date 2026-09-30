@@ -10,7 +10,7 @@ import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
-import com.example.ruwia.domain.netStockPerProduct
+import com.example.ruwia.domain.netStockPerProductAllShops
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -308,6 +308,8 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         shopName: String,
         createdAt: String,
         emptyCans: Int = 0,
+        lowStockAlert: Int = 5,
+        notes: String = "",
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
@@ -336,14 +338,16 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                     purchasePrice = purchasePrice,
                     defaultSellPrice = sellingPrice,
                     stockAvailable = 0,
+                    lowStockAlert = lowStockAlert.coerceIn(0, 999),
                     isActive = true
                 )
                 repo.addProductCategory(newProduct).id
             }
 
+            val noteSuffix = notes.trim().take(120).takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
             val totalUnits = qty
             repo.addStockMovement(
-                source = "Inward Purchase",
+                source = "Inward Purchase$noteSuffix",
                 qty = totalUnits,
                 type = "inward",
                 shopName = shopName,
@@ -427,7 +431,8 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
     private fun EmployeeState.deriveStockFromMovements(): EmployeeState {
         if (shopMovements.isEmpty()) return this
 
-        val net = netStockPerProduct(shopMovements)
+        // Same bucketed source of truth as admin/inventory totals.
+        val net = netStockPerProductAllShops(shopMovements)
         val updatedProducts = productCategories.map { p ->
             p.copy(stockAvailable = net[p.id] ?: 0)
         }
