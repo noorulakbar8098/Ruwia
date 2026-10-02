@@ -124,17 +124,13 @@ private fun StockDashboardContent(
         deriveShopStockTotals(shopStocks, movements, stockItems, emptyCansBaseline.toDouble())
     }
 
+    // Single source of truth: bucketed per-shop sum so this header always
+    // equals Σ(shop tabs) and matches the inventory screen (see
+    // netStockPerProductAllShops). The old raw global net could read lower
+    // than the tabs when one shop went negative.
     val totalFull = remember(movements) {
-        movements
-            .filter { !it.source.isEmptyCansSource() }
-            .sumOf { m ->
-                when (m.type) {
-                    "inward"  ->  m.qty.toDouble()
-                    "outward" -> -m.qty.toDouble()
-                    else      ->  0.0
-                }
-            }
-            .coerceAtLeast(0.0)
+        com.example.ruwia.domain.netStockPerProductAllShops(movements)
+            .values.sumOf { it.toDouble() }
     }
     val totalEmpty = remember(movements, emptyCansBaseline) {
         movements

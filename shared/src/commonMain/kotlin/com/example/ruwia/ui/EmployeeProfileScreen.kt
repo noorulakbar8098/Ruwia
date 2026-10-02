@@ -19,8 +19,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ruwia.appVersionLabel
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 
@@ -114,22 +116,38 @@ fun EmployeeProfileScreen(
                     .padding(vertical = 8.dp),
             ) {
                 ProfileSectionHeader("INFORMATION")
-                ProfileInfoRow(icon = Icons.Rounded.Person, label = "Name", value = employeeName)
+                ProfileInfoRow(
+                    icon = Icons.Rounded.Person, label = "Name", value = employeeName,
+                    iconBg = NTColors.AccentLight, iconFg = NTColors.Accent,
+                )
                 if (email.isNotBlank()) {
                     ProfileDivider()
-                    ProfileInfoRow(icon = Icons.Rounded.Email, label = "Email", value = email)
+                    ProfileInfoRow(
+                        icon = Icons.Rounded.Email, label = "Email", value = email,
+                        iconBg = NTColors.InfoLight, iconFg = NTColors.InfoText,
+                    )
                 }
                 if (phone.isNotBlank()) {
                     ProfileDivider()
-                    ProfileInfoRow(icon = Icons.Rounded.Phone, label = "Phone", value = phone)
+                    ProfileInfoRow(
+                        icon = Icons.Rounded.Phone, label = "Phone", value = phone,
+                        iconBg = NTColors.SuccessLight, iconFg = NTColors.Success,
+                    )
                 }
                 if (shopInfo.isNotBlank()) {
                     ProfileDivider()
-                    ProfileInfoRow(icon = Icons.Rounded.Store, label = "Assigned Shop", value = shopInfo.replace("·", "•"))
+                    ProfileInfoRow(
+                        icon = Icons.Rounded.Store, label = "Assigned Shop",
+                        value = shopInfo.replace("·", "•"),
+                        iconBg = NTColors.WarningLight, iconFg = NTColors.Warning,
+                    )
                 }
                 if (role.isNotBlank()) {
                     ProfileDivider()
-                    ProfileInfoRow(icon = Icons.Rounded.Badge, label = "Role", value = role)
+                    ProfileInfoRow(
+                        icon = Icons.Rounded.Badge, label = "Role", value = role,
+                        iconBg = Color(0xFF1E153A), iconFg = Color(0xFF8B5CF6),
+                    )
                 }
             }
 
@@ -156,19 +174,33 @@ fun EmployeeProfileScreen(
                 )
 
                 ProfileDivider()
-                ProfileSettingRow(icon = Icons.Rounded.NotificationsActive, label = "Notifications") { }
-                ProfileDivider()
-                ProfileSettingRow(icon = Icons.Rounded.Help, label = "Help & Support") { }
+                ProfileSettingRow(
+                    icon = Icons.Rounded.NotificationsActive, label = "Notifications",
+                    iconBg = Color(0xFF1E153A), iconFg = Color(0xFF8B5CF6),
+                ) { }
                 ProfileDivider()
                 ProfileSettingRow(
-                    icon  = Icons.Rounded.ExitToApp,
-                    label = "Logout",
-                    tint  = Color(0xFFEF4444)
+                    icon = Icons.Rounded.Help, label = "Help & Support",
+                    iconBg = NTColors.InfoLight, iconFg = NTColors.InfoText,
+                ) { }
+                ProfileDivider()
+                ProfileSettingRow(
+                    icon   = Icons.Rounded.ExitToApp,
+                    label  = "Logout",
+                    iconBg = NTColors.ErrorLight,
+                    iconFg = NTColors.Error,
                 ) {
                     showLogoutDialog = true
                 }
             }
 
+            Text(
+                text = "Version ${appVersionLabel()}",
+                fontSize = 11.sp,
+                color = NTColors.TextTertiary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -363,11 +395,40 @@ private fun ProfileSectionHeader(title: String) {
     )
 }
 
+// ── Uniform colour-coded icon tile ──────────────────────────
+//  Same language as the admin Settings page: every row carries a tinted
+//  tile (bg + fg pair) instead of a plain grey glyph.
+
+@Composable
+private fun ProfileIconTile(
+    icon: ImageVector,
+    bg: Color,
+    fg: Color,
+    contentDescription: String? = null,
+) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = fg,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
 @Composable
 private fun ProfileInfoRow(
     icon: ImageVector,
     label: String,
-    value: String
+    value: String,
+    iconBg: Color,
+    iconFg: Color,
 ) {
     Row(
         modifier = Modifier
@@ -380,12 +441,7 @@ private fun ProfileInfoRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = NTColors.TextSecondary,
-                modifier = Modifier.size(18.dp)
-            )
+            ProfileIconTile(icon = icon, bg = iconBg, fg = iconFg)
             Text(
                 text = label,
                 fontSize = 13.sp,
@@ -406,7 +462,8 @@ private fun ProfileInfoRow(
 private fun ProfileSettingRow(
     icon: ImageVector,
     label: String,
-    tint: Color = NTColors.TextSecondary,
+    iconBg: Color,
+    iconFg: Color,
     onClick: () -> Unit
 ) {
     Row(
@@ -421,17 +478,12 @@ private fun ProfileSettingRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = tint,
-                modifier = Modifier.size(18.dp)
-            )
+            ProfileIconTile(icon = icon, bg = iconBg, fg = iconFg, contentDescription = label)
             Text(
                 text = label,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (tint != NTColors.TextSecondary) tint else NTColors.TextPrimary
+                color = if (iconFg != NTColors.TextSecondary) iconFg else NTColors.TextPrimary
             )
         }
         Icon(
@@ -473,21 +525,12 @@ private fun ProfileToggleRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Icon badge
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(NTColors.PrimaryLight),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    tint = NTColors.Primary,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+            ProfileIconTile(
+                icon = icon,
+                bg = NTColors.PrimaryLight,
+                fg = NTColors.Primary,
+                contentDescription = label,
+            )
             Column {
                 Text(
                     text = label,

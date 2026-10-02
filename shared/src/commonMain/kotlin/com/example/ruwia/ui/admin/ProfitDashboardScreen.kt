@@ -43,6 +43,7 @@ import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.*
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.GlossyTealBox
 import kotlin.time.Clock
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -65,7 +66,6 @@ private object SaaSColors {
     val Error         get() = NTColors.Error
     val ErrorLight    get() = NTColors.ErrorLight
     val Warning       get() = NTColors.Warning
-    val PremiumCard   get() = Brush.linearGradient(listOf(NTColors.Primary, NTColors.PrimaryDark))
     val DeepTeal      get() = Color(0xFF0F2E2C)
     val Mint          get() = Color(0xFF5EEAD4)
     val MintDeep      get() = Color(0xFF0B6B5E)
@@ -98,6 +98,7 @@ fun ProfitDashboardScreen(
     var filterFrom    by remember { mutableStateOf("") } // YYYY-MM-DD or ""
     var filterTo      by remember { mutableStateOf("") }
     var showRangeDialog by remember { mutableStateOf(false) }
+    var showPeriodSheet by remember { mutableStateOf(false) }
     // Chart-card scope: independent 7D / 30D / 3M / 1Y window ending at the analysis end.
     var chartRange    by remember { mutableStateOf(ChartRange.M3) }
 
@@ -106,7 +107,9 @@ fun ProfitDashboardScreen(
     val monthLen = daysInMonth(selectedYear, selectedMonth + 1)
     val monthStartMs = dateToMs(selectedYear, selectedMonth + 1, 1)
     val monthEndMs = dateToMs(selectedYear, selectedMonth + 1, monthLen)
-    val anchorMs = monthEndMs
+    // Never analyse future days: early in the month the month-end lies ahead,
+    // which pushed Day/Week windows into the future and rendered them empty.
+    val anchorMs = minOf(monthEndMs, todayMs)
 
     // Years actually present in the data (never hard-coded).
     val availableYears = remember(state.saleEntries, state.monthlyExpenses, today.year) {
@@ -132,7 +135,7 @@ fun ProfitDashboardScreen(
             periodMode == AnalyticsPeriod.WEEK -> (anchorMs - 6 * DAY_MS) to anchorMs
             periodMode == AnalyticsPeriod.QUARTER -> {
                 val (qy, qm) = shiftMonths(selectedYear, selectedMonth + 1, -2)
-                dateToMs(qy, qm, 1) to monthEndMs
+                dateToMs(qy, qm, 1) to anchorMs
             }
             periodMode == AnalyticsPeriod.YEAR -> dateToMs(selectedYear, 1, 1) to dateToMs(selectedYear, 12, 31)
             else -> monthStartMs to monthEndMs
@@ -196,9 +199,10 @@ fun ProfitDashboardScreen(
         return total
     }
 
-    // Day revenue caches for cost matching below.
+    // Day revenue caches for cost matching below (keyed by YYYY-MM-DD —
+    // older rows carry a " h:mm AM" suffix, so bucket on the day prefix).
     val dateRevenueCache = remember(state.saleEntries) {
-        state.saleEntries.groupBy { it.date }
+        state.saleEntries.groupBy { it.date.take(10) }
             .mapValues { (_, rows) -> rows.sumOf { it.totalSelling } }
     }
     val monthRevenueCache = remember(dateRevenueCache) {
@@ -337,7 +341,21 @@ fun ProfitDashboardScreen(
         if (updated != selectedExpense) onExpenseSave(updated)
     }
 
-    var reportNewestFirst by remember { mutableStateOf(false) }
+    // Human summary for the single period selector (preset or custom range).
+    val periodSummary: String = when {
+        customActive -> rangeLabel(
+            filterFrom.takeIf { it.isNotBlank() }?.let { strToMs(it) } ?: winStartMs,
+            filterTo.takeIf { it.isNotBlank() }?.let { strToMs(it) } ?: winEndMs,
+        )
+        periodMode == AnalyticsPeriod.DAY -> "Day · ${displayDateFull(anchorMs)}"
+        periodMode == AnalyticsPeriod.WEEK -> "Week · ${rangeLabel(anchorMs - 6 * DAY_MS, anchorMs)}"
+        periodMode == AnalyticsPeriod.QUARTER -> {
+            val q = selectedMonth / 3 + 1
+            "Quarter · Q$q $selectedYear"
+        }
+        periodMode == AnalyticsPeriod.YEAR -> "Year · $selectedYear"
+        else -> "Month · ${months[selectedMonth]} $selectedYear"
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(SaaSColors.Background)) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -360,31 +378,12 @@ fun ProfitDashboardScreen(
                     bottom = contentPadding.calculateBottomPadding() + 32.dp,
                 )
             ) {
-                // ── Period presets ─────────────────────────────────────────
+                // ── Analysis period (single selector) ──────────────────────
                 item {
-                    PeriodPills(
-                        selected = periodMode,
+                    PeriodSelectorButton(
+                        summary = periodSummary,
                         customActive = customActive,
-                        onSelect = {
-                            periodMode = it
-                            filterFrom = ""
-                            filterTo = ""
-                        },
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
-
-                // ── Month anchor ───────────────────────────────────────────
-                item {
-                    MonthSelectorRow(
-                        months   = months,
-                        selected = selectedMonth,
-                        onSelect = {
-                            selectedMonth = it
-                            filterFrom = ""
-                            filterTo = ""
-                            periodMode = AnalyticsPeriod.MONTH
-                        }
+                        onClick = { showPeriodSheet = true },
                     )
                     Spacer(Modifier.height(16.dp))
                 }
@@ -430,10 +429,7 @@ fun ProfitDashboardScreen(
                         inward = inwardUnits,
                         outward = outwardUnits,
                         windowLabel = windowLabel,
-                        newestFirst = reportNewestFirst,
-                        onOrderChange = { reportNewestFirst = it },
                         onProductClick = onProductClick,
-                        onOpenTransactions = onOpenTransactions,
                         movements = wMovements,
                         products = state.productCategories,
                     )
@@ -491,6 +487,30 @@ fun ProfitDashboardScreen(
             onToChange = { filterTo = it },
             onClear = { filterFrom = ""; filterTo = "" },
             onDismiss = { showRangeDialog = false },
+        )
+    }
+
+    // Analysis period sheet (single entry point for presets + anchor).
+    if (showPeriodSheet) {
+        AnalysisPeriodSheet(
+            periodMode = periodMode,
+            onSelectPeriod = {
+                periodMode = it
+                filterFrom = ""
+                filterTo = ""
+            },
+            months = months,
+            selectedMonth = selectedMonth,
+            onSelectMonth = {
+                selectedMonth = it
+                filterFrom = ""
+                filterTo = ""
+                periodMode = AnalyticsPeriod.MONTH
+            },
+            availableYears = availableYears,
+            selectedYear = selectedYear,
+            onSelectYear = { selectedYear = it },
+            onDismiss = { showPeriodSheet = false },
         )
     }
     // ── Edit Expense Dialog ──────────────────────────────────────────────────
@@ -640,8 +660,9 @@ private fun strToMs(s: String): Long {
 }
 
 private fun saleMs(date: String): Long? = try {
-    val p = date.split("-")
-    if (p.size < 3) null else dateToMs(p[0].toInt(), p[1].toInt(), p[2].toInt())
+    val day = date.take(10)
+    val p = day.split("-")
+    if (p.size < 3) null else dateToMs(p[0].toInt(), p[1].toInt(), p[2].takeWhile { it.isDigit() }.toInt())
 } catch (_: Exception) {
     null
 }
@@ -843,7 +864,9 @@ private fun BusinessSummaryCard(
     prevRevenue: Double,
 ) {
     val profitUp = profit >= 0.0
-    Column(
+    // Glass-dark hero: shared glossy container, white-glass inner elements.
+    GlossyTealBox(
+        shape = RoundedCornerShape(24.dp),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
@@ -851,11 +874,9 @@ private fun BusinessSummaryCard(
                 6.dp, RoundedCornerShape(24.dp),
                 ambientColor = Color.Black.copy(alpha = 0.08f),
                 spotColor = Color.Black.copy(alpha = 0.08f),
-            )
-            .clip(RoundedCornerShape(24.dp))
-            .background(SaaSColors.PremiumCard)
-            .padding(20.dp),
+            ),
     ) {
+        Column(modifier = Modifier.padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier.size(38.dp).clip(CircleShape)
@@ -973,6 +994,7 @@ private fun BusinessSummaryCard(
                     .clip(RoundedCornerShape(3.dp))
                     .background(Color(0xFF5EEAD4))
             )
+        }
         }
     }
 }
@@ -1559,10 +1581,7 @@ private fun ReportSummarySection(
     inward: Int,
     outward: Int,
     windowLabel: String,
-    newestFirst: Boolean,
-    onOrderChange: (Boolean) -> Unit,
     onProductClick: (String) -> Unit,
-    onOpenTransactions: () -> Unit,
     movements: List<StockMovement> = emptyList(),
     products: List<ProductCategory> = emptyList(),
 ) {
@@ -1732,111 +1751,7 @@ private fun ReportSummarySection(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
 
-            // Recent sales — latest individual transactions with full history one tap away.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Recent sales",
-                        fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                        color = SaaSColors.TextPrimary,
-                    )
-                    Text(
-                        "Every sale in this period, latest first",
-                        fontSize = 11.sp, color = SaaSColors.TextMuted,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                ReportToggleChip(
-                    text = if (newestFirst) "Newest" else "Oldest",
-                    selected = true,
-                    icon = if (newestFirst) Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward,
-                    onClick = { onOrderChange(!newestFirst) },
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            val recent = (if (newestFirst) sales.sortedByDescending { it.date } else sales.sortedBy { it.date })
-                .take(8)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(SaaSColors.Surface)
-                    .border(1.dp, SaaSColors.Border, RoundedCornerShape(16.dp))
-                    .padding(vertical = 6.dp),
-            ) {
-                recent.forEachIndexed { idx, s ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                s.productName.ifBlank { "Sale" },
-                                fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                color = SaaSColors.TextPrimary, maxLines = 1,
-                            )
-                            Text(
-                                "${s.date} · ${s.qty} units",
-                                fontSize = 11.sp, color = SaaSColors.TextMuted,
-                                maxLines = 1,
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(SaaSColors.SurfaceVar)
-                                .padding(horizontal = 7.dp, vertical = 3.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "OUT",
-                                fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.5.sp,
-                                color = SaaSColors.TextSecondary,
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            formatINR(s.totalSelling),
-                            fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                            color = SaaSColors.MintDeep,
-                        )
-                    }
-                    if (idx < recent.lastIndex) {
-                        HorizontalDivider(
-                            color = SaaSColors.Border,
-                            modifier = Modifier.padding(horizontal = 14.dp),
-                        )
-                    }
-                }
-                HorizontalDivider(
-                    color = SaaSColors.Border,
-                    modifier = Modifier.padding(horizontal = 14.dp),
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClickLabel = "Open all transactions", onClick = onOpenTransactions)
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    Text(
-                        "View all in Transactions",
-                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                        color = SaaSColors.Primary,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.Rounded.ChevronRight, null,
-                        tint = SaaSColors.Primary, modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
         }
     }
 }
@@ -1877,46 +1792,6 @@ private fun StockFlowCell(
                 color = SaaSColors.TextPrimary, maxLines = 1,
             )
         }
-    }
-}
-
-@Composable
-private fun ReportToggleChip(
-    text: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    icon: ImageVector? = null,
-) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (selected) SaaSColors.DeepTeal else SaaSColors.SurfaceVar)
-            .border(
-                1.dp,
-                if (selected) SaaSColors.DeepTeal else SaaSColors.Border,
-                RoundedCornerShape(50)
-            )
-            .clickable(onClickLabel = text, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        if (icon != null) {
-            Icon(
-                icon, null,
-                tint = if (selected) Color.White else SaaSColors.TextSecondary,
-                modifier = Modifier.size(15.dp),
-            )
-            Spacer(Modifier.width(4.dp))
-        }
-        Text(
-            text,
-            fontSize = 12.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = if (selected) Color.White else SaaSColors.TextSecondary,
-            maxLines = 1,
-        )
     }
 }
 
@@ -2118,12 +1993,19 @@ private fun TopBarSection(
     customLabel: String,
     onClearCustom: () -> Unit,
 ) {
-    var yearOpen by remember { mutableStateOf(false) }
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SaaSColors.Surface)
+            .background(SaaSColors.DeepTeal)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.16f),
+                        Color.White.copy(alpha = 0.03f),
+                        Color.Transparent,
+                    )
+                )
+            )
             .statusBarsPadding()
             .padding(bottom = 12.dp)
     ) {
@@ -2140,12 +2022,12 @@ private fun TopBarSection(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(SaaSColors.SurfaceVar)
-                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(12.dp))
+                            .background(Color.White.copy(alpha = 0.18f))
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(12.dp))
                             .clickable(onClickLabel = "Back", onClick = onBack),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = SaaSColors.TextPrimary, modifier = Modifier.size(20.dp))
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                     Spacer(Modifier.width(12.dp))
                     Column {
@@ -2154,69 +2036,14 @@ private fun TopBarSection(
                             fontSize = 20.sp,
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = (-0.3).sp,
-                            color = SaaSColors.TextPrimary
+                            color = Color.White
                         )
                         Text(
                             text = "Revenue and expense insights",
                             fontSize = 12.sp,
-                            color = SaaSColors.TextMuted,
+                            color = Color.White.copy(alpha = 0.65f),
                             fontWeight = FontWeight.Medium
                         )
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (customActive) SaaSColors.Primary.copy(alpha = 0.12f)
-                                else SaaSColors.SurfaceVar
-                            )
-                            .border(
-                                1.dp,
-                                if (customActive) SaaSColors.Primary else SaaSColors.Border,
-                                RoundedCornerShape(12.dp)
-                            )
-                            .clickable(onClickLabel = "Select date range", onClick = onOpenRange),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(Icons.Rounded.CalendarToday, null, tint = SaaSColors.Primary, modifier = Modifier.size(18.dp))
-                    }
-                    Box {
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(SaaSColors.SurfaceVar)
-                                .border(1.dp, SaaSColors.Border, RoundedCornerShape(12.dp))
-                                .clickable(onClickLabel = "Select year", onClick = { yearOpen = true })
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("$year", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary)
-                            Spacer(Modifier.width(4.dp))
-                            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = SaaSColors.TextSecondary, modifier = Modifier.size(16.dp))
-                        }
-                        DropdownMenu(
-                            expanded = yearOpen,
-                            onDismissRequest = { yearOpen = false },
-                        ) {
-                            availableYears.forEach { y ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            "$y",
-                                            fontWeight = if (y == year) FontWeight.Bold else FontWeight.Normal,
-                                        )
-                                    },
-                                    trailingIcon = if (y == year) {
-                                        { Icon(Icons.Rounded.Check, null, modifier = Modifier.size(18.dp)) }
-                                    } else null,
-                                    onClick = { onYearChange(y); yearOpen = false },
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -2247,83 +2074,7 @@ private fun TopBarSection(
 
 // ── Period presets: Day · Week · Month · Quarter · Year ────────────────────
 
-@Composable
-private fun PeriodPills(
-    selected: AnalyticsPeriod,
-    customActive: Boolean,
-    onSelect: (AnalyticsPeriod) -> Unit,
-) {
-    LazyRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer { alpha = if (customActive) 0.45f else 1f },
-        contentPadding = PaddingValues(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(AnalyticsPeriod.entries) { mode ->
-            val isSelected = selected == mode
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(if (isSelected) SaaSColors.Primary else SaaSColors.Surface)
-                    .border(
-                        1.dp,
-                        if (isSelected) SaaSColors.Primary else SaaSColors.Border,
-                        RoundedCornerShape(50)
-                    )
-                    .clickable(onClickLabel = mode.label, onClick = { onSelect(mode) })
-                    .padding(horizontal = 18.dp, vertical = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    mode.label,
-                    fontSize = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    color = if (isSelected) Color.White else SaaSColors.TextMuted,
-                )
-            }
-        }
-    }
-}
-
-private val AnalyticsPeriod.label: String
-    get() = when (this) {
-        AnalyticsPeriod.DAY -> "Day"
-        AnalyticsPeriod.WEEK -> "Week"
-        AnalyticsPeriod.MONTH -> "Month"
-        AnalyticsPeriod.QUARTER -> "Quarter"
-        AnalyticsPeriod.YEAR -> "Year"
-    }
-
 // ── Month anchor pills ─────────────────────────────────────────────────────
-
-@Composable
-private fun MonthSelectorRow(months: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(months.size) { idx ->
-            val isSelected = selected == idx
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (isSelected) SaaSColors.Primary else Color.Transparent)
-                    .clickable(onClickLabel = months[idx], onClick = { onSelect(idx) })
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    months[idx],
-                    fontSize   = 14.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    color      = if (isSelected) Color.White else SaaSColors.TextMuted
-                )
-            }
-        }
-    }
-}
 
 // ── From / To range dialog ─────────────────────────────────────────────────
 
@@ -2477,6 +2228,287 @@ private fun isoToDisplay(iso: String): String {
     if (p.size != 3) return iso
     val m = monthAbbr.getOrElse((p[1].toIntOrNull() ?: 1) - 1) { "" }
     return "$m ${p[2].toIntOrNull() ?: p[2]}, ${p[0]}"
+}
+
+// ── Analysis period: single selector button + sheet ────────────────────────
+
+@Composable
+private fun PeriodSelectorButton(
+    summary: String,
+    customActive: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(NTColors.Surface)
+            .border(1.dp, NTColors.Border, RoundedCornerShape(14.dp))
+            .clickable(onClickLabel = "Change analysis period", onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(
+                    if (customActive) NTColors.WarningLight
+                    else NTColors.PrimaryLight
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (customActive) Icons.Rounded.DateRange else Icons.Rounded.CalendarMonth,
+                contentDescription = null,
+                tint = if (customActive) NTColors.Warning else NTColors.Primary,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "ANALYSIS PERIOD",
+                fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp, color = NTColors.TextTertiary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                summary.ifBlank { "Select period" },
+                fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                color = NTColors.TextPrimary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            Icons.Rounded.KeyboardArrowDown, null,
+            tint = NTColors.TextTertiary, modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AnalysisPeriodSheet(
+    periodMode: AnalyticsPeriod,
+    onSelectPeriod: (AnalyticsPeriod) -> Unit,
+    months: List<String>,
+    selectedMonth: Int,
+    onSelectMonth: (Int) -> Unit,
+    availableYears: List<Int>,
+    selectedYear: Int,
+    onSelectYear: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = NTColors.Surface,
+        contentColor = NTColors.TextPrimary,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Analysis period",
+                        fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.2).sp, color = NTColors.TextPrimary,
+                    )
+                    Text(
+                        "Everything below follows this window",
+                        fontSize = 13.sp, color = NTColors.TextSecondary,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(NTColors.SurfaceVar)
+                        .border(1.dp, NTColors.Border, CircleShape)
+                        .clickable(onClickLabel = "Close", onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Close, null, tint = NTColors.TextSecondary, modifier = Modifier.size(18.dp))
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+            SheetSectionLabel("VIEW")
+            Spacer(Modifier.height(8.dp))
+            PeriodViewOption(
+                icon = Icons.Rounded.CalendarToday,
+                title = "Day",
+                subtitle = "Single day totals",
+                selected = periodMode == AnalyticsPeriod.DAY,
+                onClick = { onSelectPeriod(AnalyticsPeriod.DAY) },
+            )
+            PeriodViewOption(
+                icon = Icons.Rounded.DateRange,
+                title = "Week",
+                subtitle = "Rolling 7 days",
+                selected = periodMode == AnalyticsPeriod.WEEK,
+                onClick = { onSelectPeriod(AnalyticsPeriod.WEEK) },
+            )
+            PeriodViewOption(
+                icon = Icons.Rounded.CalendarMonth,
+                title = "Month",
+                subtitle = "Full calendar month",
+                selected = periodMode == AnalyticsPeriod.MONTH,
+                onClick = { onSelectPeriod(AnalyticsPeriod.MONTH) },
+            )
+            PeriodViewOption(
+                icon = Icons.Rounded.PieChart,
+                title = "Quarter",
+                subtitle = "3 months ending anchor",
+                selected = periodMode == AnalyticsPeriod.QUARTER,
+                onClick = { onSelectPeriod(AnalyticsPeriod.QUARTER) },
+            )
+            PeriodViewOption(
+                icon = Icons.Rounded.BarChart,
+                title = "Year",
+                subtitle = "Full calendar year",
+                selected = periodMode == AnalyticsPeriod.YEAR,
+                onClick = { onSelectPeriod(AnalyticsPeriod.YEAR) },
+            )
+
+            Spacer(Modifier.height(18.dp))
+            SheetSectionLabel("MONTH")
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                months.chunked(4).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { name ->
+                            val idx = months.indexOf(name)
+                            val isSelected = selectedMonth == idx
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) NTColors.Primary else NTColors.SurfaceVar)
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) NTColors.Primary else NTColors.Border,
+                                        RoundedCornerShape(12.dp),
+                                    )
+                                    .clickable(onClickLabel = name, onClick = { onSelectMonth(idx) })
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    name,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) Color.White else NTColors.TextSecondary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+            SheetSectionLabel("YEAR")
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(availableYears, key = { it }) { y ->
+                    val isSelected = selectedYear == y
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isSelected) NTColors.Primary else NTColors.SurfaceVar)
+                            .border(
+                                1.dp,
+                                if (isSelected) NTColors.Primary else NTColors.Border,
+                                RoundedCornerShape(12.dp),
+                            )
+                            .clickable(onClickLabel = "$y", onClick = { onSelectYear(y) })
+                            .padding(horizontal = 18.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "$y",
+                            fontSize = 13.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) Color.White else NTColors.TextSecondary,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(vertical = 14.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+            ) {
+                Text("Done", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SheetSectionLabel(text: String) {
+    Text(
+        text, color = NTColors.TextTertiary, fontSize = 11.sp,
+        fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp,
+    )
+}
+
+@Composable
+private fun PeriodViewOption(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) NTColors.PrimaryLight else Color.Transparent)
+            .clickable(onClickLabel = title, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (selected) NTColors.Primary else NTColors.SurfaceVar),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon, null,
+                tint = if (selected) Color.White else NTColors.TextSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title, fontSize = 14.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = NTColors.TextPrimary,
+            )
+            Text(subtitle, fontSize = 12.sp, color = NTColors.TextSecondary)
+        }
+        if (selected) {
+            Icon(Icons.Rounded.Check, null, tint = NTColors.Primary, modifier = Modifier.size(20.dp))
+        }
+    }
+    Spacer(Modifier.height(4.dp))
 }
 // ── Components ───────────────────────────────────────────────────────────────
 

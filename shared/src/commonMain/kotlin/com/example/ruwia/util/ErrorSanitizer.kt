@@ -13,15 +13,10 @@ package com.example.ruwia.util
 fun sanitizeError(raw: String?): String {
     if (raw == null) return "Something went wrong. Please try again."
 
-    var msg: String = raw
-    // Cut everything from the first technical marker onward (URL / Headers dump).
-    listOf("URL:", "Headers:", "Authorization=", "apikey=", "Http Method:").forEach { marker ->
-        val idx = msg.indexOf(marker)
-        if (idx >= 0) msg = msg.substring(0, idx)
-    }
-    // Defensively redact any bearer token / key that slipped through.
-    msg = Regex("Bearer\\s+[A-Za-z0-9._\\-]+").replace(msg, "Bearer ***")
-    msg = msg.trim().trim('(', '|', ' ', '\n', '\t', '-')
+    var msg: String = stripTechnicalDetails(raw)
+    // Diagnostic bundles composed by the app (service-key setup message)
+    // already contain safe text — never rewrite them.
+    if ("Installed key:" in msg) return msg
 
     // Friendlier, actionable copy for the most common backend errors.
     return when {
@@ -42,4 +37,21 @@ fun sanitizeError(raw: String?): String {
         msg.isBlank() -> "Couldn't reach the server. Please try again."
         else -> msg
     }
+}
+
+/**
+ * Removes secrets and HTTP dumps but keeps the original reason text, for
+ * diagnostics that must show what the server actually said.
+ */
+fun stripTechnicalDetails(raw: String?): String {
+    if (raw == null) return ""
+    var msg: String = raw
+    // Cut everything from the first technical marker onward (URL / Headers dump).
+    listOf("URL:", "Headers:", "Authorization=", "apikey=", "Http Method:").forEach { marker ->
+        val idx = msg.indexOf(marker)
+        if (idx >= 0) msg = msg.substring(0, idx)
+    }
+    // Defensively redact any bearer token / key that slipped through.
+    msg = Regex("Bearer\\s+[A-Za-z0-9._\\-]+").replace(msg, "Bearer ***")
+    return msg.trim().trim('(', '|', ' ', '\n', '\t', '-')
 }

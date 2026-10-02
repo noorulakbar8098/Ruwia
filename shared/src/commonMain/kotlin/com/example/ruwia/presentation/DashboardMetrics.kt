@@ -3,6 +3,7 @@ package com.example.ruwia.presentation
 import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.deriveShopStockTotals
+import com.example.ruwia.domain.effectiveTotalStock
 import com.example.ruwia.domain.isEmptyCansSource
 
 
@@ -137,8 +138,13 @@ fun AdminState.toDashboardMetrics(
     val activeSkus = productCategories.count { it.isActive }
     
     // ── Live Stock derivation ────────────────────────────────────────────────
-    // Taken directly from the stock_movements table (inward minus outward).
-    val totalStockUnits = productCategories.filter { it.isActive }.sumOf { it.stockAvailable.toDouble() }
+    // Single source of truth: movement log wins when rows exist, DB column is
+    // the fallback for products with no history yet (see effectiveStockMap).
+    // This keeps the home KPI identical to the inventory screens.
+    val totalStockUnits = effectiveTotalStock(
+        productCategories.filter { it.isActive },
+        recentMovements,
+    )
     
     // ── Live Empty Can derivation ────────────────────────────────────────────
     // Sum of all 'inward' movements where source starts with "Empty cans",
@@ -219,7 +225,7 @@ private fun List<SaleEntry>.seriesFor(
 
 /** Last 7 calendar days (oldest → newest) ending today. */
 private fun List<SaleEntry>.weekSeries(): ChartSeries {
-    val byDate = groupBy { it.date }
+    val byDate = groupBy { it.date.take(10) }
     val days = byDate.keys.sortedDescending().take(7).reversed()  // oldest → newest
     val raw = days.map { d -> byDate[d]!!.sumOf { it.totalSelling } }
     val labels = days.map { d ->
@@ -228,8 +234,11 @@ private fun List<SaleEntry>.weekSeries(): ChartSeries {
         val mon   = d.substring(5, 7).toMonthAbbr()
         "$day $mon"
     }.ifEmpty { listOf("—", "—", "—", "—", "—", "—", "—") }
-    val padded   = if (raw.size < 2) List(7) { 0.0 } else raw
-    val padLbls  = if (labels.size < 2) List(7) { "—" } else labels
+    // Left-pad short histories with zeros so a single sale day still renders
+    // its bar. The old `if (size < 2) all-zeros` wiped real data and left new
+    // businesses with a permanently empty 7-day graph.
+    val padded   = if (raw.size >= 7) raw else List(7 - raw.size) { 0.0 } + raw
+    val padLbls  = if (labels.size >= 7) labels else List(7 - labels.size) { "—" } + labels
     val rangeLbl = if (days.isNotEmpty()) "Last 7 days" else "Last 7 days"
     return ChartSeries(padded, padLbls, rangeLbl, padded.sum())
 }
@@ -326,7 +335,7 @@ private fun List<SaleEntry>.customerSeriesFor(
 
 /** Distinct customers per day for the last 7 days with sales. */
 private fun List<SaleEntry>.customerWeekSeries(): ChartSeries {
-    val byDate = groupBy { it.date }
+    val byDate = groupBy { it.date.take(10) }
     val days = byDate.keys.sortedDescending().take(7).reversed()
     val raw = days.map { d -> byDate[d]!!.distinctCustomerCount().toDouble() }
     val labels = days.map { d ->
@@ -334,8 +343,9 @@ private fun List<SaleEntry>.customerWeekSeries(): ChartSeries {
         val mon = d.substring(5, 7).toMonthAbbr()
         "$day $mon"
     }.ifEmpty { listOf("—", "—", "—", "—", "—", "—", "—") }
-    val padded = if (raw.size < 2) List(7) { 0.0 } else raw
-    val padLbls = if (labels.size < 2) List(7) { "—" } else labels
+    // Same left-pad as weekSeries: never wipe a single real data point.
+    val padded = if (raw.size >= 7) raw else List(7 - raw.size) { 0.0 } + raw
+    val padLbls = if (labels.size >= 7) labels else List(7 - labels.size) { "—" } + labels
     return ChartSeries(padded, padLbls, "Last 7 days", padded.sum())
 }
 
@@ -352,7 +362,7 @@ private fun List<SaleEntry>.customerMonthSeries(yearMonth: String): ChartSeries 
     )
     val nDays = daysInMonth(year, month)
     val mAbbr = monthAbbr(month)
-    val byDate = groupBy { it.date }
+    val byDate = groupBy { it.date.take(10) }
     val raw = (1..nDays).map { d ->
         val key = "$yearMonth-${d.toString().padStart(2, '0')}"
         byDate[key]?.distinctCustomerCount()?.toDouble() ?: 0.0
@@ -408,8 +418,8 @@ private fun List<SaleEntry>.distinctCustomersForRange(
     currentYearMonth: String,
 ): Int = when (range) {
     DashboardRange.WEEK -> {
-        val days = groupBy { it.date }.keys.sortedDescending().take(7).toSet()
-        filter { it.date in days }.distinctCustomerCount()
+        val days = groupBy { it.date.take(10) }.keys.sortedDescending().take(7).toSet()
+        filter { it.date.take(10) in days }.distinctCustomerCount()
     }
     DashboardRange.MONTH -> distinctCustomersForMonth(currentYearMonth)
     DashboardRange.QUARTER -> {
@@ -428,11 +438,11 @@ private fun List<SaleEntry>.customerRangeGrowth(
     currentYearMonth: String,
 ): Double? = when (range) {
     DashboardRange.WEEK -> {
-        val days = groupBy { it.date }.keys.sortedDescending()
+        val days = groupBy { it.date.take(10) }.keys.sortedDescending()
         val last = days.take(7).toSet()
         val prev = days.drop(7).take(7).toSet()
-        val lastCount = filter { it.date in last }.distinctCustomerCount().toDouble()
-        val prevCount = filter { it.date in prev }.distinctCustomerCount().toDouble()
+        val lastCount = filter { it.date.take(10) in last }.distinctCustomerCount().toDouble()
+        val prevCount = filter { it.date.take(10) in prev }.distinctCustomerCount().toDouble()
         pctChange(lastCount, prevCount)
     }
     DashboardRange.MONTH -> {
@@ -565,7 +575,7 @@ private fun List<SaleEntry>.distinctCustomersForMonth(yearMonth: String): Int {
 }
 
 private fun List<SaleEntry>.lastTwoWeekTotals(): Pair<Double, Double> {
-    val byDate = groupBy { it.date }
+    val byDate = groupBy { it.date.take(10) }
     val days = byDate.keys.sortedDescending()
     val last7 = days.take(7).sumOf { d -> byDate[d]!!.sumOf { it.totalSelling } }
     val prev7 = days.drop(7).take(7).sumOf { d -> byDate[d]!!.sumOf { it.totalSelling } }

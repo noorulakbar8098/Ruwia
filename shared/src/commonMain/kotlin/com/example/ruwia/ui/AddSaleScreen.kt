@@ -38,6 +38,7 @@ import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.theme.RuwiaColor
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
@@ -51,7 +52,7 @@ data class OutwardLineItem(
 
 // ── Public entry-point ────────────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, kotlin.uuid.ExperimentalUuidApi::class)
 @Composable
 fun AddSaleScreen(
     products: List<ProductCategory> = emptyList(),
@@ -73,14 +74,22 @@ fun AddSaleScreen(
     onNewCustomer: (Customer) -> Unit = {},
     onClearError: () -> Unit = {},
     onBack: () -> Unit,
+    /** True while a save is in flight — the Save button locks to prevent
+     *  double-tap duplicate sales. */
+    isSaving: Boolean = false,
     /** Called when the employee taps "Save sale". The third arg is the number
      *  of empty cans the employee collected from this customer at delivery.
      *  The fourth arg is the selected sale date in display format (e.g. "29/09/2026").
-     *  The fifth arg is the selected sale time in display format (e.g. "2:30 PM"). */
-    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String, saleTime: String) -> Unit = { _, _, _, _, _ -> },
+     *  The fifth arg is the selected sale time in display format (e.g. "2:30 PM").
+     *  The sixth arg is this draft's idempotency key: stable for the screen's
+     *  lifetime, so retried/double-tapped saves with the same key can never
+     *  deduct stock twice. */
+    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String, saleTime: String, saleKey: String) -> Unit = { _, _, _, _, _, _ -> },
     shopName: String = "",
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
+    /** Idempotency key for this sale draft (see onSave). */
+    val saleKey = remember { Uuid.random().toString() }
     var errorDialogText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(errorMessage) {
         errorMessage?.let {
@@ -169,28 +178,16 @@ fun AddSaleScreen(
     } catch (_: Exception) { "" }
 
     val totalQty   = lineItems.sumOf { it.qty }
-    val isSaveEnabled = selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
+    val isSaveEnabled = !isSaving && selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
 
-    // ── Per-product available stock (derived from shop movements) ─────────────
-    // Maps product.id -> available units at this shop (inward - outward).
-    // Used to block the employee from selling more than what's in stock.
-    val cleanShop = shopName.trim().lowercase().substringBefore("·").trim()
-    val isMainShop = cleanShop.startsWith("shop 1") ||
-                     cleanShop.contains("main") ||
-                     cleanShop.contains("warehouse") ||
-                     cleanShop.contains("primary") ||
-                     cleanShop.isBlank()
-    val availableUnitsMap: Map<String, Int> = remember(stockMovements, products, shopName) {
-        products.associate { product ->
-            if (isMainShop) {
-                product.id to product.stockAvailable
-            } else {
-                val rows = stockMovements.filter { it.productId == product.id }
-                val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty Cases", ignoreCase = true) }.sumOf { it.qty }
-                val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-                product.id to (inward - outward).coerceAtLeast(0)
-            }
-        }
+    // ── Per-product available stock ─────────────────────────────────────────
+    // Same business-wide figure as the Stock tab's "All Shops" view, the
+    // home KPI and the admin inventory (see effectiveStockMap) — the screen
+    // must never show 0 for stock the user can see elsewhere. The repo
+    // deducts each line shop-wise (own shop first, spillover to the buckets
+    // holding the stock), so saving always reduces the total correctly.
+    val availableUnitsMap: Map<String, Int> = remember(stockMovements, products) {
+        com.example.ruwia.domain.effectiveStockMap(products, stockMovements)
     }
 
     Box(modifier = Modifier.fillMaxSize().background(RuwiaColor.Background)) {
@@ -201,6 +198,7 @@ fun AddSaleScreen(
             bottomBar = {
                 SaleBottomBar(
                     isSaveEnabled = isSaveEnabled,
+                    isSaving = isSaving,
                     lineCount = lineItems.size,
                     totalQty = totalQty,
                     onCancel = onBack,
@@ -221,7 +219,7 @@ fun AddSaleScreen(
                             errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cases\nAvailable: $availRaw Cases\n\nPlease reduce the quantity and try again."
                             return@SaleBottomBar
                         }
-                        onSave(selectedCustomer!!.name, lineItems, empties, nowSaleDate(), nowSaleTime())
+                        onSave(selectedCustomer!!.name, lineItems, empties, nowSaleDate(), nowSaleTime(), saleKey)
                     },
                 )
             },
@@ -835,6 +833,7 @@ private fun SaleTimestampView(
 @Composable
 private fun SaleBottomBar(
     isSaveEnabled: Boolean,
+    isSaving: Boolean = false,
     lineCount: Int,
     totalQty: Int,
     onCancel: () -> Unit,
@@ -922,7 +921,10 @@ private fun SaleBottomBar(
                         disabledContentColor = RuwiaColor.TextMuted
                     )
                 ) {
-                    Text("Save Sale", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isSaving) "Saving…" else "Save Sale",
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }

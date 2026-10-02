@@ -190,6 +190,14 @@ SELECT migrate_to_tenant_table('route_tasks');
 SELECT migrate_to_tenant_table('app_settings');
 SELECT migrate_to_tenant_table('customer_product_prices');
 
+-- Write-time snapshots + sale idempotency (safe to re-run: IF NOT EXISTS).
+-- product_name keeps history showing real names after soft-delete;
+-- client_key lets retried sales skip already-written lines instead of
+-- deducting stock twice.
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS product_name TEXT;
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS client_key TEXT;
+ALTER TABLE sale_entries ADD COLUMN IF NOT EXISTS client_key TEXT;
+
 -- Special case: Profiles RLS
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "profiles_isolation" ON profiles;

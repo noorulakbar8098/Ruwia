@@ -1,5 +1,8 @@
 package com.example.ruwia
 
+import com.example.ruwia.data.isServiceKeyConfigured
+import com.example.ruwia.data.isServiceKeyRejection
+import com.example.ruwia.data.serviceKeySetupMessage
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
@@ -225,5 +228,150 @@ class SharedLogicJvmTest {
         assertTrue(iso.contains('T'), "expected TZ-aware ISO, got '$iso'")
         assertTrue(iso.isNotBlank())
         kotlinx.datetime.Instant.parse(iso) // must not throw
+    }
+
+    // ── Service-key diagnostics (employee creation) ──────────────────────────
+
+    @Test
+    fun testInstalledServiceKeyIsConfigured() {
+        // A real service-role secret is installed, so admin calls (employee
+        // creation) can authenticate. The setup message stays available
+        // for builds where the key is still a placeholder.
+        assertTrue(isServiceKeyConfigured())
+        assertTrue(serviceKeySetupMessage().contains("SUPABASE_SERVICE_KEY"))
+    }
+
+    @Test
+    fun testServiceKeyRejectionMatcher() {
+        assertTrue(isServiceKeyRejection("Invalid API key"))
+        assertTrue(isServiceKeyRejection("invalid JWT: unable to parse"))
+        assertTrue(isServiceKeyRejection("401 Unauthorized"))
+        assertTrue(isServiceKeyRejection("User not allowed (service_role required)"))
+        // Business errors must keep their original message.
+        assertTrue(!isServiceKeyRejection("User already registered"))
+        assertTrue(!isServiceKeyRejection("duplicate key value violates unique constraint"))
+        assertTrue(!isServiceKeyRejection(null))
+    }
+
+    // ── Inventory consistency: canonical shop buckets ─────────────────────
+
+    @Test
+    fun testCanonicalShopNameReusesExistingBucket() {
+        val movements = listOf(
+            StockMovement(id = "m1", source = "Inward Purchase", qty = 100, type = "inward", shopName = "Shop 1"),
+            StockMovement(id = "m2", source = "Sale · X", qty = 10, type = "outward", shopName = "Shop 2"),
+        )
+        // Renamed/configured labels resolve to the stored history label…
+        assertEquals("Shop 1", com.example.ruwia.domain.canonicalShopName("shop 1 · Main", movements))
+        assertEquals("Shop 1", com.example.ruwia.domain.canonicalShopName("SHOP 1", movements))
+        assertEquals("Shop 2", com.example.ruwia.domain.canonicalShopName("Shop 2", movements))
+        // …unknown shops pass through so new shops can open a bucket…
+        assertEquals("Shop 3", com.example.ruwia.domain.canonicalShopName("Shop 3", movements))
+        assertEquals("Shop 3", com.example.ruwia.domain.canonicalShopName("Shop 3", emptyList()))
+        // …and canonical labels are idempotent.
+        assertEquals("Shop 1", com.example.ruwia.domain.canonicalShopName("Shop 1", movements))
+    }
+
+    // ── Inventory consistency: deleted-product names in history ───────────
+
+    @Test
+    fun testResolveMovementProductNamePrefersSnapshot() {
+        val products = listOf(
+            ProductCategory(id = "p1", name = "2L", displayName = "Kinly 2L", brandName = "Kinly"),
+        )
+        // Snapshot wins even when the product still exists.
+        assertEquals(
+            "Kinly 2L",
+            com.example.ruwia.domain.resolveMovementProductName(
+                StockMovement(id = "m", source = "Sale · X", qty = 1, type = "outward", productId = "p1", productName = "Kinly 2L"),
+                products
+            )
+        )
+        // Active lookup when no snapshot.
+        assertEquals(
+            "Kinly 2L",
+            com.example.ruwia.domain.resolveMovementProductName(
+                StockMovement(id = "m", source = "Sale · X", qty = 1, type = "outward", productId = "p1"),
+                products
+            )
+        )
+        // Sale-record snapshot recovers soft-deleted products (no catalog row).
+        assertEquals(
+            "Kinly 2L",
+            com.example.ruwia.domain.resolveMovementProductName(
+                StockMovement(id = "m", source = "Sale · X", qty = 1, type = "outward", productId = "p1"),
+                emptyList(),
+                mapOf("p1" to "Kinly 2L")
+            )
+        )
+        // Genuinely unknown → null (callers fall back to the source text).
+        assertEquals(
+            null,
+            com.example.ruwia.domain.resolveMovementProductName(
+                StockMovement(id = "m", source = "Manual adjustment", qty = 1, type = "inward", productId = "p9"),
+                emptyList()
+            )
+        )
+    }
+
+    // ── Transaction timestamp guards ──────────────────────────────────────
+
+    @Test
+    fun testFutureTimestampGuards() {
+        assertTrue(!com.example.ruwia.util.isFutureTimestamp("2000-01-01T00:00:00Z"))
+        assertTrue(com.example.ruwia.util.isFutureTimestamp("2999-01-01T00:00:00Z"))
+        assertTrue(!com.example.ruwia.util.isFutureTimestamp(null))
+        assertTrue(!com.example.ruwia.util.isFutureDay("2000-01-01"))
+        assertTrue(!com.example.ruwia.util.isFutureDay("2000-01-01 2:30 PM"))
+        assertTrue(com.example.ruwia.util.isFutureDay("2999-12-31"))
+        // Past values pass validation; future values throw.
+        com.example.ruwia.util.requireNotFutureTimestamp("Test", "2000-01-01T00:00:00Z")
+        com.example.ruwia.util.requireNotFutureDay("Test", "2000-01-01")
+        var thrown = false
+        try {
+            com.example.ruwia.util.requireNotFutureTimestamp("Test", "2999-01-01T00:00:00Z")
+        } catch (_: IllegalStateException) {
+            thrown = true
+        }
+        assertTrue(thrown, "future timestamp must be rejected")
+        thrown = false
+        try {
+            com.example.ruwia.util.requireNotFutureDay("Test", "2999-12-31")
+        } catch (_: IllegalStateException) {
+            thrown = true
+        }
+        assertTrue(thrown, "future day must be rejected")
+    }
+
+    // ── 2-year test-data seeder ─────────────────────────────────────────
+
+    @Test
+    fun testTwoYearSeedPlanIsConsistent() {
+        val plan = com.example.ruwia.data.TestDataSeeder.buildPlan("Shop 1", "Shop 2", seed = 42L, daysBack = 60)
+        // Catalog + customers + employees present.
+        assertTrue(plan.products.size == 10, "expected 10 products, got ${plan.products.size}")
+        assertTrue(plan.customers.size == 80, "expected 80 customers, got ${plan.customers.size}")
+        assertTrue(plan.employees.size == 4, "expected 4 employees, got ${plan.employees.size}")
+        assertTrue(plan.sales.isNotEmpty() && plan.movements.isNotEmpty())
+        // Every sale mirrors an outward movement with the same key/qty/product.
+        val outwardByKey = plan.movements.filter { it.type == "outward" }.associateBy { it.clientKey }
+        for (sale in plan.sales) {
+            val movement = outwardByKey[sale.clientKey]
+            assertTrue(movement != null, "sale ${sale.clientKey} has no mirrored movement")
+            assertEquals(sale.qty, movement!!.qty)
+            assertEquals(sale.productId, movement.productId)
+            assertEquals(sale.date, movement.createdAt?.take(10))
+            assertTrue(!movement.productName.isNullOrBlank(), "movement snapshot missing")
+        }
+        // Closing stock equals the production derivation over the log.
+        val derived = com.example.ruwia.domain.netStockPerProductAllShops(plan.movements)
+        for ((tempId, expected) in plan.expectedStock) {
+            assertEquals(expected, derived[tempId], "stock mismatch for $tempId")
+            assertTrue(expected >= 0, "negative closing stock for $tempId")
+        }
+        // Deterministic: same seed, same output.
+        val again = com.example.ruwia.data.TestDataSeeder.buildPlan("Shop 1", "Shop 2", seed = 42L, daysBack = 60)
+        assertEquals(plan.sales.size, again.sales.size)
+        assertEquals(plan.sales.firstOrNull()?.totalSelling, again.sales.firstOrNull()?.totalSelling)
     }
 }

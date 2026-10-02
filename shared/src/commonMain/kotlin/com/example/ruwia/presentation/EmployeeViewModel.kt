@@ -10,7 +10,8 @@ import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
-import com.example.ruwia.domain.netStockPerProductAllShops
+import com.example.ruwia.domain.canonicalShopName
+import com.example.ruwia.domain.effectiveStockMap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -315,7 +316,13 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         runCatching {
             val skuClean = sku.trim()
             val brandClean = brandName.trim()
-            var product = _state.value.productCategories.find {
+            // Fresh catalogue read before matching: if a previous save
+            // created the product but failed before its movement landed, the
+            // cached list won't contain it and a retry would silently create
+            // a DUPLICATE product with the stock split across both rows.
+            // The fresh read makes the retry reuse the existing row instead.
+            val catalogue = repo.getProductCategories().ifEmpty { _state.value.productCategories }
+            var product = catalogue.find {
                 it.name.equals(skuClean, ignoreCase = true) &&
                 it.brandName.equals(brandClean, ignoreCase = true)
             }
@@ -346,11 +353,12 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
 
             val noteSuffix = notes.trim().take(120).takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
             val totalUnits = qty
+            val canonicalShop = canonicalShopName(shopName, _state.value.shopMovements)
             repo.addStockMovement(
                 source = "Inward Purchase$noteSuffix",
                 qty = totalUnits,
                 type = "inward",
-                shopName = shopName,
+                shopName = canonicalShop,
                 productId = productId,
                 createdAt = createdAt
             )
@@ -363,7 +371,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                     source = "Empty cans · Inward Purchase",
                     qty = emptyCans,
                     type = "inward",
-                    shopName = shopName,
+                    shopName = canonicalShop,
                     productId = null,
                     createdAt = createdAt
                 )
@@ -408,15 +416,17 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         lines: List<EmployeeRepository.SaleLine>,
         emptyCansCollected: Int,
         saleDate: String? = null,
+        clientSaleKey: String? = null,
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
             repo.addOutwardSale(
                 customerName       = customerName,
-                shopName           = shopName,
+                shopName           = canonicalShopName(shopName, _state.value.shopMovements),
                 lines              = lines,
                 emptyCansCollected = emptyCansCollected,
                 saleDate           = saleDate,
+                clientSaleKey      = clientSaleKey,
             )
         }.onSuccess {
             // Refresh today's totals, sales and recent entries.
@@ -431,10 +441,12 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
     private fun EmployeeState.deriveStockFromMovements(): EmployeeState {
         if (shopMovements.isEmpty()) return this
 
-        // Same bucketed source of truth as admin/inventory totals.
-        val net = netStockPerProductAllShops(shopMovements)
+        // Same single source of truth as admin/inventory totals: movement log
+        // wins when rows exist, DB column is the fallback for new products.
+        // See effectiveStockMap.
+        val effective = effectiveStockMap(productCategories, shopMovements)
         val updatedProducts = productCategories.map { p ->
-            p.copy(stockAvailable = net[p.id] ?: 0)
+            p.copy(stockAvailable = effective[p.id] ?: p.stockAvailable)
         }
 
         return this.copy(productCategories = updatedProducts)

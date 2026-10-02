@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,7 +31,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
+import com.example.ruwia.appVersionLabel
 import com.example.ruwia.presentation.AdminState
+import com.example.ruwia.presentation.toDashboardMetrics
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import com.example.ruwia.ui.dashboard.*
 import com.example.ruwia.util.capitalizeWords
@@ -49,8 +52,8 @@ fun SettingsScreen(
     onNavigateToPricing: () -> Unit,
     onNavigateToCustomers: () -> Unit = {},
     onLogout: () -> Unit,
-    onDeleteAllData: () -> Unit,
     onResetEmptyCases: () -> Unit = {},
+    onAddEmptyCases: (Int) -> Unit = {},
     onShopNameChange: (Int, String) -> Unit = { _, _ -> },
     contentPadding: PaddingValues = PaddingValues()
 ) {
@@ -60,6 +63,7 @@ fun SettingsScreen(
     var autoBackup   by remember { mutableStateOf(true) }
     var darkMode     by remember { mutableStateOf(NTColors.isDarkMode) }
     var showResetDialog  by remember { mutableStateOf(false) }
+    var showAddEmptyDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var isLoggingOut   by remember { mutableStateOf(false) }
     var shopOneName    by remember { mutableStateOf(state.shopNames.getOrNull(0).orEmpty()) }
@@ -78,6 +82,19 @@ fun SettingsScreen(
     val shopCount  = state.shopStocks.size.coerceAtLeast(2)
     val staffCount = state.employees.count { it.status != "inactive" }
     val custCount  = state.customers.size
+    // Live Empty Cases figure for the stepper dialog (same source as dashboards).
+    val liveEmptyCases = remember(state) { state.toDashboardMetrics().emptyCansAtShop }
+
+    if (showAddEmptyDialog) {
+        EmptyCasesStepperDialog(
+            currentCount = liveEmptyCases,
+            onDismiss    = { showAddEmptyDialog = false },
+            onConfirm    = { qty ->
+                showAddEmptyDialog = false
+                onAddEmptyCases(qty)
+            },
+        )
+    }
 
     if (showResetDialog) {
         AlertDialog(
@@ -238,8 +255,8 @@ fun SettingsScreen(
                     SettingsGroupCard("BUSINESS MANAGEMENT") {
                         SettingsNavItem(
                             icon = Icons.Rounded.Group,
-                            iconBg = NTColors.AccentLight,
-                            iconFg = NTColors.Accent,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
                             title = "Staff & Roles",
                             subtitle = "Manage $staffCount active team members and access controls",
                             onClick = onNavigateToEmployees
@@ -248,17 +265,26 @@ fun SettingsScreen(
                         SettingsDivider()
                         SettingsNavItem(
                             icon = Icons.Rounded.People,
-                            iconBg = Color(0xFF1E153A),
-                            iconFg = Color(0xFF8B5CF6),
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
                             title = "Customers",
                             subtitle = "$custCount registered distribution clients",
                             onClick = onNavigateToCustomers
                         )
                         SettingsDivider()
                         SettingsNavItem(
+                            icon = Icons.Rounded.AddBox,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
+                            title = "Add Empty Cases",
+                            subtitle = "$liveEmptyCases available · record returned cases",
+                            onClick = { showAddEmptyDialog = true }
+                        )
+                        SettingsDivider()
+                        SettingsNavItem(
                             icon = Icons.Rounded.Undo,
-                            iconBg = NTColors.ErrorLight,
-                            iconFg = NTColors.Error,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
                             title = "Reset Empty Cases",
                             subtitle = "Zero out the live Empty Cases figure business-wide",
                             onClick = { showResetDialog = true }
@@ -271,8 +297,8 @@ fun SettingsScreen(
                     SettingsGroupCard("SYSTEM PREFERENCES") {
                         SettingsToggleItem(
                             icon = Icons.Rounded.NotificationsActive,
-                            iconBg = Color(0xFF1E153A),
-                            iconFg = Color(0xFF8B5CF6),
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
                             title = "Push Notifications",
                             subtitle = "Orders, dues, and transaction alerts",
                             checked = pushNotif,
@@ -295,7 +321,7 @@ fun SettingsScreen(
                         SettingsShopNameItem(
                             icon = Icons.Rounded.Edit,
                             iconBg = NTColors.SurfaceVar,
-                            iconFg = NTColors.TextPrimary,
+                            iconFg = NTColors.TextSecondary,
                             title = "Rename Shop",
                             subtitle = "Current: ${shopOneName.ifBlank { "Not set" }}",
                             value = shopOneName,
@@ -308,7 +334,7 @@ fun SettingsScreen(
                         SettingsShopNameItem(
                             icon = Icons.Rounded.Edit,
                             iconBg = NTColors.SurfaceVar,
-                            iconFg = NTColors.TextPrimary,
+                            iconFg = NTColors.TextSecondary,
                             title = "Rename Shop",
                             subtitle = "Current: ${shopTwoName.ifBlank { "Not set" }}",
                             value = shopTwoName,
@@ -333,6 +359,17 @@ fun SettingsScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("Sign Out of Account", color = NTColors.Error, fontWeight = FontWeight.Bold)
                     }
+                }
+
+                // ── 7. App version ──
+                item {
+                    Text(
+                        text = "Version ${appVersionLabel()}",
+                        fontSize = 11.sp,
+                        color = NTColors.TextTertiary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    )
                 }
             }
         }

@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.Image
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.ruwia.domain.Customer
@@ -137,6 +138,12 @@ fun EmployeeDashboardScreen(
     }
     var screen by remember { mutableStateOf<EmpScreen>(EmpScreen.Home) }
     var selectedTab by remember { mutableStateOf(0) }
+    // Pull-to-refresh indicator: set on swipe, cleared when the reload
+    // finishes (or fails) so the spinner never sticks.
+    var isRefreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(state.loading) {
+        if (!state.loading) isRefreshing = false
+    }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var isLoggingOut by remember { mutableStateOf(false) }
     var isSubmittingAction by remember { mutableStateOf(false) }
@@ -256,15 +263,19 @@ fun EmployeeDashboardScreen(
                     onClearError  = vm::clearError,
                     onBack        = { screen = EmpScreen.Home },
                     shopName      = shopPart,
-                    onSave        = { customerName, items, emptyCans, saleDate, saleTime ->
+                    isSaving      = isSubmittingAction,
+                    onSave        = { customerName, items, emptyCans, saleDate, saleTime, saleKey ->
                         // Persist the sale: each line item creates one sale_entries
                         // row and one outward stock movement; any empties picked up
                         // from the customer become an inward movement (visible to
                         // the admin on the stock dashboard).
                         val shopPart = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
-                        val parsedSaleDate = com.example.ruwia.util.displayDateToDb(saleDate)
-                        // Combine date and time for proper timestamp
-                        val saleDateTime = "$parsedSaleDate $saleTime"
+                        // sale_entries.date is a YYYY-MM-DD day bucket (all filters,
+                        // grouping and charts compare on that prefix). Never append
+                        // the display time — the insert's created_at already keeps
+                        // the timestamp, and a "YYYY-MM-DD h:mm AM" suffix breaks
+                        // the Today exact-match plus day grouping.
+                        val saleDay = com.example.ruwia.util.displayDateToDb(saleDate) ?: saleDate
                         val lines = items.mapNotNull { item ->
                             val product = state.productCategories.getOrNull(item.productIdx) ?: return@mapNotNull null
                             val sellPricePerUnit = item.sellPriceText.toDoubleOrNull() ?: product.defaultSellPrice
@@ -283,7 +294,8 @@ fun EmployeeDashboardScreen(
                                 shopName           = shopPart,
                                 lines              = lines,
                                 emptyCansCollected = emptyCans,
-                                saleDate           = saleDateTime,
+                                saleDate           = saleDay,
+                                clientSaleKey      = saleKey,
                             )
                         }
                     },
@@ -340,6 +352,19 @@ fun EmployeeDashboardScreen(
                         )
                     }
                 ) { padding ->
+                    // Pull-to-refresh on every tab: swiping down re-pulls the
+                    // dashboard (tasks, totals, entries, shop movements,
+                    // products, customers) from the backend. Inner tabs keep
+                    // consuming `padding` exactly as before, so insets are
+                    // unchanged.
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshing,
+                        onRefresh = {
+                            isRefreshing = true
+                            vm.loadDashboard()
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
                     when (selectedTab) {
                         1 -> EmployeeEntriesScreen(
                             movements      = state.recentEntries,
@@ -389,6 +414,7 @@ fun EmployeeDashboardScreen(
                             onTabSelected  = { selectedTab = it },
                             contentPadding = padding,
                         )
+                    }
                     }
                 }
 
@@ -491,11 +517,13 @@ private fun EmployeeHomeContent(
     }
 
     // The "Live Inventory" total must exactly match the Stock tab and the
-    // per-product cards. We therefore derive it from the per-product on-hand
-    // counts (already computed by the ViewModel from stock movements) rather
-    // than a raw global movement sum, so the Home and Stock screens always agree.
-    val totalFull = remember(state.productCategories) {
-        state.productCategories.sumOf { it.stockAvailable.coerceAtLeast(0).toDouble() }
+    // per-product cards: single source of truth via effectiveTotalStock
+    // (movement log wins, DB column is the fallback for new products).
+    val totalFull = remember(state.productCategories, state.shopMovements) {
+        com.example.ruwia.domain.effectiveTotalStock(
+            state.productCategories,
+            state.shopMovements,
+        )
     }
     // Live "Empty Cases" is reported relative to the admin-set reset baseline.
     val totalEmpty = liveEmptyCases(state)

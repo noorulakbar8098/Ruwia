@@ -228,7 +228,10 @@ fun aggregateDispatch(
         // (e.g. "Neer thuli - 20L"), never just a size bucket.
         val key = m.productId?.takeIf { it.isNotBlank() } ?: "OTHER"
         labels.getOrPut(key) {
-            product?.displayName?.ifBlank { product?.name }?.trim()?.takeIf { it.isNotEmpty() }
+            // Write-time snapshot first so soft-deleted products keep their
+            // real names instead of folding into "Other".
+            m.productName?.trim()?.takeIf { it.isNotEmpty() }
+                ?: product?.displayName?.ifBlank { product?.name }?.trim()?.takeIf { it.isNotEmpty() }
                 ?: "Other"
         }
         ParsedDispatch(dt.date, dt.hour, m.qty, key)

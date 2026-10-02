@@ -32,6 +32,11 @@ import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.data.getCurrentDateTimeIso
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.util.capitalizeWords
+import com.example.ruwia.util.isFutureTimestamp
+import com.example.ruwia.util.isoToDisplayDate
+import com.example.ruwia.util.isoToDisplayTime
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
 
 // Deep teal shared with the home Business Overview card.
 private val FormTeal = Color(0xFF0F2E2C)
@@ -86,9 +91,26 @@ fun AddStockPurchaseScreen(
     // DateTime Iso
     val defaultDateTime = remember { getCurrentDateTimeIso() }
     var dateTimeIso by remember { mutableStateOf(defaultDateTime) }
+    var showEntryDatePicker by remember { mutableStateOf(false) }
+    var showEntryTimePicker by remember { mutableStateOf(false) }
 
     var showShopDropdown by remember { mutableStateOf(false) }
     var showErrorAlert by remember { mutableStateOf<String?>(null) }
+
+    // Apply a picked date/time as the entry timestamp. Past and present are
+    // kept; future values are rejected with an error (never silently clamped).
+    fun applyEntryDateTime(dateDisplay: String, timeDisplay: String) {
+        val iso = buildEntryIsoOrNull(dateDisplay, timeDisplay)
+        if (iso == null) {
+            showErrorAlert = "Could not understand that date/time. Please pick again."
+            return
+        }
+        if (isFutureTimestamp(iso)) {
+            showErrorAlert = "Future date/time is not allowed. Pick today or a past date/time."
+            return
+        }
+        dateTimeIso = iso
+    }
 
     LaunchedEffect(productToRestock) {
         if (productToRestock != null) {
@@ -584,6 +606,70 @@ fun AddStockPurchaseScreen(
                     }
                 }
 
+                // Transaction date & time — any past moment or now; future is
+                // blocked in the pickers and re-validated on save + in the
+                // data layer. The chosen stamp becomes the entry's created_at.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(NTColors.Surface)
+                        .border(1.dp, NTColors.Border, RoundedCornerShape(16.dp))
+                        .padding(16.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(FormTeal.copy(alpha = 0.10f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.CalendarMonth,
+                                contentDescription = null,
+                                tint = FormTeal,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Transaction Date & Time",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NTColors.TextPrimary
+                            )
+                            Text(
+                                text = "${isoToDisplayDate(dateTimeIso)} · ${isoToDisplayTime(dateTimeIso).ifBlank { "—" }}",
+                                fontSize = 12.sp,
+                                color = NTColors.TextSecondary
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedButton(
+                            onClick = { showEntryDatePicker = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Icon(Icons.Rounded.CalendarToday, null, tint = FormTeal, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Date", color = NTColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                        }
+                        OutlinedButton(
+                            onClick = { showEntryTimePicker = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Icon(Icons.Rounded.Schedule, null, tint = FormTeal, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Time", color = NTColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
                 // Empty Cases card — amber accent to distinguish from quantity.
                 if (!isEditMode) {
                     Row(
@@ -721,6 +807,12 @@ fun AddStockPurchaseScreen(
                                 showErrorAlert = "Please fill all fields correctly."
                                 return@Button
                             }
+                            // Last line of defence: a future timestamp must
+                            // never be saved even if it slipped past the pickers.
+                            if (isFutureTimestamp(dateTimeIso)) {
+                                showErrorAlert = "Future date/time is not allowed. Pick today or a past date/time."
+                                return@Button
+                            }
                             val alertLevel = if (alertEnabled) {
                                 alertThresholdText.toIntOrNull()?.coerceIn(0, 999)
                                     ?: DEFAULT_LOW_STOCK_ALERT
@@ -778,6 +870,90 @@ fun AddStockPurchaseScreen(
             }
         }
 
+        // Entry date picker — today and past only.
+        if (showEntryDatePicker) {
+            val pickerState = rememberDatePickerState(
+                initialSelectedDateMillis = runCatching { kotlinx.datetime.Instant.parse(dateTimeIso).toEpochMilliseconds() }.getOrNull(),
+                selectableDates = object : SelectableDates {
+                    override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                        val picked = kotlinx.datetime.Instant.fromEpochMilliseconds(utcTimeMillis)
+                            .toLocalDateTime(kotlinx.datetime.TimeZone.UTC).date
+                        val today = kotlin.time.Clock.System.now()
+                            .toLocalDateTime(kotlinx.datetime.TimeZone.UTC).date
+                        return picked <= today
+                    }
+                }
+            )
+            DatePickerDialog(
+                onDismissRequest = { showEntryDatePicker = false },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pickerState.selectedDateMillis?.let { millis ->
+                            val d = kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                                .toLocalDateTime(kotlinx.datetime.TimeZone.UTC).date
+                            val dd = d.dayOfMonth.toString().padStart(2, '0')
+                            val mm = d.monthNumber.toString().padStart(2, '0')
+                            applyEntryDateTime(
+                                "$dd/$mm/${d.year}",
+                                isoToDisplayTime(dateTimeIso).ifBlank { "12:00 AM" }
+                            )
+                        }
+                        showEntryDatePicker = false
+                    }) { Text("OK", color = FormTeal, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEntryDatePicker = false }) {
+                        Text("Cancel", color = NTColors.TextSecondary)
+                    }
+                }
+            ) {
+                DatePicker(state = pickerState)
+            }
+        }
+
+        // Entry time picker — combined with the chosen date; future rejected.
+        if (showEntryTimePicker) {
+            val nowLocal = runCatching {
+                kotlinx.datetime.Instant.parse(dateTimeIso)
+                    .toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
+            }.getOrNull()
+            val timeState = rememberTimePickerState(
+                initialHour = nowLocal?.hour ?: 12,
+                initialMinute = nowLocal?.minute ?: 0,
+                is24Hour = false,
+            )
+            AlertDialog(
+                onDismissRequest = { showEntryTimePicker = false },
+                title = { Text("Entry time", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+                text = {
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        TimePicker(state = timeState)
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val h24 = timeState.hour
+                        val hh = when {
+                            h24 == 0 -> 12
+                            h24 > 12 -> h24 - 12
+                            else -> h24
+                        }
+                        val ampm = if (h24 >= 12) "PM" else "AM"
+                        val mm = timeState.minute.toString().padStart(2, '0')
+                        applyEntryDateTime(isoToDisplayDate(dateTimeIso), "$hh:$mm $ampm")
+                        showEntryTimePicker = false
+                    }) { Text("OK", color = FormTeal, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEntryTimePicker = false }) {
+                        Text("Cancel", color = NTColors.TextSecondary)
+                    }
+                },
+                containerColor = NTColors.Surface,
+                shape = RoundedCornerShape(20.dp)
+            )
+        }
+
         // Error Alert Dialog
         if (showErrorAlert != null) {
             AlertDialog(
@@ -808,4 +984,38 @@ private fun FormLabel(text: String) {
         letterSpacing = 0.3.sp,
         color = NTColors.TextSecondary
     )
+}
+
+/**
+ * Builds a TZ-aware ISO instant from a "DD/MM/YYYY" date and a "h:mm AM/PM"
+ * time at the device zone. Null when unparseable. Does NOT clamp — callers
+ * reject future results via [isFutureTimestamp].
+ */
+private fun buildEntryIsoOrNull(dateDisplay: String, timeDisplay: String): String? {
+    return try {
+        val dp = dateDisplay.trim().split("/")
+        if (dp.size != 3) return null
+        val d = dp[0].toIntOrNull() ?: return null
+        val m = dp[1].toIntOrNull() ?: return null
+        val y = dp[2].toIntOrNull() ?: return null
+        val tp = timeDisplay.trim().split(" ", limit = 2)
+        if (tp.size != 2) return null
+        val hm = tp[0].split(":")
+        if (hm.size != 2) return null
+        var h = hm[0].toIntOrNull() ?: return null
+        val min = hm[1].toIntOrNull() ?: return null
+        val ampm = tp[1].trim().uppercase()
+        if (ampm != "AM" && ampm != "PM") return null
+        if (h !in 1..12 || min !in 0..59 || m !in 1..12 || d !in 1..31) return null
+        h = when {
+            ampm == "AM" && h == 12 -> 0
+            ampm == "PM" && h < 12 -> h + 12
+            else -> h
+        }
+        kotlinx.datetime.LocalDateTime(y, m, d, h, min, 0, 0)
+            .toInstant(kotlinx.datetime.TimeZone.currentSystemDefault())
+            .toString()
+    } catch (_: Exception) {
+        null
+    }
 }

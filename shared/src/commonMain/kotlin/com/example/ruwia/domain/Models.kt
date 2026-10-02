@@ -130,8 +130,20 @@ data class StockMovement(
     val type: String,
     @SerialName("shop_name") val shopName: String = "",
     @SerialName("product_id") val productId: String? = null,
+    /**
+     * Denormalized product display name stamped at write time so history
+     * keeps showing the real name after the product is soft-deleted.
+     * Null on rows written before the snapshot column existed.
+     */
+    @SerialName("product_name") val productName: String? = null,
     @SerialName("employee_id") val employeeId: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
+    /**
+     * Idempotency key of the sale that produced this row (see
+     * [SaleEntry.clientKey]). Lets the writer verify every line's movement
+     * landed and lets retries skip already-written lines.
+     */
+    @SerialName("client_key") val clientKey: String? = null,
 )
 
 @Serializable
@@ -179,6 +191,12 @@ data class SaleEntry(
     @SerialName("shop_id") val shopId: String = "shop1",
     @SerialName("employee_id") val employeeId: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
+    /**
+     * Idempotency key: one UUID per user-confirmed sale, stamped on every
+     * line + movement. Retried/double-tapped submissions with the same key
+     * are skipped instead of deducting stock twice.
+     */
+    @SerialName("client_key") val clientKey: String? = null,
 )
 
 @Serializable
@@ -229,6 +247,51 @@ data class MonthlyExpense(
  */
 fun shopMatchKey(name: String): String =
     name.split("·", limit = 2).firstOrNull()?.trim()?.lowercase() ?: name.trim().lowercase()
+
+/**
+ * Canonical shop label for NEW movement rows.
+ *
+ * Shop display names change over time (Settings renames) while old movement
+ * rows keep the label they were written with. Writing a fresh row with a
+ * different-but-equivalent label opens a second bucket: per-shop tabs miss
+ * the row while All Shops (which sums every bucket) stays correct — the
+ * exact "shop tab wrong, All Shops right" symptom.
+ *
+ * To keep one bucket per shop forever, resolve the target to the most
+ * recently used full label for the same shop key. Feeds are newest-first,
+ * so the first match is the canonical label. Falls back to [target] when
+ * the shop has no history yet. Idempotent: canonical labels resolve to
+ * themselves.
+ */
+fun canonicalShopName(target: String, movements: List<StockMovement>): String {
+    val key = shopMatchKey(target)
+    if (key.isBlank()) return target
+    return movements.firstOrNull { shopMatchKey(it.shopName) == key }?.shopName ?: target
+}
+
+/**
+ * Display name for a movement row that survives product soft-delete.
+ *
+ * Resolution order: write-time snapshot → active product lookup → the
+ * product's sale-record snapshot (covers rows written before snapshots
+ * existed, e.g. Kinly 2L's ₹80k of sales) → null when genuinely unknown.
+ * Callers fall back to the movement source text, never a fake product name.
+ */
+fun resolveMovementProductName(
+    movement: StockMovement,
+    products: List<ProductCategory>,
+    salesByProductId: Map<String, String> = emptyMap(),
+): String? {
+    movement.productName?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    val pid = movement.productId
+    if (pid != null) {
+        products.find { it.id == pid }
+            ?.let { (if (it.displayName.isNotBlank()) it.displayName else it.name).trim().takeIf { n -> n.isNotEmpty() } }
+            ?.let { return it }
+        salesByProductId[pid]?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    }
+    return null
+}
 
 /** A tenant-scoped application setting row (e.g. `empty_cans_baseline`). */
 @Serializable
@@ -295,6 +358,48 @@ fun productNetStock(movements: List<StockMovement>, productId: String?): Int =
     netStockPerProduct(movements)[productId] ?: 0
 
 /**
+ * Single source of truth for displayed stock.
+ *
+ * Shop-wise by design: each product is stocked per shop via movements
+ * stamped with that shop's name, so Shop 1 (2 products) and Shop 2
+ * (4 products) always show their own counts.
+ *
+ * - shopKey == null → all shops: bucketed per-shop sum (equals Σ shop tabs).
+ *   The DB `stock_available` column is only a fallback for products with no
+ *   movement rows anywhere yet (brand-new products before their
+ *   opening-stock row lands).
+ * - shopKey != null → STRICTLY that shop's movements, missing = 0. The DB
+ *   column is global per product, so it must never leak into a shop tab —
+ *   otherwise Shop 1 would show Shop 2's stock for products never stocked
+ *   in Shop 1.
+ */
+fun effectiveStockMap(
+    products: List<ProductCategory>,
+    movements: List<StockMovement>,
+    shopKey: String? = null,
+): Map<String, Int> {
+    if (shopKey != null) {
+        val perShop = netStockPerProductInShop(movements, shopKey)
+        return products.associate { p -> p.id to (perShop[p.id] ?: 0) }
+    }
+    val bucketed = netStockPerProductAllShops(movements)
+    val movedIds = movements.mapNotNull { it.productId }.toSet()
+    return products.associate { p ->
+        val units = if (p.id in movedIds) (bucketed[p.id] ?: 0) else p.stockAvailable.coerceAtLeast(0)
+        p.id to units
+    }
+}
+
+
+
+/** Total on-hand units across [products] using [effectiveStockMap]. */
+fun effectiveTotalStock(
+    products: List<ProductCategory>,
+    movements: List<StockMovement>,
+    shopKey: String? = null,
+): Double = effectiveStockMap(products, movements, shopKey).values.sumOf { it.toDouble() }
+
+/**
  * Returns each shop with its [ShopStockInfo] columns recomputed from the
  * movement log. The original metadata fields (`id`, `name`, `location`,
  * `isLive`) are preserved.
@@ -321,7 +426,11 @@ fun deriveShopStockTotals(
         var unknownProductFull = 0
         
         rows.forEach { m ->
-            val isFullIn = m.type == "inward" && !m.source.trim().startsWith("Empty cans", ignoreCase = true)
+            // Empty-can returns (both "Empty cans" and "Empty cases" labels)
+            // are NOT sellable stock — same exclusion as every other
+            // derivation (see isEmptyCansSource). Checking only one label
+            // here inflated full-cans whenever the other label was used.
+            val isFullIn = m.type == "inward" && !m.source.isEmptyCansSource()
             val isSentOut = m.type == "outward"
             if (isFullIn || isSentOut) {
                 val delta = if (isFullIn) m.qty else -m.qty

@@ -3,6 +3,7 @@ package com.example.ruwia.ui.admin
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +40,11 @@ import com.example.ruwia.ui.dashboard.GlossyTealBox
 import com.example.ruwia.util.capitalizeWords
 import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.isTextField
+import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * Admin-side customer directory. Lists every customer in the system and lets
@@ -761,11 +767,59 @@ private fun CustomerDetailsScreen(
 ) {
     val uriHandler = LocalUriHandler.current
     val ordered = remember(sales) { sales.sortedByDescending { it.date } }
-    val byProduct = remember(sales) {
+
+    // Purchase-history filters (keyless remember: a background refresh must
+    // never wipe what the admin is typing or has selected).
+    var historyQuery by remember { mutableStateOf("") }
+    var historyProduct by remember { mutableStateOf("") }
+    var historyMonth by remember { mutableStateOf("") }
+    var historyDateFrom by remember { mutableStateOf("") }
+    var historyDateTo by remember { mutableStateOf("") }
+
+    // Product options, most-bought first.
+    val productOptions = remember(sales) {
         sales.groupBy { it.productName.trim().ifBlank { "Product" } }
-            .map { (name, rows) -> Triple(name, rows.sumOf { it.qty }, rows.sumOf { it.totalSelling }) }
-            .sortedByDescending { it.third }
+            .map { (name, rows) -> name to rows.sumOf { it.totalSelling } }
+            .sortedByDescending { it.second }
+            .map { it.first }
     }
+    // Month options newest first ("YYYY-MM"). Rows with a non-ISO date stay
+    // visible under All and can still be found via search.
+    val monthOptions = remember(sales) {
+        sales.map { it.date.take(7) }
+            .filter { it.length == 7 && it[4] == '-' }
+            .distinct()
+            .sortedDescending()
+    }
+
+    val filteredHistory = remember(sales, historyQuery, historyProduct, historyMonth, historyDateFrom, historyDateTo) {
+        var list = ordered
+        if (historyProduct.isNotBlank()) {
+            list = list.filter { it.productName.trim().ifBlank { "Product" } == historyProduct }
+        }
+        if (historyMonth.isNotBlank()) {
+            list = list.filter { it.date.startsWith(historyMonth) }
+        }
+        if (historyDateFrom.isNotBlank() || historyDateTo.isNotBlank()) {
+            list = list.filter { s ->
+                val d = s.date.take(10)
+                // Rows without a parseable ISO date stay visible.
+                if (d.length != 10 || d[4] != '-') return@filter true
+                if (historyDateFrom.isNotBlank() && d < historyDateFrom) return@filter false
+                if (historyDateTo.isNotBlank() && d > historyDateTo) return@filter false
+                true
+            }
+        }
+        val q = historyQuery.trim()
+        if (q.isNotBlank()) {
+            val low = q.lowercase()
+            list = list.filter { it.productName.lowercase().contains(low) }
+        }
+        list
+    }
+    val historyFiltersActive =
+        historyQuery.isNotBlank() || historyProduct.isNotBlank() || historyMonth.isNotBlank() ||
+            historyDateFrom.isNotBlank() || historyDateTo.isNotBlank()
 
     Column(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
         // Header
@@ -949,45 +1003,7 @@ private fun CustomerDetailsScreen(
                 Spacer(Modifier.height(NTDp.md))
             }
 
-            // Per-product breakdown
-            if (byProduct.isNotEmpty()) {
-                item {
-                    DetailSectionCard(title = "PER-PRODUCT BREAKDOWN") {
-                        byProduct.forEachIndexed { idx, (name, qty, revenue) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        name.ifBlank { "Product" },
-                                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                        color = NTColors.TextPrimary,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        "$qty cans bought",
-                                        fontSize = 11.sp, color = NTColors.TextSecondary,
-                                    )
-                                }
-                                Text(
-                                    formatCustomerMoney(revenue),
-                                    fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                    color = NTColors.TextPrimary,
-                                )
-                            }
-                            if (idx < byProduct.lastIndex) {
-                                HorizontalDivider(color = NTColors.Border)
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(NTDp.md))
-                }
-            }
-
-            // Purchase history
+            // Purchase history with search + product/month filters
             item {
                 DetailSectionCard(title = "PURCHASE HISTORY") {
                     if (ordered.isEmpty()) {
@@ -997,34 +1013,162 @@ private fun CustomerDetailsScreen(
                             modifier = Modifier.padding(vertical = 8.dp),
                         )
                     } else {
-                        ordered.forEachIndexed { idx, s ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        s.productName.ifBlank { "Sale" },
-                                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                        color = NTColors.TextPrimary,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        "${dbToDisplayDate(s.date)} · ${s.qty} cans",
-                                        fontSize = 11.sp, color = NTColors.TextSecondary,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Text(
-                                    formatCustomerMoney(s.totalSelling),
-                                    fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                    color = NTColors.TextPrimary,
+                        // Search
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(NTColors.SurfaceVar)
+                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Search, null,
+                                tint = NTColors.TextTertiary, modifier = Modifier.size(17.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            BasicTextField(
+                                value = historyQuery,
+                                onValueChange = { historyQuery = it },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(
+                                    color = NTColors.TextPrimary, fontSize = 13.sp,
+                                ),
+                                cursorBrush = SolidColor(NTColors.Primary),
+                            )
+                            if (historyQuery.isNotEmpty()) {
+                                Icon(
+                                    Icons.Rounded.Close,
+                                    "Clear search",
+                                    tint = NTColors.TextTertiary,
+                                    modifier = Modifier.size(16.dp)
+                                        .clickable { historyQuery = "" },
                                 )
                             }
-                            if (idx < ordered.lastIndex) {
-                                HorizontalDivider(color = NTColors.Border)
+                        }
+                        if (historyQuery.isEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                        } else {
+                            Spacer(Modifier.height(4.dp))
+                        }
+
+                        // Product-wise chips
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item {
+                                CustomerSortChip(
+                                    text = "All products",
+                                    selected = historyProduct.isBlank(),
+                                    onClick = { historyProduct = "" },
+                                )
+                            }
+                            items(productOptions) { name ->
+                                CustomerSortChip(
+                                    text = name,
+                                    selected = historyProduct == name,
+                                    onClick = {
+                                        historyProduct = if (historyProduct == name) "" else name
+                                    },
+                                )
+                            }
+                        }
+
+                        // Date-wise (month) chips
+                        if (monthOptions.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                item {
+                                    CustomerSortChip(
+                                        text = "All months",
+                                        selected = historyMonth.isBlank(),
+                                        onClick = { historyMonth = "" },
+                                    )
+                                }
+                                items(monthOptions) { ym ->
+                                    CustomerSortChip(
+                                        text = customerMonthLabel(ym),
+                                        selected = historyMonth == ym,
+                                        onClick = {
+                                            historyMonth = if (historyMonth == ym) "" else ym
+                                        },
+                                    )
+                                }
+                            }
+                        }
+
+                        // Date-wise (From/To range) pickers
+                        Spacer(Modifier.height(8.dp))
+                        CustomerDateRangeRow(
+                            dateFrom = historyDateFrom,
+                            dateTo = historyDateTo,
+                            onFromChange = { historyDateFrom = it },
+                            onToChange = { historyDateTo = it },
+                        )
+
+                        if (historyFiltersActive) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    "Showing ${filteredHistory.size} of ${ordered.size} purchases",
+                                    fontSize = 11.sp, color = NTColors.TextTertiary,
+                                )
+                                Text(
+                                    "Clear",
+                                    fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                    color = NTColors.Primary,
+                                    modifier = Modifier.clickable {
+                                        historyQuery = ""
+                                        historyProduct = ""
+                                        historyMonth = ""
+                                        historyDateFrom = ""
+                                        historyDateTo = ""
+                                    },
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(4.dp))
+
+                        if (filteredHistory.isEmpty()) {
+                            Text(
+                                "No purchases match these filters.",
+                                fontSize = 13.sp, color = NTColors.TextTertiary,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                            )
+                        } else {
+                            filteredHistory.forEachIndexed { idx, s ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            s.productName.ifBlank { "Sale" },
+                                            fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                            color = NTColors.TextPrimary,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            "${dbToDisplayDate(s.date)} · ${s.qty} cans",
+                                            fontSize = 11.sp, color = NTColors.TextSecondary,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    Text(
+                                        formatCustomerMoney(s.totalSelling),
+                                        fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                        color = NTColors.TextPrimary,
+                                    )
+                                }
+                                if (idx < filteredHistory.lastIndex) {
+                                    HorizontalDivider(color = NTColors.Border)
+                                }
                             }
                         }
                     }
@@ -1139,6 +1283,151 @@ private fun DetailSectionCard(title: String, content: @Composable ColumnScope.()
         )
         Spacer(Modifier.height(10.dp))
         content()
+    }
+}
+
+/** "2026-09" → "Sep 2026" for the purchase-history month chips. */
+private fun customerMonthLabel(yearMonth: String): String {
+    val parts = yearMonth.split("-")
+    if (parts.size != 2) return yearMonth
+    val month = when (parts[1].toIntOrNull()) {
+        1 -> "Jan"; 2 -> "Feb"; 3 -> "Mar"; 4 -> "Apr"
+        5 -> "May"; 6 -> "Jun"; 7 -> "Jul"; 8 -> "Aug"
+        9 -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; 12 -> "Dec"
+        else -> parts[1]
+    }
+    return "$month ${parts[0]}"
+}
+
+private fun custDateStrToEpochMillis(s: String): Long? = try {
+    LocalDate.parse(s).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
+} catch (_: Exception) {
+    null
+}
+
+private fun custEpochMillisToDateStr(millis: Long): String {
+    val d = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.UTC).date
+    return "${d.year}-${d.monthNumber.toString().padStart(2, '0')}-${d.dayOfMonth.toString().padStart(2, '0')}"
+}
+
+private fun custIsoToDisplay(s: String): String {
+    val parts = s.split("-")
+    return if (parts.size == 3) "${parts[2]}/${parts[1]}/${parts[0]}" else s
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CustomerDateRangeRow(
+    dateFrom: String,
+    dateTo: String,
+    onFromChange: (String) -> Unit,
+    onToChange: (String) -> Unit,
+) {
+    var showFromPicker by remember { mutableStateOf(false) }
+    var showToPicker by remember { mutableStateOf(false) }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        CustomerDateFilterChip(
+            label = "From",
+            date = dateFrom,
+            onClick = { showFromPicker = true },
+            onClear = { onFromChange("") },
+            modifier = Modifier.weight(1f),
+        )
+        CustomerDateFilterChip(
+            label = "To",
+            date = dateTo,
+            onClick = { showToPicker = true },
+            onClear = { onToChange("") },
+            modifier = Modifier.weight(1f),
+        )
+    }
+
+    if (showFromPicker) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = custDateStrToEpochMillis(dateFrom),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showFromPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { onFromChange(custEpochMillisToDateStr(it)) }
+                    showFromPicker = false
+                }) { Text("OK", color = NTColors.Primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFromPicker = false }) { Text("Cancel", color = NTColors.TextSecondary) }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+
+    if (showToPicker) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = custDateStrToEpochMillis(dateTo),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showToPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { onToChange(custEpochMillisToDateStr(it)) }
+                    showToPicker = false
+                }) { Text("OK", color = NTColors.Primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showToPicker = false }) { Text("Cancel", color = NTColors.TextSecondary) }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+}
+
+@Composable
+private fun CustomerDateFilterChip(
+    label: String,
+    date: String,
+    onClick: () -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val displayText = if (date.isNotBlank()) custIsoToDisplay(date) else label
+    val isActive = date.isNotBlank()
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(NTDp.radFull))
+            .background(if (isActive) NTColors.PrimaryLight else NTColors.SurfaceVar)
+            .border(1.dp, if (isActive) NTColors.Primary else NTColors.Border, RoundedCornerShape(NTDp.radFull))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.CalendarToday,
+            null,
+            tint = if (isActive) NTColors.Primary else NTColors.TextSecondary,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = displayText,
+            color = if (isActive) NTColors.Primary else NTColors.TextSecondary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (isActive) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                Icons.Rounded.Close,
+                "Clear",
+                tint = NTColors.Primary,
+                modifier = Modifier.size(12.dp).clickable(onClick = onClear),
+            )
+        }
     }
 }
 

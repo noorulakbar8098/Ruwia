@@ -3,7 +3,10 @@ package com.example.ruwia.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ruwia.data.AdminRepository
+import com.example.ruwia.data.TestDataSeeder
 import com.example.ruwia.data.awaitAuthentication
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.Job
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.CustomerProductPrice
@@ -16,7 +19,8 @@ import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.Supplier
-import com.example.ruwia.domain.netStockPerProductAllShops
+import com.example.ruwia.domain.canonicalShopName
+import com.example.ruwia.domain.effectiveStockMap
 import com.example.ruwia.util.sanitizeError
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +44,17 @@ sealed class EmployeeCreationState {
         val shop:     String
     ) : EmployeeCreationState()
     data class Error(val message: String) : EmployeeCreationState()
+}
+
+/** Progress of the 2-year test-data seeding run (null = idle). */
+data class SeedProgress(
+    val stage: String,
+    val done: Int,
+    val total: Int,
+    val finished: Boolean = false,
+    val error: String? = null,
+) {
+    val fraction: Float get() = if (total <= 0) 0f else (done.toFloat() / total).coerceIn(0f, 1f)
 }
 
 data class AdminState(
@@ -279,11 +294,15 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         val old = _state.value.productCategories.find { it.id == cat.id }
         // Attribute the adjustment to the product's assigned shop (supplierGroup)
         // so the per-shop ledger stays consistent; fall back to the first shop
-        // name when the product was never assigned a real shop.
-        val adjustmentShop = cat.supplierGroup.trim().let {
-            if (it.isNotBlank() && it != "GC" && it != "MB") it
-            else _state.value.shopNames.firstOrNull().orEmpty()
-        }
+        // name when the product was never assigned a real shop. Canonicalized
+        // to the existing history bucket (see canonicalShopName).
+        val adjustmentShop = canonicalShopName(
+            cat.supplierGroup.trim().let {
+                if (it.isNotBlank() && it != "GC" && it != "MB") it
+                else _state.value.shopNames.firstOrNull().orEmpty()
+            },
+            _state.value.recentMovements
+        )
         if (old != null && old.stockAvailable != cat.stockAvailable) {
             val diff = cat.stockAvailable - old.stockAvailable
             val type = if (diff > 0) "inward" else "outward"
@@ -364,10 +383,25 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching { repo.addSaleEntry(entry) }
             .onSuccess {
-                _state.value = _state.value.copy(
-                    saleEntries = listOf(entry) + _state.value.saleEntries,
-                    loading = false
-                )
+                // The sale also wrote an outward movement + stock decrement,
+                // so refresh those feeds — otherwise the inventory screens
+                // keep showing the pre-sale count.
+                runCatching {
+                    val movements = repo.getRecentMovements()
+                    val products = repo.getProductCategories()
+                    val sales = repo.getSaleEntries()
+                    _state.value = _state.value.copy(
+                        saleEntries = sales.ifEmpty { listOf(entry) + _state.value.saleEntries },
+                        recentMovements = movements.ifEmpty { _state.value.recentMovements },
+                        productCategories = products.ifEmpty { _state.value.productCategories },
+                        loading = false
+                    ).deriveStockFromMovements()
+                }.onFailure {
+                    _state.value = _state.value.copy(
+                        saleEntries = listOf(entry) + _state.value.saleEntries,
+                        loading = false
+                    )
+                }
             }
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
     }
@@ -434,7 +468,10 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         productId: String? = null,
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
-        runCatching { repo.addStockMovement(source, qty, type, shopName, productId) }
+        // Canonicalize to the shop's existing history bucket so per-shop tabs
+        // keep seeing the row (see canonicalShopName).
+        val canonicalShop = canonicalShopName(shopName, _state.value.recentMovements)
+        runCatching { repo.addStockMovement(source, qty, type, canonicalShop, productId) }
             .onSuccess {
                 // Refresh all data that feeds the stock dashboard so the totals
                 // and per-shop breakdowns are immediately correct after saving.
@@ -473,13 +510,14 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         // Insert every product line one by one. If one fails we still attempt
         // the rest so partial stock entries are written rather than silently dropped.
         var anyError: String? = null
+        val canonicalShop = canonicalShopName(shopName, _state.value.recentMovements)
         quantities.filter { it.value > 0 }.forEach { (productId, qty) ->
             runCatching {
                 repo.addStockMovement(
                     source    = source,
                     qty       = qty,
                     type      = "inward",
-                    shopName  = shopName,
+                    shopName  = canonicalShop,
                     productId = productId,
                 )
             }.onFailure { anyError = it.message }
@@ -734,12 +772,15 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
 
             // Product does not exist, create it
             val displayName = if (brandClean.isNotBlank()) "$brandClean - $skuClean" else skuClean
+            // Canonical bucket label so later adjustments land in this shop's
+            // history (see canonicalShopName).
+            val canonicalShop = canonicalShopName(shopName.trim(), _state.value.recentMovements)
             val newProduct = ProductCategory(
                 id = "",
                 name = skuClean,
                 displayName = displayName,
                 brandName = brandClean,
-                supplierGroup = shopName.trim(), // Store assigned shop name
+                supplierGroup = canonicalShop, // Store assigned shop name
                 purchasePrice = purchasePrice,
                 defaultSellPrice = sellingPrice,
                 stockAvailable = 0, // will be updated by the movement
@@ -755,9 +796,10 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 source = "Inward Purchase$noteSuffix",
                 qty = totalUnits,
                 type = "inward",
-                shopName = shopName,
+                shopName = canonicalShop,
                 productId = productId,
-                createdAt = createdAt
+                createdAt = createdAt,
+                productName = displayName
             )
 
             // Returned empties come INTO the shop as an extra inward movement.
@@ -766,7 +808,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                     source = "Empty cans · Inward Purchase",
                     qty = emptyCans,
                     type = "inward",
-                    shopName = shopName,
+                    shopName = canonicalShop,
                     productId = null,
                     createdAt = createdAt
                 )
@@ -788,6 +830,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         previousStock: Int,
         shopName: String,
         lowStockAlert: Int,
+        createdAt: String? = null,
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
@@ -815,8 +858,10 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                     source = "Stock Adjustment (Edit)",
                     qty = absQty,
                     type = type,
-                    shopName = shopName,
-                    productId = productId
+                    shopName = canonicalShopName(shopName, _state.value.recentMovements),
+                    productId = productId,
+                    createdAt = createdAt,
+                    productName = displayName
                 )
             }
         }.onSuccess {
@@ -844,15 +889,193 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             .onFailure { _state.value = _state.value.copy(loading = false, error = it.message) }
     }
 
+    /** Progress of the 2-year test-data seeding run (null = idle). */
+    private val _seedProgress = MutableStateFlow<SeedProgress?>(null)
+    val seedProgress: StateFlow<SeedProgress?> = _seedProgress.asStateFlow()
+
+    fun clearSeedProgress() {
+        _seedProgress.value = null
+    }
+
+    /**
+     * Seeds ~2 years of realistic test data (products, customers, employees,
+     * sales, movements, expenses) so charts, history and reports can be
+     * exercised. Refuses to run on top of existing sales/movements — wipe
+     * first from Settings → Danger Zone. Employee auth creation is
+     * best-effort: failures are reported but never abort the run.
+     */
+    fun seedTwoYearTestData() = viewModelScope.launch {
+        if (_seedProgress.value?.finished == false) return@launch
+        try {
+            if (_state.value.saleEntries.isNotEmpty() || _state.value.recentMovements.isNotEmpty()) {
+                throw IllegalStateException(
+                    "Existing sales/movements found. Delete All Data first (Settings → Danger Zone), then seed."
+                )
+            }
+            val adminId = repo.getTenantAdminId().takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("Not logged in.")
+            val configured = _state.value.shopNames.take(2).map { it.trim() }.filter { it.isNotBlank() }
+            val shopA = configured.getOrNull(0) ?: "Shop 1"
+            val shopB = configured.getOrNull(1) ?: "Shop 2"
+
+            _seedProgress.value = SeedProgress("Generating 2-year plan…", 0, 100)
+            val plan = TestDataSeeder.buildPlan(shopA, shopB)
+
+            val saleChunks = plan.sales.chunked(500)
+            val movementChunks = plan.movements.chunked(500)
+            val customerChunks = plan.customers.chunked(500)
+            val totalUnits = plan.products.size + plan.employees.size +
+                customerChunks.size + saleChunks.size + movementChunks.size +
+                1 + plan.expectedStock.size + 1
+            var done = 0
+            fun progress(stage: String) {
+                done++
+                _seedProgress.value = SeedProgress(stage, done, totalUnits)
+            }
+
+            // 1. Products first (need real ids for every other row).
+            val idMap = mutableMapOf<String, String>()
+            for (p in plan.products) {
+                val realId = repo.addProductCategory(p)
+                idMap[p.id] = realId
+                progress("Products ${idMap.size}/${plan.products.size}")
+            }
+
+            // 2. Employees, best-effort (auth creation may fail; never aborts).
+            val employeeIds = mutableListOf<String>()
+            val skippedEmployees = mutableListOf<String>()
+            for (e in plan.employees) {
+                try {
+                    val created = repo.addEmployee(
+                        name = e.name,
+                        phone = e.phone,
+                        role = e.role,
+                        shopName = e.shopName,
+                        salary = e.salary,
+                        email = e.email,
+                        password = e.password,
+                    )
+                    employeeIds += created.id
+                } catch (ex: Exception) {
+                    skippedEmployees += "${e.name} (${ex.message})"
+                }
+                progress("Employees ${employeeIds.size + skippedEmployees.size}/${plan.employees.size}")
+            }
+
+            // Deterministic employee attribution: sale i -> employee i % n.
+            val saleEmployeeByKey = mutableMapOf<String, String?>()
+            plan.sales.forEachIndexed { index, sale ->
+                val emp = employeeIds.getOrNull(if (employeeIds.isEmpty()) -1 else index % employeeIds.size)
+                sale.clientKey?.let { saleEmployeeByKey[it] = emp }
+            }
+
+            // 3. Customers.
+            for ((i, chunk) in customerChunks.withIndex()) {
+                repo.seedInsertRows("customers", chunk.map { c ->
+                    buildJsonObject {
+                        put("name", c.name)
+                        if (c.phone != null) put("phone", c.phone)
+                        if (c.address != null) put("address", c.address)
+                        put("admin_id", adminId)
+                    }
+                })
+                progress("Customers chunk ${i + 1}/${customerChunks.size}")
+            }
+
+            // 4. Sales.
+            for ((i, chunk) in saleChunks.withIndex()) {
+                repo.seedInsertRows("sale_entries", chunk.mapIndexed { j, s ->
+                    val globalIdx = i * 500 + j
+                    buildJsonObject {
+                        put("date", s.date)
+                        put("customer_name", s.customerName)
+                        put("product_id", idMap[s.productId] ?: s.productId)
+                        put("product_name", s.productName)
+                        put("qty", s.qty)
+                        put("purchase_price_per_unit", s.purchasePricePerUnit)
+                        put("selling_price_per_unit", s.sellingPricePerUnit)
+                        put("sales_margin_per_unit", s.salesMarginPerUnit)
+                        put("total_selling", s.totalSelling)
+                        put("total_margin", s.totalMargin)
+                        put("shop_id", s.shopId)
+                        val emp = employeeIds.getOrNull(if (employeeIds.isEmpty()) -1 else globalIdx % employeeIds.size)
+                        if (emp != null) put("employee_id", emp)
+                        put("admin_id", adminId)
+                        if (s.clientKey != null) put("client_key", s.clientKey)
+                        if (s.createdAt != null) put("created_at", s.createdAt)
+                    }
+                })
+                progress("Sales ${i + 1}/${saleChunks.size}")
+            }
+
+            // 5. Movements.
+            for ((i, chunk) in movementChunks.withIndex()) {
+                repo.seedInsertRows("stock_movements", chunk.map { m ->
+                    buildJsonObject {
+                        put("source", m.source)
+                        put("qty", m.qty)
+                        put("type", m.type)
+                        put("shop_name", m.shopName)
+                        if (m.productId != null) put("product_id", idMap[m.productId] ?: m.productId)
+                        if (m.productName != null) put("product_name", m.productName)
+                        val emp = m.clientKey?.let { saleEmployeeByKey[it] }
+                        if (emp != null) put("employee_id", emp)
+                        put("admin_id", adminId)
+                        if (m.clientKey != null) put("client_key", m.clientKey)
+                        if (m.createdAt != null) put("created_at", m.createdAt)
+                    }
+                })
+                progress("Stock movements ${i + 1}/${movementChunks.size}")
+            }
+
+            // 6. Expenses.
+            repo.seedInsertRows("monthly_expenses", plan.expenses.map { e ->
+                buildJsonObject {
+                    put("month", e.month)
+                    put("shop_id", e.shopId)
+                    put("shop_rent", e.shopRent)
+                    put("admin_salary", e.adminSalary)
+                    put("delivery_staff", e.deliveryStaff)
+                    put("miscellaneous", e.miscellaneous)
+                    put("bike_expense", e.bikeExpense)
+                    put("admin_id", adminId)
+                }
+            })
+            progress("Monthly expenses")
+
+            // 7. Closing stock = production derivation over the seeded log.
+            for ((tempId, stock) in plan.expectedStock) {
+                val realId = idMap[tempId] ?: continue
+                repo.seedUpdateProductStock(realId, stock)
+            }
+            progress("Syncing stock levels")
+
+            loadData()
+            val empNote = if (skippedEmployees.isEmpty()) "" else " Skipped employees: ${skippedEmployees.joinToString("; ")}"
+            _seedProgress.value = SeedProgress(
+                "Seeded ${plan.sales.size} sales, ${plan.movements.size} movements, " +
+                    "${plan.customers.size} customers, ${plan.products.size} products.$empNote",
+                totalUnits, totalUnits, finished = true
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+            _seedProgress.value = SeedProgress("Seeding failed", 0, 1, finished = true, error = e.message)
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun AdminState.deriveStockFromMovements(): AdminState {
         if (recentMovements.isEmpty()) return this
 
-        // Bucketed sum so Home totals always equal the inventory shop tabs added up.
-        val net = netStockPerProductAllShops(recentMovements)
+        // Single source of truth: movement log wins whenever a product has
+        // rows; DB column is only the fallback for products with no history
+        // yet. This keeps every stockAvailable-based display (home KPI,
+        // dashboard, sale validation) identical to the movement-derived
+        // inventory screens. See effectiveStockMap.
+        val effective = effectiveStockMap(productCategories, recentMovements)
         val updatedProducts = productCategories.map { p ->
-            p.copy(stockAvailable = net[p.id] ?: 0)
+            p.copy(stockAvailable = effective[p.id] ?: p.stockAvailable)
         }
 
         return this.copy(productCategories = updatedProducts)

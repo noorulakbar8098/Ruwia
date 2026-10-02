@@ -119,7 +119,7 @@ fun dbToDisplayDate(s: String): String {
         if (parts.size == 3) {
             val y = parts[0].toIntOrNull() ?: return s
             val m = parts[1].toIntOrNull() ?: return s
-            val d = parts[2].toIntOrNull() ?: return s
+            val d = parts[2].takeWhile { it.isDigit() }.toIntOrNull() ?: return s.take(10)
             "${d.toString().padStart(2, '0')}/${m.toString().padStart(2, '0')}/$y"
         } else s
     } catch (_: Exception) { s }
@@ -143,3 +143,52 @@ fun displayDateToDb(s: String): String? {
 /** Current instant as a TZ-aware ISO-8601 string (e.g. "2026-09-06T10:30:00Z") for DB persistence. */
 fun currentDateTimeIso(): String =
     Clock.System.now().toString()
+
+// ── Transaction timestamp guards ────────────────────────────────────
+//  Admins may backdate entries (past date/time) but must never postdate:
+//  future timestamps corrupt "today" figures, week/month windows and audit
+//  history. Enforced here (data layer, every write path) AND in the pickers.
+
+/** True when the ISO instant is more than [toleranceMinutes] ahead of now. */
+fun isFutureTimestamp(iso: String?, toleranceMinutes: Long = 1): Boolean {
+    if (iso.isNullOrBlank()) return false
+    return try {
+        val instant = Instant.parse(iso.trim())
+        val nowMs = Clock.System.now().toEpochMilliseconds()
+        instant.toEpochMilliseconds() > nowMs + toleranceMinutes * 60_000
+    } catch (_: Exception) {
+        false
+    }
+}
+
+/** True when the "YYYY-MM-DD" day (time suffixes tolerated) is after today. */
+fun isFutureDay(day: String?): Boolean {
+    if (day.isNullOrBlank()) return false
+    return try {
+        val clean = day.trim().take(10)
+        val p = clean.split("-")
+        if (p.size != 3) return false
+        val y = p[0].toIntOrNull() ?: return false
+        val m = p[1].toIntOrNull() ?: return false
+        val d = p[2].takeWhile { it.isDigit() }.toIntOrNull() ?: return false
+        val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+        val todayStr = "${now.year}-${now.monthNumber.toString().padStart(2, '0')}-${now.dayOfMonth.toString().padStart(2, '0')}"
+        clean > todayStr && y > 0 && m in 1..12 && d in 1..31
+    } catch (_: Exception) {
+        false
+    }
+}
+
+/** Throws when [iso] is in the future. Call before every timestamped write. */
+fun requireNotFutureTimestamp(label: String, iso: String?) {
+    if (isFutureTimestamp(iso)) {
+        throw IllegalStateException("$label cannot be in the future (got $iso). Pick today or a past date/time.")
+    }
+}
+
+/** Throws when [day] ("YYYY-MM-DD") is after today. Call before every dated write. */
+fun requireNotFutureDay(label: String, day: String?) {
+    if (isFutureDay(day)) {
+        throw IllegalStateException("$label cannot be a future date (got $day). Pick today or a past date.")
+    }
+}

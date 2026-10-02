@@ -78,16 +78,15 @@ fun EmployeeStockScreen(
         deriveShopStockTotals(shopStocks, movements, stockItems, emptyCansBaseline.toDouble())
     }
 
-    // Per selected shop, each product's net on-hand over its own movements.
-    // Counts are shop-specific: a product created/stocked in another shop is
-    // not included here (no global fallback, so counts never leak across shops).
-    val availableUnitsMap = remember(products, scopedMovements) {
-        products.associate { p ->
-            val rows = scopedMovements.filter { it.productId == p.id }
-            val inward = rows.filter { it.type == "inward" && !it.source.isEmptyCansSource() }.sumOf { it.qty }
-            val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-            p.id to (inward - outward).coerceAtLeast(0)
-        }
+    // Shop-wise (see effectiveStockMap): the selected shop tab shows ONLY that
+    // shop's movements (missing = 0, so Shop 2's stock never leaks into
+    // Shop 1); "All" shows the bucketed sum. Same formula as admin inventory.
+    val availableUnitsMap = remember(products, movements, selectedShopKey) {
+        com.example.ruwia.domain.effectiveStockMap(
+            products,
+            movements,
+            selectedShopKey.ifBlank { null },
+        )
     }
 
     val totalFull = remember(availableUnitsMap) {

@@ -42,7 +42,10 @@ import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.canonicalShopName
+import com.example.ruwia.domain.effectiveStockMap
 import com.example.ruwia.domain.isEmptyCansSource
+import com.example.ruwia.domain.resolveMovementProductName
 import com.example.ruwia.domain.netStockPerProductAllShops
 import com.example.ruwia.domain.netStockPerProductInShop
 import com.example.ruwia.presentation.AdminState
@@ -155,25 +158,11 @@ fun StockInventoryScreen(
     val currentShopKey = if (selectedShopName == "All Shops") null else shopKey(selectedShopName)
 
     // ── Live inventory counts filtered by shop ────────────────────────────────
-    // The "All Shops" view is the SUM of the per-shop buckets (each floored
-    // at zero), so it always equals Shop 1 + Shop 2 + … by construction.
-    // Only the per-shop tabs scope to one shop, and movements recorded under
-    // an unconfigured/renamed shop form their own bucket, never orphaned.
+    // Shop-wise (see effectiveStockMap): a shop tab shows ONLY that shop's
+    // movements (a product stocked solely in Shop 2 reads 0 in Shop 1), and
+    // "All Shops" is the bucketed per-shop sum so it equals Σ(shop tabs).
     val liveStockMap = remember(movements, products, currentShopKey) {
-        if (currentShopKey != null) {
-            // Per-shop tab: only that shop's movements count. No global fallback,
-            // so stock recorded for another shop never leaks into this tab.
-            val perShop = netStockPerProductInShop(movements, currentShopKey)
-            products.associate { p ->
-                p.id to (perShop[p.id] ?: 0)
-            }
-        } else {
-            // "All Shops": bucketed sum — identical to adding up every shop tab.
-            val bucketed = netStockPerProductAllShops(movements)
-            products.associate { p ->
-                p.id to (bucketed[p.id] ?: 0)
-            }
-        }
+        effectiveStockMap(products, movements, currentShopKey)
     }
 
     val effectiveStockMap = remember(liveStockMap) {
@@ -496,6 +485,10 @@ fun StockInventoryScreen(
                             movements = recentMovements,
                             products = products,
                             employees = state.employees,
+                            salesByProduct = remember(state.saleEntries) {
+                                state.saleEntries.groupBy { it.productId }
+                                    .mapValues { (_, rows) -> rows.firstOrNull()?.productName.orEmpty() }
+                            },
                         )
                     }
                     }
@@ -513,35 +506,59 @@ fun StockInventoryScreen(
                 onDismiss = { activeTransferProduct = null },
                 onConfirm = { fromShopName, toShopName, casesCount ->
                     val totalQty = casesCount
-                    onAddMovement("Transfer to $toShopName", totalQty, "outward", fromShopName, product.id)
-                    onAddMovement("Transfer from $fromShopName", totalQty, "inward", toShopName, product.id)
+                    // Canonicalize both legs to the existing history buckets so
+                    // neither leg opens a stray shop bucket (see canonicalShopName).
+                    val canonFrom = canonicalShopName(fromShopName, movements)
+                    val canonTo = canonicalShopName(toShopName, movements)
+                    onAddMovement("Transfer to $canonTo", totalQty, "outward", canonFrom, product.id)
+                    onAddMovement("Transfer from $canonFrom", totalQty, "inward", canonTo, product.id)
                     activeTransferProduct = null
                 }
             )
         }
 
         activeAdjustProduct?.let { product ->
-            val targetShopName = if (selectedShopName == "All Shops") {
+            val onAllShops = selectedShopName == "All Shops"
+            val rawTargetShopName = if (onAllShops) {
                 getAssignedShop(product, movements, state.shopNames)
             } else {
                 selectedShopName
             }
+            // Canonicalize to the shop's existing history bucket: without this
+            // the adjustment opens a second bucket that the shop tab cannot
+            // see while All Shops still sums it (see canonicalShopName).
+            val targetShopName = canonicalShopName(rawTargetShopName, movements)
             // Start the dialog on the exact live figure shown next to this
             // product (business-wide net on the All-Shops tab, that shop's net
             // on a shop tab). Adjustments are diff-based, so the +/- steppers
             // move from this base and only the delta is recorded.
             val currentCases = effectiveStockMap[product.id] ?: 0
+            // On All Shops the adjustment needs an explicit shop: without it
+            // every correction silently lands in the product's assigned shop
+            // (usually Shop 1) and Shop 2 can never be incremented from here.
+            val shopOptions = if (onAllShops) displayShops.map { it.name } else emptyList()
+            val perShopBase = if (onAllShops) {
+                displayShops.associate { shop ->
+                    shop.name to (netStockPerProductInShop(movements, shopKey(shop.name))[product.id] ?: 0)
+                }
+            } else emptyMap()
 
             AdjustStockDialog(
                 product = product,
                 currentCases = currentCases,
                 shopName = targetShopName,
+                shops = shopOptions,
+                shopStocks = perShopBase,
                 onDismiss = { activeAdjustProduct = null },
-                onConfirm = { targetCases, reason ->
-                    if (targetCases > currentCases) {
-                        onAddMovement("Manual adjustment", targetCases - currentCases, "inward", targetShopName, product.id)
-                    } else if (targetCases < currentCases) {
-                        onAddMovement("Manual adjustment", currentCases - targetCases, "outward", targetShopName, product.id)
+                onConfirm = { targetCases, reason, shop ->
+                    // Base must be THAT shop's live figure, then canonicalize
+                    // the label so the row lands in the shop's real bucket.
+                    val base = if (onAllShops) (perShopBase[shop] ?: currentCases) else currentCases
+                    val canonShop = canonicalShopName(shop, movements)
+                    if (targetCases > base) {
+                        onAddMovement("Manual adjustment", targetCases - base, "inward", canonShop, product.id)
+                    } else if (targetCases < base) {
+                        onAddMovement("Manual adjustment", base - targetCases, "outward", canonShop, product.id)
                     }
                     activeAdjustProduct = null
                 }
@@ -1325,6 +1342,7 @@ private fun RecentActivityFeed(
     movements: List<StockMovement>,
     products: List<ProductCategory>,
     employees: List<EmployeeInfo>,
+    salesByProduct: Map<String, String> = emptyMap(),
 ) {
     // Accordion state: only one entry is open at a time. Clicking an open entry
     // collapses it; clicking another switches the expanded detail to that one.
@@ -1343,8 +1361,10 @@ private fun RecentActivityFeed(
         movements.forEachIndexed { index, m ->
             val isExpanded = expandedId == m.id
             val isReturn = m.source.isNotEmpty() && m.source.isEmptyCansSource()
-            val product = products.find { it.id == m.productId }
-            val prodName = if (isReturn) "Empty Units" else (product?.displayName ?: "Water Bottle")
+            // Snapshot → active lookup → sale record: deleted products keep
+            // their real names in history (see resolveMovementProductName).
+            val prodName = if (isReturn) "Empty Units"
+                else (resolveMovementProductName(m, products, salesByProduct) ?: m.source)
 
             Column(
                 modifier = Modifier
@@ -2318,12 +2338,21 @@ private fun AdjustStockDialog(
     product: ProductCategory,
     currentCases: Int,
     shopName: String,
+    /** All shop options. Empty = shop locked to [shopName] (shop-tab flow). */
+    shops: List<String> = emptyList(),
+    /** Live per-shop figure for this product, keyed by shop option. */
+    shopStocks: Map<String, Int> = emptyMap(),
     onDismiss: () -> Unit,
-    onConfirm: (targetCases: Int, reason: String) -> Unit
+    onConfirm: (targetCases: Int, reason: String, shopName: String) -> Unit
 ) {
-    var targetCount by remember { mutableStateOf(currentCases) }
+    var selectedShop by remember(shopName) { mutableStateOf(shopName) }
+    // Base follows the selected shop: switching shops re-bases the steppers
+    // on that shop's live figure so the delta always hits the right shop.
+    val baseCases = if (shops.isEmpty()) currentCases else (shopStocks[selectedShop] ?: currentCases)
+    var targetCount by remember(selectedShop, baseCases) { mutableStateOf(baseCases) }
     var reason by remember { mutableStateOf("Manual stock count audit") }
     var expandedReason by remember { mutableStateOf(false) }
+    var expandedShop by remember { mutableStateOf(false) }
 
 
     val unitWord = "Units"
@@ -2347,10 +2376,44 @@ private fun AdjustStockDialog(
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "${product.displayName} • $shopName",
+                    text = "${product.displayName} • $selectedShop",
                     fontSize = 13.sp,
                     color = SaaSColors.TextMuted
                 )
+
+                // Shop choice (All-Shops flow only): the correction must name
+                // the shop it belongs to, otherwise Shop 2 can never be fixed
+                // from here — everything would land in the assigned shop.
+                if (shops.size > 1) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("Shop", fontSize = 12.sp, color = SaaSColors.TextSecondary, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(SaaSColors.Background)
+                            .border(1.dp, SaaSColors.Border, RoundedCornerShape(10.dp))
+                            .clickable { expandedShop = true }
+                            .padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(selectedShop, fontSize = 13.sp, color = SaaSColors.TextPrimary)
+                            Icon(Icons.Rounded.ArrowDropDown, null, tint = SaaSColors.TextSecondary)
+                        }
+                        DropdownMenu(expanded = expandedShop, onDismissRequest = { expandedShop = false }) {
+                            shops.forEach { s ->
+                                DropdownMenuItem(
+                                    text = { Text(s) },
+                                    onClick = { selectedShop = s; expandedShop = false }
+                                )
+                            }
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(20.dp))
 
@@ -2474,7 +2537,7 @@ private fun AdjustStockDialog(
                         Text("Cancel", fontWeight = FontWeight.Bold)
                     }
                     Button(
-                        onClick = { onConfirm(targetCount, reason) },
+                        onClick = { onConfirm(targetCount, reason, selectedShop) },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary)

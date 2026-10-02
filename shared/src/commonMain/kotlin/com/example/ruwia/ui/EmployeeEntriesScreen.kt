@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.isEmptyCansSource
+import com.example.ruwia.domain.resolveMovementProductName
 
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
@@ -465,10 +466,6 @@ val isInward = movement.type == "inward"
 
     val displayQty = "${movement.qty} units"
 
-    // Product behind this movement, resolved for the expandable detail.
-    val product = remember(movement.productId, products) {
-        movement.productId?.let { id -> products.find { it.id == id } }
-    }
     var expanded by remember(movement.id, movement.createdAt) { mutableStateOf(false) }
 
     Column(
@@ -563,8 +560,10 @@ Box(
             exit = shrinkVertically() + fadeOut(),
         ) {
             val isEmptyReturn = movement.source.isEmptyCansSource()
-            val caseType = product?.displayName?.ifBlank { product?.name }
-                ?: if (isEmptyReturn) "Empty cases" else "General stock"
+            // Snapshot → active lookup → source: deleted products keep their
+            // real names in employee history (see resolveMovementProductName).
+            val caseType = if (isEmptyReturn) "Empty cases"
+                else (resolveMovementProductName(movement, products) ?: movement.source.ifBlank { "General stock" })
             Column(modifier = Modifier.fillMaxWidth()) {
                 Spacer(Modifier.height(10.dp))
                 Box(

@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.EmployeeInfo
@@ -121,6 +122,13 @@ private fun AdminDashboardContentSwitcher(
 
     var productDetailName by remember { mutableStateOf<String?>(null) }
     var showStockHistory by remember { mutableStateOf(false) }
+
+    // Pull-to-refresh indicator: set on swipe, cleared when the reload
+    // finishes (or fails) so the spinner never sticks.
+    var isRefreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(state.loading) {
+        if (!state.loading) isRefreshing = false
+    }
 
     // ── Full-screen overlays ──────────────────────────────────
     productDetailName?.let { pName ->
@@ -243,7 +251,8 @@ private fun AdminDashboardContentSwitcher(
                         newStock = qty,
                         previousStock = editModeStock,
                         shopName = shopName,
-                        lowStockAlert = lowStockAlert
+                        lowStockAlert = lowStockAlert,
+                        createdAt = dateTimeIso
                     )
                 } else {
                     vm.addInwardStockEntry(
@@ -285,6 +294,18 @@ private fun AdminDashboardContentSwitcher(
         if (selectedTab != 0) {
             SystemBackHandler { selectedTab = 0 }
         }
+        // Pull-to-refresh on every tab: swiping down re-pulls the whole
+        // admin dataset (shops, movements, products, sales, customers) from
+        // the backend. Inner tabs keep consuming `contentPadding` exactly as
+        // before, so insets are unchanged.
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                vm.loadData()
+            },
+            modifier = Modifier.fillMaxSize(),
+        ) {
         when (selectedTab) {
             0 -> AdminHomeTab(
                      state          = state,
@@ -348,14 +369,12 @@ private fun AdminDashboardContentSwitcher(
                      onNavigateToPricing    = { showPricing = true },
                      onNavigateToCustomers  = { showCustomers = true },
                      onLogout               = onLogout,
-                     onDeleteAllData        = {
-                         vm.deleteAllData()
-                         selectedTab = 0
-                     },
                      onResetEmptyCases      = { vm.resetEmptyCases() },
+                     onAddEmptyCases        = vm::addEmptyCases,
                      onShopNameChange       = { index, name -> vm.updateShopName(index, name) },
                      contentPadding         = contentPadding
                  )
+        }
         }
     }
 }
@@ -390,7 +409,6 @@ private fun AdminHomeTab(
             onOpenAnalytics = onOpenAnalytics,
             onOpenCustomers = onOpenCustomers,
             onOpenInventory = onOpenInventory,
-            onAddEmptyCases = vm::addEmptyCases,
         )
     }
 }
@@ -405,15 +423,12 @@ private fun AdminDashboardContent(
     onOpenAnalytics: () -> Unit = {},
     onOpenCustomers: () -> Unit = {},
     onOpenInventory: () -> Unit = {},
-    onAddEmptyCases: (Int) -> Unit = {},
 ) {
     // Revenue + customer pickers drive their own charts.
     // Overview period dropdown defaults to Month.
     var revenueRange by remember { mutableStateOf(NTDateRange.MONTHLY) }
     var customerRange by remember { mutableStateOf(NTDateRange.MONTHLY) }
     var overviewPeriod by remember { mutableStateOf(OverviewPeriod.MONTH) }
-
-    var showAddEmptyCasesDialog by remember { mutableStateOf(false) }
 
     val monthMetrics = remember(state) {
         state.toDashboardMetrics(DashboardRange.MONTH)
@@ -600,15 +615,6 @@ private fun AdminDashboardContent(
         }
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
-        // Quick-add Empty Cases — below customers, above stock alert.
-        item {
-            EmptyCasesQuickCard(
-                currentCount = monthMetrics.emptyCansAtShop,
-                onAdd        = { showAddEmptyCasesDialog = true },
-            )
-        }
-        item { Spacer(modifier = Modifier.height(NTDp.md)) }
-
         // Stock alert — warning tab at the bottom, opens Inventory.
         item {
             StockAlertCard(
@@ -617,17 +623,6 @@ private fun AdminDashboardContent(
             )
         }
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
-    }
-
-    if (showAddEmptyCasesDialog) {
-        EmptyCasesStepperDialog(
-            currentCount = monthMetrics.emptyCansAtShop,
-            onDismiss    = { showAddEmptyCasesDialog = false },
-            onConfirm    = { qty ->
-                showAddEmptyCasesDialog = false
-                onAddEmptyCases(qty)
-            },
-        )
     }
 }
 
@@ -704,74 +699,6 @@ private fun StockAlertCard(
                 tint = NTColors.Warning,
                 modifier = Modifier.size(20.dp),
             )
-        }
-    }
-}
-
-// ── Quick-add Empty Cases card ────────────────────────────────
-
-@Composable
-private fun EmptyCasesQuickCard(
-    currentCount: Int,
-    onAdd: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = NTDp.screenPad)
-            .shadow(3.dp, RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
-            .background(NTColors.Surface)
-            .border(1.dp, NTColors.Border, RoundedCornerShape(24.dp))
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFFFFF3E8)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.AutoMirrored.Rounded.Undo,
-                contentDescription = null,
-                tint = Color(0xFFF97316),
-                modifier = Modifier.size(22.dp),
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "EMPTY CASES",
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.8.sp,
-                color = NTColors.TextTertiary,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = "$currentCount available",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = (-0.2).sp,
-                color = NTColors.TextPrimary,
-            )
-        }
-        Button(
-            onClick = onAdd,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFFF97316),
-                contentColor = Color.White,
-            ),
-            shape = RoundedCornerShape(14.dp),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
-            modifier = Modifier.height(44.dp),
-        ) {
-            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("Add", fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
     }
 }

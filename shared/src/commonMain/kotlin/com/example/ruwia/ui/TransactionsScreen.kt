@@ -9,11 +9,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,15 +20,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.Customer
-import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
@@ -112,11 +115,15 @@ fun TransactionsScreen(
         val q = query.trim().lowercase()
         state.saleEntries
             .filter { s ->
+                // sale_entries.date is TEXT — older rows carry a "YYYY-MM-DD h:mm AM"
+                // suffix, so compare on the 10-char day prefix. This also keeps
+                // Today/Week/Month working without a backfill migration.
+                val day = s.date.take(10)
                 when (preset) {
                     TxPreset.ALL -> true
-                    TxPreset.TODAY -> s.date == todayStr
-                    TxPreset.WEEK -> s.date >= weekAgoStr(todayStr)
-                    TxPreset.MONTH -> s.date.startsWith(todayStr.substring(0, 7))
+                    TxPreset.TODAY -> day == todayStr
+                    TxPreset.WEEK -> day >= weekAgoStr(todayStr)
+                    TxPreset.MONTH -> day.startsWith(todayStr.substring(0, 7))
                 }
             }
             .filter { s -> fCustomer.isBlank() || s.customerName.equals(fCustomer, ignoreCase = true) }
@@ -150,6 +157,7 @@ fun TransactionsScreen(
 
     val totalSales = filtered.sumOf { it.totalSelling }
     val totalProfit = filtered.sumOf { it.totalMargin }
+    val totalQty = filtered.sumOf { it.qty }
     val filterCount =
         (if (fCustomer.isNotBlank()) 1 else 0) +
         (if (fProduct.isNotBlank()) 1 else 0) +
@@ -223,6 +231,7 @@ fun TransactionsScreen(
                 totalSales = totalSales,
                 totalProfit = totalProfit,
                 count = filtered.size,
+                totalQty = totalQty,
             )
             Spacer(Modifier.height(16.dp))
         }
@@ -512,38 +521,77 @@ private fun TxChipsRow(
 // ── Summary ─────────────────────────────────────────────────────────────────
 
 @Composable
-private fun TxSummaryRow(totalSales: Double, totalProfit: Double, count: Int) {
-    Row(
+private fun TxSummaryRow(
+    totalSales: Double,
+    totalProfit: Double,
+    count: Int,
+    totalQty: Int,
+) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        TxSummaryCard(
-            label = "Total Sales",
-            value = formatTxAmount(totalSales),
-            icon = Icons.Rounded.AccountBalanceWallet,
-            iconBg = NTColors.PrimaryLight,
-            iconFg = NTColors.Primary,
-            modifier = Modifier.weight(1f),
-        )
-        TxSummaryCard(
-            label = "Total Profit",
-            value = formatTxAmount(totalProfit),
-            icon = Icons.Rounded.Savings,
-            iconBg = NTColors.SuccessLight,
-            iconFg = NTColors.Success,
-            modifier = Modifier.weight(1f),
-        )
-        TxSummaryCard(
-            label = "Transactions",
-            value = "$count",
-            icon = Icons.Rounded.ReceiptLong,
-            iconBg = NTColors.InfoLight,
-            iconFg = NTColors.Info,
-            modifier = Modifier.weight(1f),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            TxSummaryCard(
+                label = "Revenue",
+                value = formatTxAmount(totalSales),
+                icon = Icons.Rounded.AccountBalanceWallet,
+                iconBg = NTColors.PrimaryLight,
+                iconFg = NTColors.Primary,
+                modifier = Modifier.weight(1f),
+            )
+            TxSummaryCard(
+                label = "Profit",
+                value = formatTxAmount(totalProfit),
+                icon = Icons.Rounded.Savings,
+                iconBg = NTColors.SuccessLight,
+                iconFg = NTColors.Success,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            TxSummaryCard(
+                label = "Transactions",
+                value = formatTxCount(count),
+                icon = Icons.Rounded.ReceiptLong,
+                iconBg = NTColors.InfoLight,
+                iconFg = NTColors.Info,
+                modifier = Modifier.weight(1f),
+            )
+            TxSummaryCard(
+                label = "Quantity",
+                value = formatTxCount(totalQty),
+                icon = Icons.Rounded.Inventory2,
+                iconBg = NTColors.WarningLight,
+                iconFg = NTColors.WarningText,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
+}
+
+/** Plain-number Indian digit grouping for counts: 124850 → 1,24,850. */
+private fun formatTxCount(v: Int): String {
+    val digits = kotlin.math.abs(v).toLong().toString()
+    val neg = v < 0
+    if (digits.length <= 3) return (if (neg) "-" else "") + digits
+    val last3 = digits.takeLast(3)
+    var rest = digits.dropLast(3)
+    val parts = mutableListOf<String>()
+    while (rest.length > 2) {
+        parts.add(0, rest.takeLast(2))
+        rest = rest.dropLast(2)
+    }
+    if (rest.isNotEmpty()) parts.add(0, rest)
+    return (if (neg) "-" else "") + (parts + last3).joinToString(",")
 }
 
 @Composable
@@ -821,19 +869,28 @@ private fun TxFilterSheet(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            TxFilterSection(
-                label = "CUSTOMER",
-                options = customerOptions,
-                selected = selectedCustomer,
-                allLabel = "All customers",
-                onSelect = onSelectCustomer,
-            )
+            if (shopOptions.isNotEmpty()) {
+                TxFilterSection(
+                    label = "SHOP",
+                    options = shopOptions,
+                    selected = selectedShop,
+                    allLabel = "All shops",
+                    onSelect = onSelectShop,
+                )
+            }
             TxFilterSection(
                 label = "PRODUCT",
                 options = productOptions,
                 selected = selectedProduct,
                 allLabel = "All products",
                 onSelect = onSelectProduct,
+            )
+            TxFilterSection(
+                label = "CUSTOMER",
+                options = customerOptions,
+                selected = selectedCustomer,
+                allLabel = "All customers",
+                onSelect = onSelectCustomer,
             )
             if (employeeOptions.isNotEmpty()) {
                 TxFilterSection(
@@ -842,15 +899,6 @@ private fun TxFilterSheet(
                     selected = selectedEmployee,
                     allLabel = "Everyone",
                     onSelect = onSelectEmployee,
-                )
-            }
-            if (shopOptions.isNotEmpty()) {
-                TxFilterSection(
-                    label = "SHOP",
-                    options = shopOptions,
-                    selected = selectedShop,
-                    allLabel = "All shops",
-                    onSelect = onSelectShop,
                 )
             }
             Spacer(Modifier.height(16.dp))
@@ -960,8 +1008,12 @@ private fun TxEmptyState(hasQuery: Boolean) {
 }
 
 // ── Transaction Details ─────────────────────────────────────────────────────
+//  Premium SaaS-style bottom sheet. Every value derives from the SaleEntry +
+//  customer / employee / shop lookups — no invented business data, no
+//  navigation changes (back/close only dismisses the sheet).
 
-// ── Transaction Details bottom sheet ────────────────────────────────────────
+private val TxDetailsHeaderTop = Color(0xFF155E59)
+private val TxDetailsHeaderBottom = TxGlossTeal
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -980,155 +1032,906 @@ private fun TransactionDetailsSheet(
     else if (sale.qty > 0) sale.totalSelling / sale.qty else 0.0
     val unitCost = if (sale.purchasePricePerUnit > 0) sale.purchasePricePerUnit
     else if (sale.qty > 0) (sale.totalSelling - sale.totalMargin) / sale.qty else 0.0
+    val totalCost = unitCost * sale.qty
     val profitUp = sale.totalMargin >= 0.0
+
+    val ref = txRef(sale.id)
+    val dateText = dbToDisplayDate(sale.date)
+    val timeText = isoToDisplayTime(sale.createdAt)
+    val dateTimeText = if (timeText.isBlank()) dateText else "$dateText · $timeText"
+    val customerName = sale.customerName.ifBlank { "Walk-in" }
+    val customerIdShort = customer?.id?.take(8).orEmpty()
+    val phoneText = customer?.phone.orEmpty()
+    val addressText = customer?.address.orEmpty()
+    val sizeText = txSizeChip(sale.productName).orEmpty()
+    val unitPriceText = "${formatTxAmount(unitPrice)}/unit"
+
+    var overflowOpen by remember { mutableStateOf(false) }
+    var refCopied by remember { mutableStateOf(false) }
+    var idCopied by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
+    val uriHandler = LocalUriHandler.current
+
+    LaunchedEffect(refCopied) {
+        if (refCopied) {
+            kotlinx.coroutines.delay(1500)
+            refCopied = false
+        }
+    }
+    LaunchedEffect(idCopied) {
+        if (idCopied) {
+            kotlinx.coroutines.delay(1500)
+            idCopied = false
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = NTColors.Background,
         contentColor = NTColors.TextPrimary,
+        dragHandle = null,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 28.dp),
+                .verticalScroll(rememberScrollState()),
         ) {
-            Row(
+            // ── Premium dark-teal header (full-bleed, status-bar aware) ──
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = NTDp.screenPad),
-                verticalAlignment = Alignment.CenterVertically,
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(TxDetailsHeaderTop, TxDetailsHeaderBottom)
+                        )
+                    ),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Details",
-                        fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = (-0.2).sp, color = NTColors.TextPrimary,
-                    )
-                    Text(
-                        txRef(sale.id),
-                        fontSize = 12.sp, color = NTColors.TextSecondary,
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
+                // Soft decorative depth — single translucent circle, no clutter.
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .align(Alignment.BottomEnd)
+                        .offset(x = 72.dp, y = 72.dp)
+                        .size(180.dp)
                         .clip(CircleShape)
-                        .background(NTColors.Surface)
-                        .border(1.dp, NTColors.Border, CircleShape)
-                        .clickable(onClickLabel = "Close details", onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
+                        .background(Color.White.copy(alpha = 0.06f)),
+                )
+                // Subtle top gloss for a premium finish.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.12f),
+                                    Color.White.copy(alpha = 0.03f),
+                                    Color.Transparent,
+                                )
+                            )
+                        ),
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 10.dp, bottom = 18.dp),
                 ) {
-                    Icon(Icons.Rounded.Close, null, tint = NTColors.TextSecondary, modifier = Modifier.size(18.dp))
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            TxDetailCard(title = "CUSTOMER") {
-                TxDetailRow("Name", sale.customerName.ifBlank { "Walk-in" })
-                if (!customer?.phone.isNullOrBlank()) TxDetailRow("Phone", customer?.phone.orEmpty())
-                if (!customer?.address.isNullOrBlank()) TxDetailRow("Address", customer?.address.orEmpty())
-                if (!sale.customerName.isBlank() && customer?.id?.isNotBlank() == true) {
-                    TxDetailRow("Customer ID", customer?.id?.take(8).orEmpty())
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            TxDetailCard(title = "TRANSACTION") {
-                TxDetailRow("Reference", txRef(sale.id))
-                TxDetailRow("Date", dbToDisplayDate(sale.date))
-                val time = isoToDisplayTime(sale.createdAt)
-                if (time.isNotBlank()) TxDetailRow("Time", time)
-            }
-            Spacer(Modifier.height(12.dp))
-            TxDetailCard(title = "PRODUCT") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TxBottleThumb(productName = sale.productName)
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            sale.productName.ifBlank { "Product" },
-                            fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                            color = NTColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .size(width = 36.dp, height = 4.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.White.copy(alpha = 0.30f)),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color.White.copy(alpha = 0.10f))
+                                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+                                .clickable(onClickLabel = "Back", onClick = onDismiss),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            txSizeChip(sale.productName)?.let { TxVariantChip(it) }
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack, "Back",
+                                tint = Color.White, modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "Qty ${sale.qty}",
-                                fontSize = 12.sp, color = NTColors.TextSecondary,
+                                "Transaction Details",
+                                color = Color.White,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = (-0.3).sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "Complete information about this sale",
+                                color = Color.White.copy(alpha = 0.62f),
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White.copy(alpha = 0.10f))
+                                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+                                    .clickable(
+                                        onClickLabel = "More options",
+                                        onClick = { overflowOpen = true },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Rounded.MoreVert, "More options",
+                                    tint = Color.White, modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = overflowOpen,
+                                onDismissRequest = { overflowOpen = false },
+                                containerColor = NTColors.Surface,
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (refCopied) "Reference copied" else "Copy reference",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (refCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                            null,
+                                            tint = NTColors.TextSecondary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        runCatching {
+                                            clipboard.setText(AnnotatedString(ref))
+                                        }
+                                        refCopied = true
+                                        overflowOpen = false
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "Close details",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Rounded.Close, null,
+                                            tint = NTColors.TextSecondary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        overflowOpen = false
+                                        onDismiss()
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(Color.White.copy(alpha = 0.12f))
+                                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Tag, null,
+                                tint = Color(0xFF5EEAD4),
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                ref,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.4.sp,
+                                maxLines = 1,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            Icon(
+                                Icons.Rounded.CalendarToday, null,
+                                tint = Color.White.copy(alpha = 0.70f),
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                dateTimeText,
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.End,
                             )
                         }
                     }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            "₹${unitPrice.toLong()}/unit",
-                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                            color = NTColors.TextSecondary,
+                }
+            }
+
+            // ── Content cards ──
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 16.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                // ── Customer ──
+                TxPremiumCard(
+                    title = "Customer Details",
+                    subtitle = "Who this sale was billed to",
+                    icon = Icons.Rounded.Person,
+                    iconBg = NTColors.PrimaryLight,
+                    iconFg = NTColors.Primary,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(TxDetailsHeaderBottom),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                customerName.firstOrNull()?.uppercase() ?: "?",
+                                color = Color.White,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                customerName,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = (-0.2).sp,
+                                color = NTColors.TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            if (customerIdShort.isNotBlank()) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "ID · $customerIdShort",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = NTColors.TextTertiary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(NTColors.SurfaceVar)
+                                            .clickable(
+                                                onClickLabel = "Copy customer ID",
+                                                onClick = {
+                                                    runCatching {
+                                                        clipboard.setText(AnnotatedString(customerIdShort))
+                                                    }
+                                                    idCopied = true
+                                                },
+                                            ),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            if (idCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                            "Copy customer ID",
+                                            tint = if (idCopied) NTColors.Success else NTColors.TextTertiary,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    "Walk-in customer",
+                                    fontSize = 12.sp,
+                                    color = NTColors.TextSecondary,
+                                )
+                            }
+                        }
+                    }
+                    if (phoneText.isNotBlank()) {
+                        TxStackedInfoRow(
+                            icon = Icons.Rounded.Phone,
+                            iconBg = NTColors.InfoLight,
+                            iconFg = NTColors.Info,
+                            label = "Phone",
+                            value = phoneText,
+                            showDivider = addressText.isNotBlank() || customerIdShort.isNotBlank(),
                         )
-                        Text(
-                            formatTxAmount(sale.totalSelling),
-                            fontSize = 16.sp, fontWeight = FontWeight.ExtraBold,
-                            color = NTColors.TextPrimary,
+                    }
+                    if (addressText.isNotBlank()) {
+                        TxStackedInfoRow(
+                            icon = Icons.Rounded.LocationOn,
+                            iconBg = NTColors.ErrorLight,
+                            iconFg = NTColors.Error,
+                            label = "Address",
+                            value = addressText,
+                            showDivider = customerIdShort.isNotBlank(),
+                        )
+                    }
+                    if (customerIdShort.isNotBlank()) {
+                        TxStackedInfoRow(
+                            icon = Icons.Rounded.Badge,
+                            iconBg = NTColors.StockIconBg,
+                            iconFg = NTColors.StockIconFg,
+                            label = "Customer ID",
+                            value = customerIdShort,
+                            showDivider = false,
+                        )
+                    }
+                    if (phoneText.isNotBlank() || addressText.isNotBlank() || customerIdShort.isNotBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (phoneText.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 46.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(NTColors.Primary)
+                                        .clickable(
+                                            onClickLabel = "Call $customerName",
+                                            onClick = {
+                                                runCatching { uriHandler.openUri("tel:$phoneText") }
+                                            },
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Rounded.Call, null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(17.dp),
+                                        )
+                                        Spacer(Modifier.width(7.dp))
+                                        Text(
+                                            "Call",
+                                            color = Color.White,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
+                            if (addressText.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 46.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(NTColors.SurfaceVar)
+                                        .border(1.dp, NTColors.Border, RoundedCornerShape(14.dp))
+                                        .clickable(
+                                            onClickLabel = "Open address in maps",
+                                            onClick = {
+                                                val query = addressText.trim().replace(" ", "+")
+                                                runCatching {
+                                                    uriHandler.openUri(
+                                                        "https://www.google.com/maps/search/?api=1&query=$query"
+                                                    )
+                                                }
+                                            },
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Rounded.LocationOn, null,
+                                            tint = NTColors.TextSecondary,
+                                            modifier = Modifier.size(17.dp),
+                                        )
+                                        Spacer(Modifier.width(7.dp))
+                                        Text(
+                                            "Map",
+                                            color = NTColors.TextPrimary,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
+                            if (customerIdShort.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 46.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(NTColors.SurfaceVar)
+                                        .border(1.dp, NTColors.Border, RoundedCornerShape(14.dp))
+                                        .clickable(
+                                            onClickLabel = "Copy customer ID",
+                                            onClick = {
+                                                runCatching {
+                                                    clipboard.setText(AnnotatedString(customerIdShort))
+                                                }
+                                                idCopied = true
+                                            },
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            if (idCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                            null,
+                                            tint = if (idCopied) NTColors.Success else NTColors.TextSecondary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(Modifier.width(7.dp))
+                                        Text(
+                                            if (idCopied) "Copied" else "Copy",
+                                            color = NTColors.TextPrimary,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Transaction ──
+                TxPremiumCard(
+                    title = "Transaction Info",
+                    subtitle = "Reference, date and time",
+                    icon = Icons.Rounded.ReceiptLong,
+                    iconBg = NTColors.InfoLight,
+                    iconFg = NTColors.Info,
+                ) {
+                    TxStackedInfoRow(
+                        icon = Icons.Rounded.Tag,
+                        iconBg = NTColors.SurfaceVar,
+                        iconFg = NTColors.TextSecondary,
+                        label = "Reference",
+                        value = ref,
+                        valueColor = NTColors.TextPrimary,
+                        showDivider = true,
+                    )
+                    TxStackedInfoRow(
+                        icon = Icons.Rounded.CalendarToday,
+                        iconBg = NTColors.SurfaceVar,
+                        iconFg = NTColors.TextSecondary,
+                        label = "Date",
+                        value = dateText,
+                        showDivider = timeText.isNotBlank(),
+                    )
+                    if (timeText.isNotBlank()) {
+                        TxStackedInfoRow(
+                            icon = Icons.Rounded.Schedule,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
+                            label = "Time",
+                            value = timeText,
+                            showDivider = false,
                         )
                     }
                 }
-            }
-            Spacer(Modifier.height(12.dp))
-            TxDetailCard(title = "FINANCIAL SUMMARY") {
-                TxDetailRow("Subtotal", formatTxAmount(sale.totalSelling))
-                TxDetailRow("Total cost", formatTxAmount(unitCost * sale.qty))
-                TxDetailRow(
-                    "Total profit", formatTxAmount(sale.totalMargin),
-                    valueColor = if (profitUp) NTColors.Success else NTColors.Error,
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            TxDetailCard(title = "EMPLOYEE & SHOP") {
-                TxDetailRow("Sold by", employeeName)
-                TxDetailRow("Shop", shopName)
+
+                // ── Product ──
+                TxPremiumCard(
+                    title = "Product Details",
+                    subtitle = "Item sold in this transaction",
+                    icon = Icons.Rounded.Inventory2,
+                    iconBg = NTColors.WarningLight,
+                    iconFg = NTColors.WarningText,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(NTColors.SurfaceVar)
+                                .border(1.dp, NTColors.Border, RoundedCornerShape(18.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            val painter = txBottlePainter(sale.productName)
+                                ?: painterResource(Res.drawable.bottle_20l)
+                            androidx.compose.foundation.Image(
+                                painter = painter,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                sale.productName.ifBlank { "Product" },
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = (-0.2).sp,
+                                color = NTColors.TextPrimary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                if (sizeText.isNotBlank()) TxVariantChip(sizeText)
+                                TxVariantChip("Qty ${sale.qty}")
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                unitPriceText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = NTColors.TextSecondary,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TxStatTile(
+                            label = "Size",
+                            value = sizeText.ifBlank { "—" },
+                            modifier = Modifier.weight(1f),
+                        )
+                        TxStatTile(
+                            label = "Quantity",
+                            value = "${sale.qty}",
+                            modifier = Modifier.weight(1f),
+                        )
+                        TxStatTile(
+                            label = "Price",
+                            value = formatTxAmount(unitPrice),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(NTColors.SurfaceVar)
+                            .border(1.dp, NTColors.Border, RoundedCornerShape(14.dp))
+                            .padding(horizontal = 14.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "TOTAL AMOUNT",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.7.sp,
+                                color = NTColors.TextTertiary,
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                "${sale.qty} × ${formatTxAmount(unitPrice)}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = NTColors.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            formatTxAmount(sale.totalSelling),
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = (-0.5).sp,
+                            color = NTColors.TextPrimary,
+                            maxLines = 1,
+                        )
+                    }
+                }
+
+                // ── Financial summary ──
+                TxPremiumCard(
+                    title = "Financial Summary",
+                    subtitle = "Revenue, cost and margin",
+                    icon = Icons.Rounded.Savings,
+                    iconBg = NTColors.SuccessLight,
+                    iconFg = NTColors.Success,
+                ) {
+                    TxLedgerRow(label = "Subtotal", value = formatTxAmount(sale.totalSelling))
+                    TxLedgerRow(label = "Total cost", value = formatTxAmount(totalCost))
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.6f))
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (profitUp) NTColors.SuccessLight
+                                else NTColors.ErrorLight
+                            )
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.75f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.TrendingUp, null,
+                                tint = if (profitUp) NTColors.Success else NTColors.Error,
+                                modifier = Modifier.size(19.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Total Profit",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (profitUp) NTColors.SuccessText else NTColors.ErrorText,
+                                maxLines = 1,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "Margin on this sale",
+                                fontSize = 11.sp,
+                                color = (if (profitUp) NTColors.SuccessText else NTColors.ErrorText)
+                                    .copy(alpha = 0.72f),
+                                maxLines = 1,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            formatTxAmount(sale.totalMargin),
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = (-0.4).sp,
+                            color = if (profitUp) NTColors.SuccessText else NTColors.ErrorText,
+                            maxLines = 1,
+                        )
+                    }
+                }
+
+                // ── Employee & shop ──
+                TxPremiumCard(
+                    title = "Employee & Shop",
+                    subtitle = "Who made the sale and where",
+                    icon = Icons.Rounded.Store,
+                    iconBg = NTColors.StockIconBg,
+                    iconFg = NTColors.StockIconFg,
+                ) {
+                    TxStackedInfoRow(
+                        icon = Icons.Rounded.Badge,
+                        iconBg = NTColors.SurfaceVar,
+                        iconFg = NTColors.TextSecondary,
+                        label = "Sold by",
+                        value = employeeName,
+                        showDivider = true,
+                    )
+                    TxStackedInfoRow(
+                        icon = Icons.Rounded.Store,
+                        iconBg = NTColors.SurfaceVar,
+                        iconFg = NTColors.TextSecondary,
+                        label = "Shop",
+                        value = shopName,
+                        showDivider = false,
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TxDetailCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun TxPremiumCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    iconBg: Color,
+    iconFg: Color,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = NTDp.screenPad)
+            .shadow(3.dp, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
             .background(NTColors.Surface)
-            .border(1.dp, NTColors.Border, RoundedCornerShape(20.dp))
-            .padding(16.dp),
+            .border(1.dp, NTColors.Border.copy(alpha = 0.75f), RoundedCornerShape(20.dp))
+            .padding(18.dp),
     ) {
-        Text(
-            title, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp, color = NTColors.TextTertiary,
-        )
-        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(iconBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, null, tint = iconFg, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.2).sp,
+                    color = NTColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (subtitle.isNotBlank()) {
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        subtitle,
+                        fontSize = 12.sp,
+                        color = NTColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.55f))
+        Spacer(Modifier.height(6.dp))
         content()
     }
 }
 
 @Composable
-private fun TxDetailRow(label: String, value: String, valueColor: Color = NTColors.TextPrimary) {
+private fun TxStackedInfoRow(
+    icon: ImageVector,
+    iconBg: Color,
+    iconFg: Color,
+    label: String,
+    value: String,
+    valueColor: Color = NTColors.TextPrimary,
+    showDivider: Boolean = true,
+) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(iconBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, null, tint = iconFg, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    label.uppercase(),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.7.sp,
+                    color = NTColors.TextTertiary,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    value.ifBlank { "—" },
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = valueColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (showDivider) {
+            HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.45f))
+        }
+    }
+}
+
+@Composable
+private fun TxLedgerRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 5.dp),
+            .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, fontSize = 13.sp, color = NTColors.TextSecondary)
+        Text(
+            label,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = NTColors.TextSecondary,
+        )
         Spacer(Modifier.width(12.dp))
         Text(
-            value.ifBlank { "—" }, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-            color = valueColor, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            value,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = NTColors.TextPrimary,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun TxStatTile(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(NTColors.SurfaceVar)
+            .border(1.dp, NTColors.Border.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+            .padding(vertical = 10.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            label.uppercase(),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.7.sp,
+            color = NTColors.TextTertiary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            value,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = NTColors.TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -155,22 +156,35 @@ fun EmployeesScreen(
                         else active.count { it.role.equals(role, ignoreCase = true) }
                         val isSelected = role == selectedRole
                         item {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(NTDp.radFull))
-                                    .background(
-                                        if (isSelected) NTColors.AccentLight
-                                        else NTColors.PrimaryLight
+                            if (isSelected) {
+                                GlossyTealBox(
+                                    shape = RoundedCornerShape(NTDp.radFull),
+                                    onClick = { selectedRole = role },
+                                    onClickLabel = role,
+                                ) {
+                                    Text(
+                                        "$role · $count",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                                     )
-                                    .clickable { selectedRole = role }
-                                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    "$role · $count",
-                                    color = if (isSelected) NTColors.AccentDark else NTColors.Primary,
-                                    fontSize = 13.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(NTDp.radFull))
+                                        .background(NTColors.PrimaryLight)
+                                        .clickable { selectedRole = role }
+                                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        "$role · $count",
+                                        color = NTColors.Primary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
                         }
                     }
@@ -342,18 +356,12 @@ private fun EmployeeCard(
 
 @Composable
 private fun RoleBadge(role: String) {
-    val (bg, fg) = when (role.lowercase()) {
-        "manager" -> Color(0xFFFEF3C7) to Color(0xFFD97706)
-        "stock"   -> NTColors.PrimaryLight to NTColors.Primary
-        "cashier" -> NTColors.InfoLight   to NTColors.InfoText
-        "driver"  -> NTColors.SurfaceVar  to NTColors.TextSecondary
-        else      -> NTColors.SurfaceVar  to NTColors.TextSecondary
-    }
-    Box(
-        modifier = Modifier.clip(RoundedCornerShape(NTDp.radFull))
-            .background(bg).padding(horizontal = 8.dp, vertical = 3.dp)
-    ) {
-        Text(role.uppercase(), color = fg, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp)
+    GlossyTealBox(shape = RoundedCornerShape(NTDp.radFull)) {
+        Text(
+            role.uppercase(), color = Color.White,
+            fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
     }
 }
 
@@ -383,6 +391,7 @@ private fun ScreenIconButton(icon: androidx.compose.ui.graphics.vector.ImageVect
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EmployeeEditDialog(
     initial: EmployeeInfo,
@@ -432,21 +441,40 @@ private fun EmployeeEditDialog(
             Spacer(Modifier.height(NTDp.md))
             Text("Role", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextSecondary)
             Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 listOf("manager", "stock", "cashier", "driver").forEach { r ->
                     val selected = role.equals(r, ignoreCase = true)
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(NTDp.radFull))
-                            .background(if (selected) NTColors.AccentLight else NTColors.SurfaceVar)
-                            .clickable { role = r }
-                            .padding(horizontal = 14.dp, vertical = 7.dp),
-                    ) {
-                        Text(
-                            r.replaceFirstChar { it.uppercaseChar() },
-                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                            color = if (selected) NTColors.AccentDark else NTColors.TextSecondary,
-                        )
+                    if (selected) {
+                        GlossyTealBox(
+                            shape = RoundedCornerShape(NTDp.radFull),
+                            onClick = { role = r },
+                            onClickLabel = r,
+                        ) {
+                            Text(
+                                r.replaceFirstChar { it.uppercaseChar() },
+                                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(NTDp.radFull))
+                                .background(NTColors.SurfaceVar)
+                                .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radFull))
+                                .clickable { role = r }
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                        ) {
+                            Text(
+                                r.replaceFirstChar { it.uppercaseChar() },
+                                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                color = NTColors.TextSecondary,
+                            )
+                        }
                     }
                 }
             }
@@ -454,22 +482,41 @@ private fun EmployeeEditDialog(
             Spacer(Modifier.height(NTDp.md))
             Text("Shop", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextSecondary)
             Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 val shopOptions = shops.filter { it.isNotBlank() }
                 shopOptions.forEach { s ->
                     val selected = shop == s
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(NTDp.radFull))
-                            .background(if (selected) NTColors.AccentLight else NTColors.SurfaceVar)
-                            .clickable { shop = s }
-                            .padding(horizontal = 14.dp, vertical = 7.dp),
-                    ) {
-                        Text(
-                            s,
-                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                            color = if (selected) NTColors.AccentDark else NTColors.TextSecondary,
-                        )
+                    if (selected) {
+                        GlossyTealBox(
+                            shape = RoundedCornerShape(NTDp.radFull),
+                            onClick = { shop = s },
+                            onClickLabel = s,
+                        ) {
+                            Text(
+                                s,
+                                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(NTDp.radFull))
+                                .background(NTColors.SurfaceVar)
+                                .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radFull))
+                                .clickable { shop = s }
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                        ) {
+                            Text(
+                                s,
+                                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                color = NTColors.TextSecondary,
+                            )
+                        }
                     }
                 }
             }

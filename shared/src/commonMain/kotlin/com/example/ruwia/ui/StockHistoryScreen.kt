@@ -37,7 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ruwia.SystemBackHandler
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.isEmptyCansSource
-import com.example.ruwia.domain.shopMatchKey
+import com.example.ruwia.domain.resolveMovementProductName
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
@@ -51,8 +51,8 @@ import kotlinx.datetime.toLocalDateTime
 
 // ─────────────────────────────────────────────────────────────
 //  Stock History — Premium SaaS ledger view
-//  Deep-teal glossy hero · stats · search · shop · employee ·
-//  date range filter · date-wise order · date-grouped,
+//  Deep-teal glossy hero · stats · search (with filter icon) ·
+//  movement-type filter chips · date-wise order · date-grouped,
 //  colour-coded movement cards with expandable details.
 // ─────────────────────────────────────────────────────────────
 
@@ -119,6 +119,28 @@ private fun classify(m: StockMovement): MoveStyle {
     }
 }
 
+// ── Movement-type filter ─────────────────────────────────────
+//  Every ledger row belongs to exactly one bucket, so no entry can vanish
+//  behind a filter: transfers and empty-can returns get their own chips
+//  alongside All / Sold / Purchase / Adjust Stock.
+
+private enum class HistoryTypeFilter(val label: String, val icon: ImageVector) {
+    All("All", Icons.Rounded.Category),
+    Sold("Sold", Icons.Rounded.ShoppingCart),
+    Purchase("Purchase", Icons.Rounded.ShoppingBag),
+    Adjust("Adjust Stock", Icons.Rounded.Tune),
+    Transfer("Transfer", Icons.Rounded.SwapHoriz),
+    Returns("Returns", Icons.Rounded.Recycling),
+}
+
+private fun StockMovement.typeFilter(): HistoryTypeFilter = when {
+    source.startsWith("Transfer", ignoreCase = true) -> HistoryTypeFilter.Transfer
+    source.contains("Adjustment", ignoreCase = true) -> HistoryTypeFilter.Adjust
+    source.isNotEmpty() && source.isEmptyCansSource() -> HistoryTypeFilter.Returns
+    type == "outward" -> HistoryTypeFilter.Sold
+    else -> HistoryTypeFilter.Purchase
+}
+
 // ── Date helpers ────────────────────────────────────────────
 
 private fun isoDateToDisplay(s: String): String {
@@ -148,45 +170,34 @@ fun StockHistoryScreen(
     val products = state.productCategories
     val employees = state.employees
 
-    // Shop filter pinned to the business's two configured shops
-    val shopOptions = remember(state.shopNames) {
-        val configured = state.shopNames.take(2).map { it.trim() }.filter { it.isNotBlank() }
-        if (configured.isNotEmpty()) configured
-        else movements.map { it.shopName.trim() }.filter { it.isNotBlank() && it.lowercase() != "all shops" }
-            .distinctBy { shopMatchKey(it) }.take(2)
-    }
-
-    // Employee options derived from movements + state. Only resolvable
-    // employees are offered as filter chips (never a raw employee id) —
-    // soft-deleted employees stay in `state.employees` so their names remain.
-    val employeeOptions = remember(employees, movements) {
-        val movementEmpIds = movements.mapNotNull { it.employeeId }.distinct().toSet()
-        movementEmpIds.mapNotNull { empId ->
-            employees.find { it.id == empId }?.let { empId to it.name }
-        }.distinctBy { it.second }.sortedBy { it.second }
-    }
-
-    var selectedShop by remember { mutableStateOf("") }
-    var selectedEmployee by remember { mutableStateOf("") }
+    var typeFilter by remember { mutableStateOf(HistoryTypeFilter.All) }
     var dateFrom by remember { mutableStateOf("") }
     var dateTo by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
+    // Sale-record names by product id: recovers real product names for rows
+    // written before the movement product_name snapshot existed, so deleted
+    // products (e.g. Kinly 2L) keep their names in history.
+    val salesByProduct = remember(state.saleEntries) {
+        state.saleEntries.groupBy { it.productId }
+            .mapValues { (_, rows) -> rows.firstOrNull()?.productName.orEmpty() }
+    }
+    /** Display name for a row that survives product soft-delete. */
+    fun movementDisplayName(m: StockMovement): String =
+        resolveMovementProductName(m, products, salesByProduct) ?: m.source
     // Date-wise order only: newest first (default) or oldest first.
     var sortMode by remember { mutableStateOf(SortMode.Newest) }
     var query by remember { mutableStateOf("") }
 
-    val scoped = remember(movements, selectedShop, selectedEmployee, dateFrom, dateTo) {
+    val scoped = remember(movements, typeFilter, dateFrom, dateTo) {
         var list = movements
-        if (selectedShop.isNotBlank()) {
-            val key = shopMatchKey(selectedShop)
-            list = list.filter { shopMatchKey(it.shopName) == key }
-        }
-        if (selectedEmployee.isNotBlank()) {
-            list = list.filter { it.employeeId == selectedEmployee }
+        if (typeFilter != HistoryTypeFilter.All) {
+            list = list.filter { it.typeFilter() == typeFilter }
         }
         if (dateFrom.isNotBlank() || dateTo.isNotBlank()) {
             list = list.filter { m ->
+                // Rows without a parseable ISO date stay visible.
                 val d = m.createdAt?.take(10) ?: return@filter true
+                if (d.length != 10 || d[4] != '-') return@filter true
                 if (dateFrom.isNotBlank() && d < dateFrom) return@filter false
                 if (dateTo.isNotBlank() && d > dateTo) return@filter false
                 true
@@ -208,7 +219,7 @@ fun StockHistoryScreen(
         else {
             val low = q.lowercase()
             sorted.filter {
-                products.find { p -> p.id == it.productId }?.displayName?.lowercase()?.contains(low) == true
+                movementDisplayName(it).lowercase().contains(low)
                     || it.source.lowercase().contains(low)
                     || it.shopName.lowercase().contains(low)
             }
@@ -237,12 +248,8 @@ fun StockHistoryScreen(
             }
             item {
                 StockHistoryControls(
-                    shopOptions = shopOptions,
-                    selectedShop = selectedShop,
-                    onSelectShop = { selectedShop = it },
-                    employees = employeeOptions,
-                    selectedEmployee = selectedEmployee,
-                    onSelectEmployee = { selectedEmployee = it },
+                    typeFilter = typeFilter,
+                    onSelectType = { typeFilter = it },
                     dateFrom = dateFrom,
                     dateTo = dateTo,
                     onDateFromChange = { dateFrom = it },
@@ -272,8 +279,7 @@ fun StockHistoryScreen(
                     }
                     val isExpanded = expandedId == m.id
                     val isReturn = m.source.isNotEmpty() && m.source.isEmptyCansSource()
-                    val product = products.find { it.id == m.productId }
-                    val prodName = if (isReturn) "Empty Units" else (product?.displayName ?: "Water Bottle")
+                    val prodName = if (isReturn) "Empty Units" else movementDisplayName(m)
 
                     MovementCard(
                         movement = m,
@@ -397,17 +403,13 @@ private fun HistoryStat(
     }
 }
 
-// ── Controls (search + shop + employee + date + sort) ───────
+// ── Controls (search with filter icon + movement-type chips) ───────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun StockHistoryControls(
-    shopOptions: List<String>,
-    selectedShop: String,
-    onSelectShop: (String) -> Unit,
-    employees: List<Pair<String, String>>,
-    selectedEmployee: String,
-    onSelectEmployee: (String) -> Unit,
+    typeFilter: HistoryTypeFilter,
+    onSelectType: (HistoryTypeFilter) -> Unit,
     dateFrom: String,
     dateTo: String,
     onDateFromChange: (String) -> Unit,
@@ -420,11 +422,8 @@ private fun StockHistoryControls(
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
 
-    val filterCount =
-        (if (selectedShop.isNotBlank()) 1 else 0) +
-        (if (selectedEmployee.isNotBlank()) 1 else 0) +
-        (if (dateFrom.isNotBlank()) 1 else 0) +
-        (if (dateTo.isNotBlank()) 1 else 0)
+    val hasActiveFilter = typeFilter != HistoryTypeFilter.All ||
+        dateFrom.isNotBlank() || dateTo.isNotBlank()
 
     Column(
         modifier = Modifier
@@ -434,7 +433,7 @@ private fun StockHistoryControls(
             .border(1.dp, NTColors.Border, RoundedCornerShape(20.dp))
             .padding(14.dp),
     ) {
-        // Search
+        // Search with the filter entry point inside the box
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -461,80 +460,50 @@ private fun StockHistoryControls(
                     tint = NTColors.TextTertiary,
                     modifier = Modifier.size(16.dp).clickable { onQueryChange("") },
                 )
+                Spacer(Modifier.width(4.dp))
+            }
+            // Filter icon inside the search box (opens type + sort sheet)
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(if (hasActiveFilter) HistTeal else NTColors.Surface)
+                    .border(
+                        1.dp,
+                        if (hasActiveFilter) HistTeal else NTColors.Border,
+                        CircleShape,
+                    )
+                    .clickable(onClickLabel = "Open filters", onClick = { showFilterSheet = true }),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Tune,
+                    contentDescription = "Filters",
+                    tint = if (hasActiveFilter) Color.White else NTColors.TextSecondary,
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
 
         Spacer(Modifier.height(10.dp))
 
-        // Shop chips
+        // Movement-type chips
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item {
+            items(HistoryTypeFilter.entries) { option ->
                 HistoryChip(
-                    text = "All Shops",
-                    selected = selectedShop.isBlank(),
-                    icon = Icons.Rounded.Store,
-                    onClick = { onSelectShop("") },
-                )
-            }
-            items(shopOptions) { name ->
-                HistoryChip(
-                    text = name,
-                    selected = shopMatchKey(selectedShop) == shopMatchKey(name),
-                    onClick = { onSelectShop(name) },
+                    text = option.label,
+                    selected = typeFilter == option,
+                    icon = option.icon,
+                    onClick = { onSelectType(option) },
                 )
             }
         }
-
-        // Employee chips (only shown if employees contributed movements)
-        if (employees.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item {
-                    HistoryChip(
-                        text = "All Employees",
-                        selected = selectedEmployee.isBlank(),
-                        icon = Icons.Rounded.Person,
-                        onClick = { onSelectEmployee("") },
-                    )
-                }
-                items(employees, key = { it.first }) { (id, name) ->
-                    HistoryChip(
-                        text = name,
-                        selected = selectedEmployee == id,
-                        icon = Icons.Rounded.Person,
-                        onClick = { onSelectEmployee(id) },
-                    )
-                }
-            }
-        }
-
-        // Date range
-        Spacer(Modifier.height(8.dp))
-        DateRangeRow(
-            dateFrom = dateFrom,
-            dateTo = dateTo,
-            onFromChange = onDateFromChange,
-            onToChange = onDateToChange,
-        )
-
-        Spacer(Modifier.height(10.dp))
-
-        // Single entry point — shop / employee / dates / sort all live
-        // in one bottom sheet instead of inline chip rows.
-        FiltersButton(
-            activeCount = filterCount,
-            onClick = { showFilterSheet = true },
-        )
     }
 
     if (showFilterSheet) {
         HistoryFilterSheet(
-            shopOptions = shopOptions,
-            selectedShop = selectedShop,
-            onSelectShop = onSelectShop,
-            employees = employees,
-            selectedEmployee = selectedEmployee,
-            onSelectEmployee = onSelectEmployee,
+            typeFilter = typeFilter,
+            onSelectType = onSelectType,
             dateFrom = dateFrom,
             dateTo = dateTo,
             onDateFromChange = onDateFromChange,
@@ -543,8 +512,7 @@ private fun StockHistoryControls(
             onSelectSort = onSelectSort,
             resultCount = resultCount,
             onClearAll = {
-                onSelectShop("")
-                onSelectEmployee("")
+                onSelectType(HistoryTypeFilter.All)
                 onDateFromChange("")
                 onDateToChange("")
             },
@@ -555,71 +523,9 @@ private fun StockHistoryControls(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FiltersButton(
-    activeCount: Int,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(NTColors.SurfaceVar)
-            .border(1.dp, NTColors.Border, RoundedCornerShape(12.dp))
-            .clickable(onClickLabel = "Open filters", onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            Icons.Rounded.Tune,
-            contentDescription = null,
-            tint = HistTeal,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = "Filters & sort",
-            color = NTColors.TextPrimary,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.weight(1f),
-        )
-        if (activeCount > 0) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(HistTeal)
-                    .padding(horizontal = 9.dp, vertical = 3.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "$activeCount",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-        }
-        Icon(
-            Icons.Rounded.ExpandMore,
-            contentDescription = null,
-            tint = NTColors.TextTertiary,
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 private fun HistoryFilterSheet(
-    shopOptions: List<String>,
-    selectedShop: String,
-    onSelectShop: (String) -> Unit,
-    employees: List<Pair<String, String>>,
-    selectedEmployee: String,
-    onSelectEmployee: (String) -> Unit,
+    typeFilter: HistoryTypeFilter,
+    onSelectType: (HistoryTypeFilter) -> Unit,
     dateFrom: String,
     dateTo: String,
     onDateFromChange: (String) -> Unit,
@@ -653,7 +559,7 @@ private fun HistoryFilterSheet(
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "Refine the ledger by shop, staff, date or order",
+                        text = "Refine the ledger by movement type, date or order",
                         fontSize = 13.sp,
                         color = NTColors.TextSecondary,
                     )
@@ -678,47 +584,16 @@ private fun HistoryFilterSheet(
             }
 
             Spacer(Modifier.height(18.dp))
-            FilterSectionLabel("SHOP")
+            FilterSectionLabel("MOVEMENT TYPE")
             Spacer(Modifier.height(8.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item {
+                items(HistoryTypeFilter.entries) { option ->
                     HistoryChip(
-                        text = "All Shops",
-                        selected = selectedShop.isBlank(),
-                        icon = Icons.Rounded.Store,
-                        onClick = { onSelectShop("") },
+                        text = option.label,
+                        selected = typeFilter == option,
+                        icon = option.icon,
+                        onClick = { onSelectType(option) },
                     )
-                }
-                items(shopOptions) { name ->
-                    HistoryChip(
-                        text = name,
-                        selected = shopMatchKey(selectedShop) == shopMatchKey(name),
-                        onClick = { onSelectShop(name) },
-                    )
-                }
-            }
-
-            if (employees.isNotEmpty()) {
-                Spacer(Modifier.height(16.dp))
-                FilterSectionLabel("EMPLOYEE")
-                Spacer(Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item {
-                        HistoryChip(
-                            text = "All Employees",
-                            selected = selectedEmployee.isBlank(),
-                            icon = Icons.Rounded.Person,
-                            onClick = { onSelectEmployee("") },
-                        )
-                    }
-                    items(employees, key = { it.first }) { (id, name) ->
-                        HistoryChip(
-                            text = name,
-                            selected = selectedEmployee == id,
-                            icon = Icons.Rounded.Person,
-                            onClick = { onSelectEmployee(id) },
-                        )
-                    }
                 }
             }
 
@@ -862,14 +737,14 @@ private fun DateRangeRow(
     }
 
     if (showFromPicker) {
-        val state = rememberDatePickerState(
+        val pickerState = rememberDatePickerState(
             initialSelectedDateMillis = dateStrToEpochMillis(dateFrom),
         )
         DatePickerDialog(
             onDismissRequest = { showFromPicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    state.selectedDateMillis?.let { onFromChange(epochMillisToDateStr(it)) }
+                    pickerState.selectedDateMillis?.let { onFromChange(epochMillisToDateStr(it)) }
                     showFromPicker = false
                 }) { Text("OK", color = HistTeal) }
             },
@@ -877,19 +752,19 @@ private fun DateRangeRow(
                 TextButton(onClick = { showFromPicker = false }) { Text("Cancel", color = NTColors.TextSecondary) }
             },
         ) {
-            DatePicker(state = state)
+            DatePicker(state = pickerState)
         }
     }
 
     if (showToPicker) {
-        val state = rememberDatePickerState(
+        val pickerState = rememberDatePickerState(
             initialSelectedDateMillis = dateStrToEpochMillis(dateTo),
         )
         DatePickerDialog(
             onDismissRequest = { showToPicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    state.selectedDateMillis?.let { onToChange(epochMillisToDateStr(it)) }
+                    pickerState.selectedDateMillis?.let { onToChange(epochMillisToDateStr(it)) }
                     showToPicker = false
                 }) { Text("OK", color = HistTeal) }
             },
@@ -897,7 +772,7 @@ private fun DateRangeRow(
                 TextButton(onClick = { showToPicker = false }) { Text("Cancel", color = NTColors.TextSecondary) }
             },
         ) {
-            DatePicker(state = state)
+            DatePicker(state = pickerState)
         }
     }
 }
@@ -1159,7 +1034,7 @@ private fun StockHistoryEmpty() {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "Try adjusting the shop, employee, date range or search term.",
+            text = "Try a different type, date range or search term.",
             fontSize = 13.sp,
             color = NTColors.TextTertiary,
             textAlign = TextAlign.Center,
