@@ -38,6 +38,7 @@ import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.theme.RuwiaColor
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
@@ -49,34 +50,9 @@ data class OutwardLineItem(
     val sellPriceText: String,
 )
 
-// ── Date helpers (KMP-compatible, no external deps) ───────────────────────────
+// ── Public entry-point ────────────────────────────────────────────────────────
 
-private fun Long.toDisplayDate(): String {
-    var days = (this / 86400000L).toInt()
-    var year = 1970
-    while (true) {
-        val leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
-        val diy = if (leap) 366 else 365
-        if (days < diy) break
-        days -= diy; year++
-    }
-    val leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
-    val dpm = intArrayOf(31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-    val mon = arrayOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
-    var m = 0
-    while (days >= dpm[m]) { days -= dpm[m]; m++ }
-    return "${days + 1} ${mon[m]} $year"
-}
-
-private fun formatTime(hour: Int, minute: Int): String {
-    val h = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
-    val ampm = if (hour >= 12) "PM" else "AM"
-    return "$h:${minute.toString().padStart(2, '0')} $ampm"
-}
-
-// ── Public entry-point ─────────────────────────────────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, kotlin.uuid.ExperimentalUuidApi::class)
 @Composable
 fun AddSaleScreen(
     products: List<ProductCategory> = emptyList(),
@@ -84,17 +60,36 @@ fun AddSaleScreen(
     /** Shop-scoped stock movements used to compute live per-product available
      *  stock. Pass the employee's `shopMovements` from the ViewModel state. */
     stockMovements: List<StockMovement> = emptyList(),
+    /** The currently selected customer for whom customer-specific pricing may apply. */
+    selectedCustomer: Customer? = null,
+    /** Callback invoked when the customer selection changes. */
+    onCustomerChange: (Customer) -> Unit = {},
+    /** Function to get the effective selling price for a customer and product.
+     *  Returns the customer-specific price if available, otherwise the product's default sell price. */
+    getEffectivePrice: (customerId: String, productId: String) -> Double = { _, _ -> 0.0 },
+    /** Live custom-price cache (product id -> price) for the selected customer.
+     *  Lines re-price whenever this map arrives/updates. */
+    customPrices: Map<String, Double> = emptyMap(),
     errorMessage: String? = null,
     onNewCustomer: (Customer) -> Unit = {},
     onClearError: () -> Unit = {},
     onBack: () -> Unit,
+    /** True while a save is in flight — the Save button locks to prevent
+     *  double-tap duplicate sales. */
+    isSaving: Boolean = false,
     /** Called when the employee taps "Save sale". The third arg is the number
      *  of empty cans the employee collected from this customer at delivery.
-     *  The fourth arg is the selected sale date in display format (e.g. "25 Jun 2026"). */
-    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String) -> Unit = { _, _, _, _ -> },
+     *  The fourth arg is the selected sale date in display format (e.g. "29/09/2026").
+     *  The fifth arg is the selected sale time in display format (e.g. "2:30 PM").
+     *  The sixth arg is this draft's idempotency key: stable for the screen's
+     *  lifetime, so retried/double-tapped saves with the same key can never
+     *  deduct stock twice. */
+    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String, saleTime: String, saleKey: String) -> Unit = { _, _, _, _, _, _ -> },
     shopName: String = "",
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
+    /** Idempotency key for this sale draft (see onSave). */
+    val saleKey = remember { Uuid.random().toString() }
     var errorDialogText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(errorMessage) {
         errorMessage?.let {
@@ -137,7 +132,7 @@ fun AddSaleScreen(
             } else emptyList()
         )
     }
-    var selectedCustomer   by remember { mutableStateOf<Customer?>(null) }
+    var selectedCustomer   by remember { mutableStateOf(selectedCustomer) }
     var showCustomerPicker by remember { mutableStateOf(false) }
     var editingLineIdx     by remember { mutableStateOf<Int?>(null) }
     var showProductPicker  by remember { mutableStateOf(false) }
@@ -147,109 +142,52 @@ fun AddSaleScreen(
      *  movement so the admin can see returned empties immediately. */
     var emptyCansText      by remember { mutableStateOf("") }
 
-    // Date / time — use current date/time via kotlinx-datetime
-    var displayDate by remember {
-        mutableStateOf(
-            try {
-                val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-                val mon = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
-                "${now.dayOfMonth} ${mon[now.monthNumber - 1]} ${now.year}"
-            } catch (_: Exception) { "" }
-        )
+    /** Effective per-unit price text for a product and the selected customer:
+     *  the customer's custom price when one exists, else the product default. */
+    fun priceTextFor(product: ProductCategory): String {
+        val custom = selectedCustomer?.id?.takeIf { it.isNotBlank() }?.let { cid ->
+            customPrices[product.id]?.takeIf { it > 0 } ?: getEffectivePrice(cid, product.id)
+        } ?: 0.0
+        val price = if (custom > 0) custom else product.defaultSellPrice
+        return if (price > 0) price.toInt().toString() else ""
     }
-    var displayTime by remember {
-        mutableStateOf(
-            try {
-                val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-                val h = now.hour
-                val hh = if (h == 0) 12 else if (h > 12) h - 12 else h
-                val ampm = if (h >= 12) "PM" else "AM"
-                "$hh:${now.minute.toString().padStart(2,'0')} $ampm"
-            } catch (_: Exception) { "" }
-        )
+
+    // Whenever the customer changes — or their custom prices finish loading
+    // from the database — re-price every line so a custom price is reflected
+    // immediately in each sale count.
+    LaunchedEffect(selectedCustomer?.id, customPrices) {
+        val cid = selectedCustomer?.id
+        if (!cid.isNullOrBlank() && products.isNotEmpty()) {
+            lineItems = lineItems.map { item ->
+                val product = products.getOrNull(item.productIdx) ?: return@map item
+                item.copy(sellPriceText = priceTextFor(product))
+            }
+        }
     }
-    var showDatePicker by remember { mutableStateOf(false) }
-    var showTimePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState()
-    val timePickerState = rememberTimePickerState(initialHour = 11, initialMinute = 16)
+
+    // Sale timestamp is always the present moment — the employee cannot edit
+    // it. Computed fresh at save time so it reflects the actual entry moment.
+    fun nowSaleDate(): String = try {
+        com.example.ruwia.util.toDisplayDate(Clock.System.now())
+    } catch (_: Exception) { "" }
+    fun nowSaleTime(): String = try {
+        val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+        val hh = if (now.hour == 0) 12 else if (now.hour > 12) now.hour - 12 else now.hour
+        val ampm = if (now.hour >= 12) "PM" else "AM"
+        "$hh:${now.minute.toString().padStart(2, '0')} $ampm"
+    } catch (_: Exception) { "" }
 
     val totalQty   = lineItems.sumOf { it.qty }
-    val lineTotals = lineItems.sumOf {
-        (it.sellPriceText.toDoubleOrNull() ?: 0.0) * it.qty
-    }
-    val isSaveEnabled = selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
+    val isSaveEnabled = !isSaving && selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
 
-    // ── Per-product available stock (derived from shop movements) ─────────────
-    // Maps product.id -> available units at this shop (inward - outward).
-    // Used to block the employee from selling more than what's in stock.
-    val cleanShop = shopName.trim().lowercase().substringBefore("·").trim()
-    val isMainShop = cleanShop.startsWith("shop 1") ||
-                     cleanShop.contains("main") ||
-                     cleanShop.contains("warehouse") ||
-                     cleanShop.contains("primary") ||
-                     cleanShop.isBlank()
-    val availableUnitsMap: Map<String, Int> = remember(stockMovements, products, shopName) {
-        products.associate { product ->
-            if (isMainShop) {
-                product.id to product.stockAvailable
-            } else {
-                val rows = stockMovements.filter { it.productId == product.id }
-                val inward  = rows.filter { it.type == "inward"  && !it.source.trim().startsWith("Empty Cases", ignoreCase = true) }.sumOf { it.qty }
-                val outward = rows.filter { it.type == "outward" }.sumOf { it.qty }
-                product.id to (inward - outward).coerceAtLeast(0)
-            }
-        }
-    }
-
-    // ── Dialogs ────────────────────────────────────────────────────────────────
-    if (showDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { millis ->
-                        displayDate = millis.toDisplayDate()
-                    }
-                    showDatePicker = false
-                }) { Text("OK") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
-            },
-        ) { DatePicker(state = datePickerState) }
-    }
-
-    if (showTimePicker) {
-        Dialog(onDismissRequest = { showTimePicker = false }) {
-            Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = RuwiaColor.Surface,
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        "Select time",
-                        fontSize   = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = RuwiaColor.TextPrimary,
-                        modifier   = Modifier.align(Alignment.Start),
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    TimePicker(state = timePickerState)
-                    Spacer(Modifier.height(8.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { showTimePicker = false }) { Text("Cancel") }
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = {
-                            displayTime = formatTime(timePickerState.hour, timePickerState.minute)
-                            showTimePicker = false
-                        }) { Text("OK") }
-                    }
-                }
-            }
-        }
+    // ── Per-product available stock ─────────────────────────────────────────
+    // Same business-wide figure as the Stock tab's "All Shops" view, the
+    // home KPI and the admin inventory (see effectiveStockMap) — the screen
+    // must never show 0 for stock the user can see elsewhere. The repo
+    // deducts each line shop-wise (own shop first, spillover to the buckets
+    // holding the stock), so saving always reduces the total correctly.
+    val availableUnitsMap: Map<String, Int> = remember(stockMovements, products) {
+        com.example.ruwia.domain.effectiveStockMap(products, stockMovements)
     }
 
     Box(modifier = Modifier.fillMaxSize().background(RuwiaColor.Background)) {
@@ -260,9 +198,9 @@ fun AddSaleScreen(
             bottomBar = {
                 SaleBottomBar(
                     isSaveEnabled = isSaveEnabled,
+                    isSaving = isSaving,
                     lineCount = lineItems.size,
                     totalQty = totalQty,
-                    totalAmount = lineTotals,
                     onCancel = onBack,
                     onSave   = {
                         val empties = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
@@ -278,10 +216,10 @@ fun AddSaleScreen(
                         if (overStockLine != null) {
                             val product = products.getOrNull(overStockLine.productIdx)
                             val availRaw = product?.let { availableUnitsMap[it.id] ?: it.stockAvailable } ?: 0
-                            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cans\nAvailable: $availRaw Cans\n\nPlease reduce the quantity and try again."
+                            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cases\nAvailable: $availRaw Cases\n\nPlease reduce the quantity and try again."
                             return@SaleBottomBar
                         }
-                        onSave(selectedCustomer!!.name, lineItems, empties, displayDate)
+                        onSave(selectedCustomer!!.name, lineItems, empties, nowSaleDate(), nowSaleTime(), saleKey)
                     },
                 )
             },
@@ -306,7 +244,7 @@ fun AddSaleScreen(
                 }
                 Spacer(Modifier.height(10.dp))
 
-                // ── Section 2: Products (multi) ────────────────
+                // ── Section 2: Products (multi) ────────────
                 MultiProductSection(
                     sectionNumber = 2,
                     products      = products,
@@ -321,11 +259,6 @@ fun AddSaleScreen(
                             if (i == lineIdx) item.copy(qty = newQty) else item
                         }
                     },
-                    onPriceChange = { lineIdx, newPrice ->
-                        lineItems = lineItems.mapIndexed { i, item ->
-                            if (i == lineIdx) item.copy(sellPriceText = newPrice) else item
-                        }
-                    },
                     onRemove      = { lineIdx ->
                         lineItems = lineItems.filterIndexed { i, _ -> i != lineIdx }
                     },
@@ -337,31 +270,33 @@ fun AddSaleScreen(
                         lineItems = lineItems + OutwardLineItem(
                             productIdx    = 0,
                             qty           = 1,
-                            sellPriceText = firstProduct.defaultSellPrice.let {
-                                if (it > 0) it.toInt().toString() else ""
-                            },
+                            sellPriceText = priceTextFor(firstProduct),
                         )
                     },
                 )
                 Spacer(Modifier.height(10.dp))
 
-                // ── Section 3: Date & time ─────────────────────
-                SaleFormSection(number = 3, title = "Date & time") {
+                // ── Section 3: Entry time (locked to now, not editable) ──
+                SaleFormSection(number = 3, title = "Entry time") {
                     Row(modifier = Modifier.fillMaxWidth()) {
-                        SaleDateTimeButton(
+                        SaleTimestampView(
                             icon    = Icons.Rounded.DateRange,
-                            label   = displayDate,
-                            onClick = { showDatePicker = true },
+                            label   = nowSaleDate(),
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(Modifier.width(10.dp))
-                        SaleDateTimeButton(
+                        SaleTimestampView(
                             icon    = Icons.Rounded.Schedule,
-                            label   = displayTime,
-                            onClick = { showTimePicker = true },
+                            label   = nowSaleTime(),
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Auto-recorded at entry time · not editable",
+                        fontSize = 11.sp,
+                        color = RuwiaColor.TextMuted,
+                    )
                 }
                 Spacer(Modifier.height(20.dp))
 
@@ -388,7 +323,7 @@ fun AddSaleScreen(
                 initialCustomers = customers,
                 selectedCustomer = selectedCustomer,
                 onDismiss        = { showCustomerPicker = false },
-                onSelect         = { selectedCustomer = it },
+                onSelect         = { selectedCustomer = it; onCustomerChange(it) },
                 onNewCustomer    = onNewCustomer,
             )
         }
@@ -461,8 +396,7 @@ fun AddSaleScreen(
                                             if (i == lineIdx) {
                                                 item.copy(
                                                     productIdx    = originalIdx,
-                                                    sellPriceText = if (p.defaultSellPrice > 0)
-                                                        p.defaultSellPrice.toInt().toString() else "",
+                                                    sellPriceText = priceTextFor(p),
                                                 )
                                             } else item
                                         }
@@ -495,9 +429,9 @@ fun AddSaleScreen(
                                 Column {
                                     Text(p.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
                                     val limitText = availableUnitsMap[p.id]?.let {
-                                        "$it Cans available"
-                                    } ?: "Available stock: ${p.stockAvailable} Cans"
-                                    Text("₹${p.defaultSellPrice.toInt()}/Can  ·  $limitText", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                                        "$it Cases available"
+                                    } ?: "Available stock: ${p.stockAvailable} Cases"
+                                    Text(limitText, fontSize = 11.sp, color = RuwiaColor.TextMuted)
                                 }
                             }
                             if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(18.dp))
@@ -525,7 +459,7 @@ private fun SaleTopBar(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp)
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 16.dp),
         ) {
             Box(
                 modifier = Modifier
@@ -556,7 +490,7 @@ private fun SaleTopBar(onBack: () -> Unit) {
     }
 }
 
-// ── Hero card ──────────────────────────────────────────────────────────────────
+// ── Hero card ────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun SaleHeroCard() {
@@ -616,7 +550,7 @@ private fun SaleFormSection(
     }
 }
 
-// ── Multi-product section ──────────────────────────────────────────────────────
+// ── Multi-product section ────────────────────────────────────────────────────
 
 @Composable
 private fun MultiProductSection(
@@ -626,7 +560,6 @@ private fun MultiProductSection(
     availableUnitsMap: Map<String, Int> = emptyMap(),
     onChangeProduct: (lineIdx: Int) -> Unit,
     onQtyChange: (lineIdx: Int, qty: Int) -> Unit,
-    onPriceChange: (lineIdx: Int, price: String) -> Unit,
     onRemove: (lineIdx: Int) -> Unit,
     onAdd: () -> Unit,
 ) {
@@ -655,7 +588,7 @@ private fun MultiProductSection(
         }
         Spacer(Modifier.height(14.dp))
 
-        // ── Empty state when no products are available ─────────────────
+        // ── Empty state when no products are available ─────────────
         // Without this guard the line-item renderer below would crash
         // trying to look up a product in an empty list.
         if (products.isEmpty()) {
@@ -707,11 +640,9 @@ private fun MultiProductSection(
                 product      = product,
                 qty          = item.qty,
                 availableUnits = availableUnitsRaw,
-                priceText    = item.sellPriceText,
                 showRemove   = lineItems.size > 1,
                 onProductTap = { onChangeProduct(idx) },
                 onQtyChange  = { onQtyChange(idx, it) },
-                onPriceChange = { onPriceChange(idx, it) },
                 onRemove     = { onRemove(idx) },
             )
         }
@@ -739,11 +670,9 @@ private fun SaleLineCard(
     product: ProductCategory,
     qty: Int,
     availableUnits: Int,
-    priceText: String,
     showRemove: Boolean,
     onProductTap: () -> Unit,
     onQtyChange: (Int) -> Unit,
-    onPriceChange: (String) -> Unit,
     onRemove: () -> Unit,
 ) {
     val isOverStock = qty > availableUnits
@@ -801,7 +730,7 @@ private fun SaleLineCard(
 
         Spacer(Modifier.height(10.dp))
 
-        // ── Qty stepper + price ────────────────────────────────
+        // ── Qty stepper ────────────────────────────────────
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -843,39 +772,9 @@ private fun SaleLineCard(
                 }
                 SaleStepBtn(Icons.Rounded.Add, qty < availableUnits) { onQtyChange(qty + 1) }
             }
-
-            Spacer(Modifier.width(10.dp))
-
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .background(RuwiaColor.LightGray, RoundedCornerShape(10.dp))
-                    .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
-                Spacer(Modifier.width(4.dp))
-                Box(modifier = Modifier.weight(1f)) {
-                    BasicTextField(
-                        value = priceText,
-                        onValueChange = onPriceChange,
-                        textStyle = TextStyle(
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = RuwiaColor.TextPrimary
-                        ),
-                        cursorBrush = SolidColor(RuwiaColor.TealPrimary),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                Text("/Can", fontSize = 11.sp, color = RuwiaColor.TextSecondary)
-            }
         }
 
-        val availLabel = "$availableUnits Cans available"
+        val availLabel = "$availableUnits Cases available"
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier
@@ -909,111 +808,39 @@ private fun SaleLineCard(
     }
 }
 
-// ── Date & time button ────────────────────────────────────────────────────────
+// ── Timestamp view (locked, non-interactive) ────────────────────────────────────
 
 @Composable
-private fun SaleDateTimeButton(
+private fun SaleTimestampView(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
-    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier
             .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(16.dp))
+        Icon(icon, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
-        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextSecondary)
     }
 }
 
-// ── Sale summary card (no margin shown to employee) ────────────────────────────
-
-@Composable
-private fun SaleSummaryCard(
-    customer: Customer?,
-    totalQty: Int,
-    lineCount: Int,
-    sellingTotal: Double,
-) {
-    Box(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(RuwiaColor.TealDark),
-    ) {
-        Canvas(modifier = Modifier.matchParentSize()) {
-            drawCircle(Color.White.copy(alpha = 0.07f), size.height * 1.6f, Offset(size.width * 0.68f, size.height * 0.95f))
-        }
-        Column(modifier = Modifier.padding(20.dp)) {
-            SaleSummaryRow("Customer",   customer?.name ?: "—")
-            Spacer(Modifier.height(6.dp))
-            SaleSummaryRow("Products",  "$lineCount type${if (lineCount != 1) "s" else ""}")
-            Spacer(Modifier.height(6.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Total qty", fontSize = 13.sp, color = Color.White.copy(alpha = 0.74f))
-                AnimatedContent(
-                    targetState = totalQty,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> -height } + fadeOut())
-                        } else {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> height } + fadeOut())
-                        }.using(SizeTransform(clip = false))
-                    }
-                ) { targetQty ->
-                    Text("$targetQty units", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.30f), thickness = 0.8.dp)
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Total sale value", fontSize = 13.sp, color = Color.White.copy(alpha = 0.78f))
-                AnimatedContent(
-                    targetState = sellingTotal,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> -height } + fadeOut())
-                        } else {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> height } + fadeOut())
-                        }.using(SizeTransform(clip = false))
-                    }
-                ) { targetTotal ->
-                    Text("₹${targetTotal.toInt()}", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SaleSummaryRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, fontSize = 13.sp, color = Color.White.copy(alpha = 0.74f))
-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-    }
-}
-
-// ── Bottom bar ─────────────────────────────────────────────────────────────────
+// ── Bottom bar ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun SaleBottomBar(
     isSaveEnabled: Boolean,
+    isSaving: Boolean = false,
     lineCount: Int,
     totalQty: Int,
-    totalAmount: Double,
     onCancel: () -> Unit,
     onSave: () -> Unit
 ) {
     val scale = remember { Animatable(1f) }
-    LaunchedEffect(totalQty, totalAmount) {
+    LaunchedEffect(totalQty) {
         if (totalQty > 0) {
             scale.animateTo(
                 targetValue = 1.03f,
@@ -1044,7 +871,6 @@ private fun SaleBottomBar(
             // Summary row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AnimatedContent(
@@ -1066,26 +892,6 @@ private fun SaleBottomBar(
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = RuwiaColor.TextSecondary
-                    )
-                }
-
-                AnimatedContent(
-                    targetState = totalAmount,
-                    transitionSpec = {
-                        if (targetState > initialState) {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> -height } + fadeOut())
-                        } else {
-                            (slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)) { height -> -height } + fadeIn() + scaleIn(initialScale = 0.9f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow))) togetherWith
-                            (slideOutVertically { height -> height } + fadeOut())
-                        }.using(SizeTransform(clip = false))
-                    }
-                ) { targetAmount ->
-                    Text(
-                        text = "₹${targetAmount.toInt()}",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = RuwiaColor.TextPrimary
                     )
                 }
             }
@@ -1115,7 +921,10 @@ private fun SaleBottomBar(
                         disabledContentColor = RuwiaColor.TextMuted
                     )
                 ) {
-                    Text("Save Sale", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isSaving) "Saving…" else "Save Sale",
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }

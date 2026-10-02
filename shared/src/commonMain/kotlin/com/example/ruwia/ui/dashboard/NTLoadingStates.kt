@@ -33,69 +33,72 @@ fun NTDashboardSkeleton(contentPadding: PaddingValues = PaddingValues()) {
         modifier = Modifier.fillMaxSize().background(NTColors.Background)
             .padding(contentPadding)
     ) {
-        // Header row
+        // Header row — mirrors NTDashboardHeader: logo + titles + bell + avatar
         Row(
             modifier = Modifier.fillMaxWidth()
-                .padding(horizontal = NTDp.screenPad, vertical = NTDp.md),
+                .padding(horizontal = NTDp.screenPad, vertical = NTDp.sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            NTShimmerBox(width = 48.dp, height = 48.dp, shape = CircleShape)
-            Spacer(modifier = Modifier.width(NTDp.md))
+            NTShimmerBox(width = 44.dp, height = 44.dp, shape = RoundedCornerShape(12.dp))
+            Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 NTShimmerBox(width = 100.dp, height = 10.dp)
                 Spacer(modifier = Modifier.height(6.dp))
-                NTShimmerBox(width = 160.dp, height = 18.dp)
+                NTShimmerBox(width = 150.dp, height = 19.dp)
             }
+            NTShimmerBox(width = 44.dp, height = 44.dp, shape = CircleShape)
+            Spacer(modifier = Modifier.width(10.dp))
+            NTShimmerBox(width = 44.dp, height = 44.dp, shape = CircleShape)
         }
         // Greeting
         Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
-            NTShimmerBox(width = 220.dp, height = 26.dp)
+            Spacer(modifier = Modifier.height(NTDp.sm))
+            NTShimmerBox(width = 210.dp, height = 24.dp)
             Spacer(modifier = Modifier.height(8.dp))
-            NTShimmerBox(width = 280.dp, height = 14.dp)
+            NTShimmerBox(width = 260.dp, height = 14.dp)
         }
-        Spacer(modifier = Modifier.height(NTDp.lg))
-        // Revenue card
+        Spacer(modifier = Modifier.height(NTDp.md))
+        // Business overview card
         Box(
             modifier = Modifier.fillMaxWidth()
-                .padding(horizontal = NTDp.screenPad).height(180.dp)
-                .clip(RoundedCornerShape(NTDp.radXxl)).background(ntShimmerBrush())
+                .padding(horizontal = NTDp.screenPad).height(208.dp)
+                .clip(RoundedCornerShape(24.dp)).background(ntShimmerBrush())
         )
+        Spacer(modifier = Modifier.height(NTDp.md))
+        // Empty-cases row
+        Row(
+            modifier = Modifier.fillMaxWidth()
+                .padding(horizontal = NTDp.screenPad)
+                .clip(RoundedCornerShape(24.dp))
+                .background(NTColors.Surface)
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            NTShimmerBox(width = 44.dp, height = 44.dp, shape = RoundedCornerShape(14.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                NTShimmerBox(width = 90.dp, height = 10.dp)
+                Spacer(modifier = Modifier.height(6.dp))
+                NTShimmerBox(width = 130.dp, height = 18.dp)
+            }
+            NTShimmerBox(width = 84.dp, height = 44.dp, shape = RoundedCornerShape(14.dp))
+        }
         Spacer(modifier = Modifier.height(NTDp.lg))
-        // KPI grid
+        // Analytics section — header + picker + chart card
         Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
             NTShimmerBox(width = 80.dp, height = 10.dp)
             Spacer(modifier = Modifier.height(6.dp))
-            NTShimmerBox(width = 140.dp, height = 20.dp)
+            NTShimmerBox(width = 150.dp, height = 20.dp)
             Spacer(modifier = Modifier.height(NTDp.md))
-            Row(modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(NTDp.md)) {
-                repeat(2) { NTKpiSkeleton(modifier = Modifier.weight(1f)) }
-            }
+            Box(
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+                    .clip(RoundedCornerShape(NTDp.radFull)).background(ntShimmerBrush())
+            )
             Spacer(modifier = Modifier.height(NTDp.md))
-            Row(modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(NTDp.md)) {
-                repeat(2) { NTKpiSkeleton(modifier = Modifier.weight(1f)) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun NTKpiSkeleton(modifier: Modifier = Modifier) {
-    val brush = ntShimmerBrush()
-    Box(
-        modifier = modifier.height(130.dp).clip(RoundedCornerShape(NTDp.radXxl))
-            .background(NTColors.Surface)
-    ) {
-        Column(modifier = Modifier.padding(NTDp.cardPad)) {
-            Box(modifier = Modifier.size(NTDp.kpiIconBox)
-                .clip(RoundedCornerShape(NTDp.radMd)).background(brush))
-            Spacer(modifier = Modifier.height(NTDp.md))
-            NTShimmerBox(width = 80.dp,  height = 10.dp, brush = brush)
-            Spacer(modifier = Modifier.height(NTDp.xs))
-            NTShimmerBox(width = 60.dp,  height = 22.dp, brush = brush)
-            Spacer(modifier = Modifier.height(NTDp.xs))
-            NTShimmerBox(width = 100.dp, height = 10.dp, brush = brush)
+            Box(
+                modifier = Modifier.fillMaxWidth().height(272.dp)
+                    .clip(RoundedCornerShape(24.dp)).background(ntShimmerBrush())
+            )
         }
     }
 }
@@ -135,14 +138,16 @@ fun NTEmptyState(
         Spacer(modifier = Modifier.height(NTDp.lg))
         Text(title, color = NTColors.TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(NTDp.sm))
-        Text(subtitle, color = NTColors.TextSecondary, fontSize = 14.sp,
+        Text(subtitle, color = NTColors.TextSecondary, fontSize = 14.sp, lineHeight = 20.sp,
             textAlign = TextAlign.Center)
         if (ctaLabel.isNotEmpty()) {
             Spacer(modifier = Modifier.height(NTDp.lg))
             Button(
                 onClick = onCtaClick,
                 colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
-                shape = RoundedCornerShape(NTDp.radFull)
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+                modifier = Modifier.heightIn(min = 48.dp),
             ) {
                 Text(ctaLabel, color = Color.White, fontWeight = FontWeight.SemiBold)
             }
@@ -176,13 +181,15 @@ fun NTErrorState(
         Text("Something went wrong", color = NTColors.TextPrimary,
             fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(NTDp.sm))
-        Text(sanitizeError(message), color = NTColors.TextSecondary, fontSize = 13.sp,
+        Text(sanitizeError(message), color = NTColors.TextSecondary, fontSize = 13.sp, lineHeight = 19.sp,
             textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(NTDp.lg))
         Button(
             onClick = onRetry,
             colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
-            shape = RoundedCornerShape(NTDp.radFull)
+            shape = RoundedCornerShape(14.dp),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+            modifier = Modifier.heightIn(min = 48.dp),
         ) {
             Icon(Icons.Rounded.Refresh, contentDescription = null,
                 modifier = Modifier.size(16.dp))

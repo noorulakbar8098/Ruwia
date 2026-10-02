@@ -1,5 +1,10 @@
 package com.example.ruwia.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,11 +29,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -37,8 +45,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.isEmptyCansSource
+import com.example.ruwia.domain.resolveMovementProductName
 
-import com.example.ruwia.theme.RuwiaColor
+import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -59,17 +70,21 @@ import kotlinx.datetime.minus
 @Composable
 fun EmployeeEntriesScreen(
     movements: List<StockMovement>,
-    todayInward: Int,
-    todayOutward: Int,
-    todayEmptyCans: Int,
-    dailyEarnings: Double,
     currentDate: String,
     isLoading: Boolean,
+    emptyCansTotal: Int = 0,
     products: List<ProductCategory> = emptyList(), // Added products
     onRefresh: () -> Unit,
+    errorMessage: String? = null,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    var selectedFilter by remember { mutableStateOf("All") }
+    // Entries filter and analytics range stay in sync: picking an analytics
+    // range highlights the matching entries chip (one-way, user action only).
+    var selectedFilter by rememberSaveable { mutableStateOf("Today") }
+    var analyticsRangeName by rememberSaveable { mutableStateOf(DispatchRange.TODAY.name) }
+    val analyticsRange = remember(analyticsRangeName) {
+        runCatching { DispatchRange.valueOf(analyticsRangeName) }.getOrDefault(DispatchRange.TODAY)
+    }
     var showDatePickerStart by remember { mutableStateOf(false) }
     var showDatePickerEnd by remember { mutableStateOf(false) }
     var customStartDate by remember { mutableStateOf<LocalDate?>(null) }
@@ -117,6 +132,15 @@ fun EmployeeEntriesScreen(
         }
     }
 
+    // Delivered units follow the selected date filter (sum of outward qty).
+    val deliveredUnits = remember(filtered) { filtered.sumOf { it.qty } }
+
+    // Dispatch analytics aggregate the same movement feed — memoized so the
+    // range switch never triggers an API call.
+    val dispatchData = remember(movements, products, analyticsRange, today) {
+        aggregateDispatch(movements, products, analyticsRange, today)
+    }
+
     if (showDatePickerStart) {
         val dateState = rememberDatePickerState()
         DatePickerDialog(
@@ -128,10 +152,10 @@ fun EmployeeEntriesScreen(
                         customStartDate = instant.toLocalDateTime(TimeZone.UTC).date
                     }
                     showDatePickerStart = false
-                }) { Text("OK", color = RuwiaColor.TealPrimary) }
+                }) { Text("OK", color = NTColors.Primary) }
             },
             dismissButton = {
-                TextButton(onClick = { showDatePickerStart = false }) { Text("Cancel", color = RuwiaColor.TextMuted) }
+                TextButton(onClick = { showDatePickerStart = false }) { Text("Cancel", color = NTColors.TextTertiary) }
             }
         ) {
             DatePicker(state = dateState)
@@ -149,10 +173,10 @@ fun EmployeeEntriesScreen(
                         customEndDate = instant.toLocalDateTime(TimeZone.UTC).date
                     }
                     showDatePickerEnd = false
-                }) { Text("OK", color = RuwiaColor.TealPrimary) }
+                }) { Text("OK", color = NTColors.Primary) }
             },
             dismissButton = {
-                TextButton(onClick = { showDatePickerEnd = false }) { Text("Cancel", color = RuwiaColor.TextMuted) }
+                TextButton(onClick = { showDatePickerEnd = false }) { Text("Cancel", color = NTColors.TextTertiary) }
             }
         ) {
             DatePicker(state = dateState)
@@ -162,7 +186,7 @@ fun EmployeeEntriesScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(RuwiaColor.Background),
+            .background(NTColors.Background),
         contentPadding = PaddingValues(
             top    = contentPadding.calculateTopPadding(),
             bottom = contentPadding.calculateBottomPadding() + 16.dp,
@@ -171,11 +195,28 @@ fun EmployeeEntriesScreen(
         // ── Header with refresh ─────────────────────────────────────────────
         item { EntriesTopBar(currentDate = currentDate, onRefresh = onRefresh) }
 
-        // ── Today's totals card ─────────────────────────────────────────────
+        // ── Dispatch analytics (detail view above the summary card) ─────────
+        item {
+            DispatchAnalyticsCard(
+                data = dispatchData,
+                range = analyticsRange,
+                onRangeChange = { range ->
+                    analyticsRangeName = range.name
+                    selectedFilter = range.chip
+                },
+                isLoading = isLoading && movements.isEmpty(),
+                errorMessage = errorMessage,
+                onRetry = onRefresh,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(18.dp))
+        }
+
+        // ── Totals card ─────────────────────────────────────────────────────
         item {
             EntriesTotalsCard(
-                outward   = todayOutward,
-                emptyCans = todayEmptyCans,
+                outward   = deliveredUnits,
+                emptyCans = emptyCansTotal,
                 modifier  = Modifier.padding(horizontal = 20.dp),
             )
             Spacer(Modifier.height(18.dp))
@@ -195,15 +236,15 @@ fun EmployeeEntriesScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(18.dp))
                             .background(
-                                if (isSelected) RuwiaColor.TealPrimary
-                                else RuwiaColor.TealExtraLight
+                                if (isSelected) NTColors.Primary
+                                else NTColors.PrimaryLight
                             )
                             .clickable { selectedFilter = chip }
                             .padding(horizontal = 14.dp, vertical = 6.dp)
                     ) {
                         Text(
                             text = chip,
-                            color = if (isSelected) Color.White else RuwiaColor.TealPrimary,
+                            color = if (isSelected) Color.White else NTColors.Primary,
                             fontSize = 12.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                         )
@@ -225,15 +266,15 @@ fun EmployeeEntriesScreen(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
-                            .background(RuwiaColor.Surface)
+                            .border(1.dp, NTColors.Divider, RoundedCornerShape(12.dp))
+                            .background(NTColors.Surface)
                             .clickable { showDatePickerStart = true }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = customStartDate?.toString() ?: "Start Date",
-                            color = if (customStartDate != null) RuwiaColor.TextPrimary else RuwiaColor.TextMuted,
+                            color = if (customStartDate != null) NTColors.TextPrimary else NTColors.TextTertiary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -242,15 +283,15 @@ fun EmployeeEntriesScreen(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
-                            .background(RuwiaColor.Surface)
+                            .border(1.dp, NTColors.Divider, RoundedCornerShape(12.dp))
+                            .background(NTColors.Surface)
                             .clickable { showDatePickerEnd = true }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = customEndDate?.toString() ?: "End Date",
-                            color = if (customEndDate != null) RuwiaColor.TextPrimary else RuwiaColor.TextMuted,
+                            color = if (customEndDate != null) NTColors.TextPrimary else NTColors.TextTertiary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -268,7 +309,7 @@ fun EmployeeEntriesScreen(
                         modifier = Modifier.fillMaxWidth().padding(40.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CircularProgressIndicator(color = RuwiaColor.TealPrimary, modifier = Modifier.size(28.dp))
+                        CircularProgressIndicator(color = NTColors.Primary, modifier = Modifier.size(28.dp))
                     }
                 }
             }
@@ -304,27 +345,27 @@ private fun EntriesTopBar(currentDate: String, onRefresh: () -> Unit) {
                 "Entries",
                 fontSize   = 24.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color      = RuwiaColor.TextPrimary,
+                color      = NTColors.TextPrimary,
             )
             if (currentDate.isNotEmpty()) {
                 Text(
                     currentDate,
                     fontSize = 12.sp,
-                    color    = RuwiaColor.TextMuted,
+                    color    = NTColors.TextTertiary,
                 )
             }
         }
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .border(1.2.dp, RuwiaColor.Divider, CircleShape)
+                .border(1.2.dp, NTColors.Divider, CircleShape)
                 .clickable(onClick = onRefresh),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 Icons.Rounded.Refresh,
                 contentDescription = "Refresh",
-                tint     = RuwiaColor.TextSecondary,
+                tint     = NTColors.TextSecondary,
                 modifier = Modifier.size(18.dp),
             )
         }
@@ -342,14 +383,20 @@ private fun EntriesTotalsCard(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(RuwiaColor.TealDark)
+            .clip(RoundedCornerShape(NTDp.radXxl))
+            .background(
+                Brush.linearGradient(
+                    listOf(NTColors.Accent, NTColors.AccentDark),
+                    start = Offset.Zero,
+                    end = Offset(1000f, 0f),
+                )
+            )
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TotalsCell(
             value    = "$outward",
-            label    = "Outward Units",
+            label    = "Delivered Units",
             tint     = Color.White,
             modifier = Modifier.weight(1f),
         )
@@ -410,20 +457,26 @@ private fun EntryRow(
     modifier: Modifier = Modifier,
     products: List<ProductCategory> = emptyList()
 ) {
-    val isInward = movement.type == "inward"
-    val iconBg   = if (isInward) RuwiaColor.OrangeLight    else RuwiaColor.IconTealBg
-    val iconTint = if (isInward) RuwiaColor.Orange         else RuwiaColor.TealPrimary
-    val amtColor = if (isInward) RuwiaColor.Orange         else Color(0xFF1BAF70)
+val isInward = movement.type == "inward"
+    val iconBg   = if (isInward) NTColors.PrimaryLight else NTColors.InfoLight
+    val iconTint = if (isInward) NTColors.Warning else NTColors.InfoText
+    val amtColor = if (isInward) NTColors.Warning else NTColors.Success
     val sign     = if (isInward) "+"                       else "-"
-    val statusLabel = if (isInward) "INWARD" else "OUTWARD"
+    val statusLabel = if (isInward) "RETURN" else "SALE"
 
     val displayQty = "${movement.qty} units"
 
-    Row(
+    var expanded by remember(movement.id, movement.createdAt) { mutableStateOf(false) }
+
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(RuwiaColor.Surface, RoundedCornerShape(14.dp))
+            .background(NTColors.Surface, RoundedCornerShape(14.dp))
+            .clickable { expanded = !expanded }
             .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -448,16 +501,16 @@ private fun EntryRow(
                     text       = movement.source.ifBlank { "Stock movement" },
                     fontSize   = 14.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color      = RuwiaColor.TextPrimary,
+                    color      = NTColors.TextPrimary,
                     maxLines   = 1,
                     overflow   = TextOverflow.Ellipsis,
                     modifier   = Modifier.weight(1f, fill = false),
                 )
                 Spacer(Modifier.width(6.dp))
-                Box(
+Box(
                     modifier = Modifier
                         .background(
-                            if (isInward) RuwiaColor.OrangeSurface else RuwiaColor.TealExtraLight,
+                            if (isInward) NTColors.WarningLight else NTColors.SuccessLight,
                             RoundedCornerShape(5.dp),
                         )
                         .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -466,17 +519,16 @@ private fun EntryRow(
                         statusLabel,
                         fontSize   = 8.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color      = if (isInward) RuwiaColor.Orange else RuwiaColor.TealPrimary,
+                        color      = if (isInward) NTColors.WarningText else NTColors.SuccessText,
                         letterSpacing = 0.5.sp,
                     )
                 }
             }
             Spacer(Modifier.height(3.dp))
             Text(
-                text     = "$displayQty · ${formatDateLabel(movement.createdAt)}" +
-                           if (movement.shopName.isNotBlank()) " · ${movement.shopName}" else "",
+                text     = "$displayQty · ${formatDateLabel(movement.createdAt)}",
                 fontSize = 11.sp,
-                color    = RuwiaColor.TextMuted,
+                color    = NTColors.TextTertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -490,29 +542,78 @@ private fun EntryRow(
             fontWeight = FontWeight.Bold,
             color      = amtColor,
         )
+
+        Spacer(Modifier.width(6.dp))
+
+        Icon(
+            if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+            contentDescription = if (expanded) "Collapse details" else "Expand details",
+            tint     = NTColors.TextTertiary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+
+        // ── Expandable detail: case type, quantity, shop ──
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            val isEmptyReturn = movement.source.isEmptyCansSource()
+            // Snapshot → active lookup → source: deleted products keep their
+            // real names in employee history (see resolveMovementProductName).
+            val caseType = if (isEmptyReturn) "Empty cases"
+                else (resolveMovementProductName(movement, products) ?: movement.source.ifBlank { "General stock" })
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(NTColors.Divider.copy(alpha = 0.6f)),
+                )
+                Spacer(Modifier.height(6.dp))
+                EntryDetailRow(label = "Case type", value = caseType)
+                EntryDetailRow(label = "Quantity", value = "${movement.qty} Cases")
+                EntryDetailRow(
+                    label = "Shop",
+                    value = movement.shopName.trim().ifBlank { "—" },
+                )
+            }
+        }
     }
 }
 
-private fun formatDateLabel(createdAt: String?): String {
-    if (createdAt.isNullOrBlank()) return "—"
-    return try {
-        // Parse the full ISO-8601 UTC string from Supabase (e.g. "2026-06-26T07:04:49.123456+00:00")
-        // and convert to the device's local timezone so the time shown matches the wall clock.
-        val instant = Instant.parse(createdAt)
-        val local   = instant.toLocalDateTime(TimeZone.currentSystemDefault())
-        val month   = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
-            .getOrNull(local.monthNumber - 1) ?: ""
-        val day     = local.day.toString()
-        val h       = local.hour
-        val hh      = if (h == 0) 12 else if (h > 12) h - 12 else h
-        val ampm    = if (h >= 12) "PM" else "AM"
-        val mm      = local.minute.toString().padStart(2, '0')
-        "$day $month · $hh:$mm $ampm"
-    } catch (_: Exception) {
-        // Fallback: just show the first 10 chars (date portion) if parsing fails
-        createdAt.take(10)
+@Composable
+private fun EntryDetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = NTColors.TextTertiary,
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = value,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = NTColors.TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f, fill = false),
+        )
     }
 }
+
+private fun formatDateLabel(createdAt: String?): String =
+    com.example.ruwia.util.isoToDisplayDateTime(createdAt)
 
 // ── Empty state ──────────────────────────────────────────────────────────────
 
@@ -528,13 +629,13 @@ private fun EntriesEmptyState(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .size(72.dp)
                 .clip(CircleShape)
-                .background(RuwiaColor.TealExtraLight),
+                .background(NTColors.PrimaryLight),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 Icons.Rounded.History,
                 contentDescription = null,
-                tint = RuwiaColor.TealPrimary,
+                tint = NTColors.Primary,
                 modifier = Modifier.size(34.dp),
             )
         }
@@ -543,13 +644,13 @@ private fun EntriesEmptyState(modifier: Modifier = Modifier) {
             title,
             fontSize   = 16.sp,
             fontWeight = FontWeight.Bold,
-            color      = RuwiaColor.TextPrimary,
+            color      = NTColors.TextPrimary,
         )
         Spacer(Modifier.height(6.dp))
         Text(
             subtitle,
             fontSize  = 13.sp,
-            color     = RuwiaColor.TextMuted,
+            color     = NTColors.TextTertiary,
             textAlign = TextAlign.Center,
             modifier  = Modifier.padding(horizontal = 20.dp),
             lineHeight = 18.sp,

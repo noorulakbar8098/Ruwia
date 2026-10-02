@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -25,13 +26,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.Order
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.presentation.AdminViewModel
-import com.example.ruwia.presentation.DashboardMetrics
 import com.example.ruwia.presentation.DashboardRange
 import com.example.ruwia.presentation.EmployeeCreationState
 import com.example.ruwia.presentation.toDashboardMetrics
@@ -120,6 +121,14 @@ private fun AdminDashboardContentSwitcher(
     var editModeStock by remember { mutableStateOf(0) }
 
     var productDetailName by remember { mutableStateOf<String?>(null) }
+    var showStockHistory by remember { mutableStateOf(false) }
+
+    // Pull-to-refresh indicator: set on swipe, cleared when the reload
+    // finishes (or fails) so the spinner never sticks.
+    var isRefreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(state.loading) {
+        if (!state.loading) isRefreshing = false
+    }
 
     // ── Full-screen overlays ──────────────────────────────────
     productDetailName?.let { pName ->
@@ -132,6 +141,15 @@ private fun AdminDashboardContentSwitcher(
         return
     }
 
+    if (showStockHistory) {
+        SystemBackHandler { showStockHistory = false }
+        com.example.ruwia.ui.StockHistoryScreen(
+            state  = state,
+            onBack = { showStockHistory = false },
+        )
+        return
+    }
+
     // ── Deepest level ─────────────────────────────────────────
     if (showCustomers) {
         SystemBackHandler { showCustomers = false }
@@ -139,9 +157,13 @@ private fun AdminDashboardContentSwitcher(
             customers        = state.customers,
             errorMessage     = state.error,
             onAddCustomer    = vm::addCustomer,
+            onUpdateCustomer = vm::updateCustomer,
             onDeleteCustomer = vm::deleteCustomer,
             onClearError     = vm::clearError,
             onBack           = { showCustomers = false },
+            saleEntries      = state.saleEntries,
+            movements        = state.recentMovements,
+            customerPrices   = state.customerPrices,
         )
         return
     }
@@ -178,6 +200,7 @@ private fun AdminDashboardContentSwitcher(
         AddEmployeeScreen(
             isSaving   = creation is EmployeeCreationState.Loading,
             saveError  = (creation as? EmployeeCreationState.Error)?.message,
+            shops      = state.shopNames,
             onBack     = { vm.clearEmployeeCreation(); showAddEmployee = false },
             onClose    = { vm.clearEmployeeCreation(); showAddEmployee = false; showEmployees = false },
             onSave     = { name, phone, role, shop, salary, email, password ->
@@ -189,9 +212,12 @@ private fun AdminDashboardContentSwitcher(
     if (showEmployees) {
         SystemBackHandler { showEmployees = false }
         EmployeesScreen(
-            employees     = state.employees,
-            onBack        = { showEmployees = false },
-            onAddEmployee = { showAddEmployee = true }
+            employees      = state.employees,
+            shops          = state.shopNames,
+            onBack         = { showEmployees = false },
+            onAddEmployee  = { showAddEmployee = true },
+            onUpdateEmployee = vm::updateEmployee,
+            onDeleteEmployee = vm::deleteEmployee,
         )
         return
     }
@@ -207,12 +233,14 @@ private fun AdminDashboardContentSwitcher(
             productToRestock = productToRestock,
             currentStock = editModeStock,
             movements  = state.recentMovements,
-            shops      = state.shopStocks
-                .filter { it.name.trim().lowercase().let { name -> name == "shop 1" || name == "shop 2" } }
-                .map { it.name to it.location },
+            shops      = state.shopNames.take(2).mapIndexed { index, name ->
+                val location = state.shopStocks.getOrNull(index)?.location
+                    ?: if (index == 0) "Primary Shop" else "Secondary Shop"
+                name to location
+            },
             onBack     = { productToRestock = null; editModeStock = 0; showAddStock = false },
             onClose    = { productToRestock = null; editModeStock = 0; showAddStock = false },
-            onSave     = { productId, sku, brandName, purchasePrice, sellingPrice, qty, shopName, dateTimeIso, emptyCans ->
+            onSave     = { productId, sku, brandName, purchasePrice, sellingPrice, qty, shopName, dateTimeIso, emptyCans, lowStockAlert, notes ->
                 if (productToRestock != null) {
                     // Edit mode: update product details + stock delta
                     vm.updateProductWithStockDelta(
@@ -222,7 +250,9 @@ private fun AdminDashboardContentSwitcher(
                         sellingPrice = sellingPrice,
                         newStock = qty,
                         previousStock = editModeStock,
-                        shopName = shopName
+                        shopName = shopName,
+                        lowStockAlert = lowStockAlert,
+                        createdAt = dateTimeIso
                     )
                 } else {
                     vm.addInwardStockEntry(
@@ -232,7 +262,10 @@ private fun AdminDashboardContentSwitcher(
                         sellingPrice = sellingPrice,
                         qty = qty,
                         shopName = shopName,
-                        createdAt = dateTimeIso
+                        createdAt = dateTimeIso,
+                        emptyCans = emptyCans,
+                        lowStockAlert = lowStockAlert,
+                        notes = notes
                     )
                 }
                 productToRestock = null
@@ -261,6 +294,18 @@ private fun AdminDashboardContentSwitcher(
         if (selectedTab != 0) {
             SystemBackHandler { selectedTab = 0 }
         }
+        // Pull-to-refresh on every tab: swiping down re-pulls the whole
+        // admin dataset (shops, movements, products, sales, customers) from
+        // the backend. Inner tabs keep consuming `contentPadding` exactly as
+        // before, so insets are unchanged.
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                vm.loadData()
+            },
+            modifier = Modifier.fillMaxSize(),
+        ) {
         when (selectedTab) {
             0 -> AdminHomeTab(
                      state          = state,
@@ -268,7 +313,10 @@ private fun AdminDashboardContentSwitcher(
                      contentPadding = contentPadding,
                      adminName      = adminName,
                      onLogout       = onLogout,
-                     onOpenSettings = { selectedTab = 3 },
+                     onOpenSettings = { selectedTab = 4 },
+                     onOpenAnalytics = { selectedTab = 3 },
+                     onOpenCustomers = { showCustomers = true },
+                     onOpenInventory = { selectedTab = 1 },
                  )
             1 -> InventoryScreen(
                      state          = state,
@@ -289,9 +337,18 @@ private fun AdminDashboardContentSwitcher(
                      onToggleProductStatus = { product ->
                          vm.updateProductCategory(product.copy(isActive = !product.isActive))
                      },
+                     onOpenStockHistory = { showStockHistory = true },
+                     onSaveCustomerPrice = vm::saveCustomerProductPrice,
+                     onLoadCustomerPrices = vm::loadCustomerPrices,
+                     onDeleteCustomerPrice = vm::deleteCustomerProductPrice,
                      contentPadding = contentPadding,
                  )
-            2 -> ProfitDashboardScreen(
+            2 -> TransactionsScreen(
+                     state          = state,
+                     contentPadding = contentPadding,
+                     onBackHome     = { selectedTab = 0 },
+                 )
+            3 -> ProfitDashboardScreen(
                      state           = state,
                      onBack          = {},
                      onExpenseMonthSelected = vm::loadMonthlyExpense,
@@ -299,10 +356,11 @@ private fun AdminDashboardContentSwitcher(
                      onProductClick    = { pName -> productDetailName = pName },
                      onAddStock        = { showAddStock = true },
                      onAddProduct      = { selectedTab = 1 },
+                     onOpenTransactions = { selectedTab = 2 },
                      onClearData       = vm::clearStockAndRevenue,
                      contentPadding    = contentPadding,
                  )
-            3 -> SettingsScreen(
+            4 -> SettingsScreen(
                      state                  = state,
                      adminName              = adminName,
                      adminEmail             = adminEmail,
@@ -311,12 +369,12 @@ private fun AdminDashboardContentSwitcher(
                      onNavigateToPricing    = { showPricing = true },
                      onNavigateToCustomers  = { showCustomers = true },
                      onLogout               = onLogout,
-                     onDeleteAllData        = {
-                         vm.deleteAllData()
-                         selectedTab = 0
-                     },
+                     onResetEmptyCases      = { vm.resetEmptyCases() },
+                     onAddEmptyCases        = vm::addEmptyCases,
+                     onShopNameChange       = { index, name -> vm.updateShopName(index, name) },
                      contentPadding         = contentPadding
                  )
+        }
         }
     }
 }
@@ -331,6 +389,9 @@ private fun AdminHomeTab(
     adminName: String,
     onLogout: () -> Unit,
     onOpenSettings: () -> Unit = {},
+    onOpenAnalytics: () -> Unit = {},
+    onOpenCustomers: () -> Unit = {},
+    onOpenInventory: () -> Unit = {},
 ) {
     when {
         state.loading  -> NTDashboardSkeleton(contentPadding)
@@ -339,7 +400,16 @@ private fun AdminHomeTab(
             onRetry  = vm::loadData,
             contentPadding = contentPadding
         )
-        else -> AdminDashboardContent(state, contentPadding, adminName, onLogout, onOpenSettings)
+        else -> AdminDashboardContent(
+            state,
+            contentPadding,
+            adminName,
+            onLogout,
+            onOpenSettings,
+            onOpenAnalytics = onOpenAnalytics,
+            onOpenCustomers = onOpenCustomers,
+            onOpenInventory = onOpenInventory,
+        )
     }
 }
 
@@ -350,54 +420,100 @@ private fun AdminDashboardContent(
     adminName: String,
     @Suppress("UNUSED_PARAMETER") onLogout: () -> Unit,
     onOpenSettings: () -> Unit = {},
+    onOpenAnalytics: () -> Unit = {},
+    onOpenCustomers: () -> Unit = {},
+    onOpenInventory: () -> Unit = {},
 ) {
-    // ── Range picker state — drives BOTH the hero chart and the
-    // analytics chart below it. Defaults to MONTH so the home screen
-    // opens on the most useful "current month" view.
-    var selectedRange by remember { mutableStateOf(NTDateRange.MONTHLY) }
+    // Revenue + customer pickers drive their own charts.
+    // Overview period dropdown defaults to Month.
+    var revenueRange by remember { mutableStateOf(NTDateRange.MONTHLY) }
+    var customerRange by remember { mutableStateOf(NTDateRange.MONTHLY) }
+    var overviewPeriod by remember { mutableStateOf(OverviewPeriod.MONTH) }
 
-    // Recompute metrics whenever state OR the selected range changes.
-    val metrics = remember(state, selectedRange) {
-        state.toDashboardMetrics(selectedRange.toDashboardRange())
+    val monthMetrics = remember(state) {
+        state.toDashboardMetrics(DashboardRange.MONTH)
+    }
+    val quarterMetrics = remember(state) {
+        state.toDashboardMetrics(DashboardRange.QUARTER)
+    }
+    val yearMetrics = remember(state) {
+        state.toDashboardMetrics(DashboardRange.YEAR)
+    }
+    val revenueMetrics = remember(state, revenueRange) {
+        state.toDashboardMetrics(revenueRange.toDashboardRange())
+    }
+    val customerMetrics = remember(state, customerRange) {
+        state.toDashboardMetrics(customerRange.toDashboardRange())
     }
 
-    val totalStock     = metrics.totalStockUnits
-    val pendingOrders  = state.orders.count { it.status == "pending" }
+    val pendingOrders = state.orders.count { it.status == "pending" }
     val deliveredToday = state.orders.count { it.status == "delivered" }
-    val activeStaff    = state.employees.count { it.status != "inactive" }
 
     val (greeting, subtext) = buildGreeting(
-        profit    = metrics.thisMonthProfit,
+        profit    = monthMetrics.thisMonthProfit,
         pending   = pendingOrders,
         delivered = deliveredToday,
-        revGrowth = metrics.revenueGrowthPercent,
+        revGrowth = monthMetrics.revenueGrowthPercent,
     )
 
-    val kpiItems = buildKpis(state = state, metrics = metrics)
+    val displayShopName = state.shopNames.firstOrNull()?.takeIf { it.isNotBlank() } ?: "ALHUDHA"
 
-    // Decide which figure drives the hero card.
-    // If we have any expense data for either month, show NET PROFIT (the
-    // primary owner concern). Otherwise fall back to the range total so
-    // brand-new tenants without expenses configured still see a meaningful
-    // number — and showing ₹0 is FINE when there are no sales yet, that's
-    // the correct truth for the day.
-    val hasExpenseData = state.currentMonthExpense != null || state.lastMonthExpense != null
-    val isMonthRange   = selectedRange == NTDateRange.MONTHLY
-    val headlineLabel  = when {
-        hasExpenseData && isMonthRange -> "NET PROFIT"
-        isMonthRange                   -> "TOTAL REVENUE"
-        else                           -> "RANGE REVENUE"
+    // ── Overview numbers for the selected dropdown period ──────
+    // Month / Last Month show NET PROFIT (expense data exists only for
+    // these two months). Quarter / Yearly fall back to TOTAL REVENUE.
+    val totalCustomers = state.customers.size
+    val lastMonthCustomers = (totalCustomers - monthMetrics.newCustomersThisMonth).coerceAtLeast(0)
+
+    // ── Stock alert — active products at or below the low-stock threshold.
+    // ── Stock alert — each product carries its own low-stock threshold,
+    // set while adding the product (presets 1/3/5/8/10 or custom).
+    val lowStockProducts = remember(state.productCategories) {
+        state.productCategories.filter {
+            it.isActive && !it.isDeleted && it.stockAvailable <= it.lowStockAlert
+        }
     }
-    val headlineValue  = when {
-        hasExpenseData && isMonthRange -> metrics.thisMonthProfit
-        isMonthRange                   -> metrics.thisMonthRevenue
-        else                           -> metrics.rangeRevenue
+
+    val overviewChip: String = when (overviewPeriod) {
+        OverviewPeriod.MONTH        -> monthMetrics.rangeLabel
+        OverviewPeriod.LAST_MONTH   -> formatYearMonth(state.previousMonth)
+        OverviewPeriod.LAST_QUARTER -> "Last Quarter"
+        OverviewPeriod.YEARLY       -> state.currentMonth.take(4).takeIf { it.length == 4 } ?: "Yearly"
     }
-    val lastValue      = if (hasExpenseData && isMonthRange) metrics.lastMonthProfit else metrics.lastMonthRevenue
-    val growth         = when {
-        hasExpenseData && isMonthRange -> metrics.profitGrowthPercent
-        isMonthRange                   -> metrics.revenueGrowthPercent
-        else                           -> metrics.weeklyGrowthPercent  // best non-month proxy
+    val overviewLeftLabel: String = when (overviewPeriod) {
+        OverviewPeriod.LAST_QUARTER, OverviewPeriod.YEARLY -> "TOTAL REVENUE"
+        else -> "NET PROFIT"
+    }
+    val overviewLeftValue: Double = when (overviewPeriod) {
+        OverviewPeriod.LAST_MONTH   -> monthMetrics.lastMonthProfit
+        OverviewPeriod.LAST_QUARTER -> quarterMetrics.rangeRevenue
+        OverviewPeriod.YEARLY       -> yearMetrics.rangeRevenue
+        else                        -> monthMetrics.thisMonthProfit
+    }
+    val overviewLeftGrowth: Double? = when (overviewPeriod) {
+        OverviewPeriod.MONTH        -> monthMetrics.profitGrowthPercent
+        OverviewPeriod.LAST_QUARTER -> quarterMetrics.revenueRangeGrowthPercent
+        OverviewPeriod.YEARLY       -> yearMetrics.revenueRangeGrowthPercent
+        else                        -> null
+    }
+    val overviewRightValue: Int = when (overviewPeriod) {
+        OverviewPeriod.LAST_MONTH   -> lastMonthCustomers
+        OverviewPeriod.LAST_QUARTER -> quarterMetrics.rangeCustomers
+        OverviewPeriod.YEARLY       -> yearMetrics.rangeCustomers
+        else                        -> totalCustomers
+    }
+    val overviewRightGrowth: Double? = when (overviewPeriod) {
+        OverviewPeriod.MONTH        -> monthMetrics.customerGrowthPercent
+        OverviewPeriod.LAST_QUARTER -> quarterMetrics.customerRangeGrowthPercent
+        OverviewPeriod.YEARLY       -> yearMetrics.customerRangeGrowthPercent
+        else                        -> null
+    }
+
+    // ── Analytics numbers (range-scoped) ───────────────────────
+    val revenueGrowth: Double? = when (revenueRange) {
+        NTDateRange.WEEKLY -> revenueMetrics.weeklyGrowthPercent
+        NTDateRange.MONTHLY -> revenueMetrics.revenueGrowthPercent
+        NTDateRange.QUARTERLY -> revenueMetrics.revenueGrowthPercent
+        NTDateRange.YEARLY -> revenueMetrics.revenueGrowthPercent
     }
 
     LazyColumn(
@@ -412,10 +528,10 @@ private fun AdminDashboardContent(
         // Header
         item {
             NTDashboardHeader(
-                shopName            = "Neer Thuli",
+                shopName            = displayShopName,
                 adminName           = adminName.ifBlank { "Admin" },
                 notificationCount   = pendingOrders,
-                onAvatarClick       = onOpenSettings, // tap avatar → Settings
+                onAvatarClick       = onOpenSettings,
                 onSearchClick       = {},
                 onNotificationClick = {}
             )
@@ -426,113 +542,164 @@ private fun AdminDashboardContent(
             NTGreetingSection(greeting = greeting, subtext = subtext)
         }
 
-        // Revenue / Profit hero card — fully dynamic; chart, axes & headline
-        // all swap when the range picker below the KPI grid changes.
+        // Business overview — dark teal KPI card, NO graph.
         item {
-            NTRevenueHeroCard(
-                shopName       = "Neer Thuli",
-                headlineLabel  = headlineLabel,
-                headlineValue  = headlineValue,
-                lastMonthValue = lastValue,
-                growthPercent  = growth,
-                totalOrders    = state.orders.size,
-                totalCustomers = state.customers.size,
-                activeStaff    = activeStaff,
-                fleetActive    = state.fleetActiveCount,
-                chartPoints    = metrics.chartPoints,
-                yAxisLabels    = metrics.yAxisLabels,
-                xAxisLabels    = metrics.xAxisLabels,
-                dateLabel      = metrics.rangeLabel,
+            NTBusinessOverviewCard(
+                period = overviewPeriod,
+                onPeriodChange = { overviewPeriod = it },
+                chipLabel = overviewChip,
+                leftLabel = overviewLeftLabel,
+                leftValue = overviewLeftValue,
+                leftGrowth = overviewLeftGrowth,
+                rightValue = overviewRightValue,
+                rightGrowth = overviewRightGrowth,
             )
         }
 
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
-        // KPI grid
-        item {
-            NTKpiGrid(items = kpiItems)
-        }
-
-        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
-
-        // Analytics — chart that REACTS to the range picker (week / month /
-        // quarter / year). Both the data series and the X-axis labels
-        // recompute on every selection change.
+        // Analytics — revenue line chart reacts to its own picker.
         item {
             Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
                 NTSectionHeader(label = "ANALYTICS", title = "Revenue trend")
                 Spacer(modifier = Modifier.height(NTDp.md))
                 NTDateRangePicker(
-                    selected = selectedRange,
-                    onSelect = { selectedRange = it },
+                    selected = revenueRange,
+                    onSelect = { revenueRange = it },
                 )
                 Spacer(modifier = Modifier.height(NTDp.md))
                 NTLineChartCard(
-                    title         = rangeAnalyticsTitle(selectedRange),
-                    valueLabel    = formatAmount(metrics.rangeRevenue),
-                    growthPercent = metrics.weeklyGrowthPercent ?: 0.0,
-                    points        = metrics.chartPoints,
-                    labels        = analyticsAxisLabels(metrics.xAxisLabels, metrics.chartPoints.size),
-                    rawValues     = metrics.chartRaw,
-                    xRawLabels    = metrics.xAxisLabels
+                    title = rangeAnalyticsTitle(revenueRange),
+                    valueLabel = formatAmount(revenueMetrics.rangeRevenue),
+                    growthPercent = revenueGrowth ?: 0.0,
+                    points = revenueMetrics.chartPoints,
+                    labels = revenueMetrics.xAxisLabels,
+                    rawValues = revenueMetrics.chartRaw,
+                    xRawLabels = revenueMetrics.xAxisLabels,
+                    onViewAllClick = onOpenAnalytics,
+                    viewAllLabel = "Open analytics",
+                )
+            }
+        }
+
+        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+
+        // Customer graph — existing line chart, own month/quarter/year picker.
+        item {
+            Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
+                NTSectionHeader(label = "CUSTOMERS", title = "Customer trend")
+                Spacer(modifier = Modifier.height(NTDp.md))
+                NTDateRangePicker(
+                    selected = customerRange,
+                    onSelect = { customerRange = it },
+                    options = listOf(
+                        NTDateRange.MONTHLY,
+                        NTDateRange.QUARTERLY,
+                        NTDateRange.YEARLY,
+                    ),
+                )
+                Spacer(modifier = Modifier.height(NTDp.md))
+                NTLineChartCard(
+                    title = rangeCustomerTitle(customerRange),
+                    valueLabel = "${customerMetrics.rangeCustomers} customers",
+                    growthPercent = customerMetrics.customerRangeGrowthPercent ?: 0.0,
+                    points = customerMetrics.customerChartPoints,
+                    labels = customerMetrics.customerXLabels,
+                    rawValues = customerMetrics.customerChartRaw,
+                    xRawLabels = customerMetrics.customerXLabels,
+                    valueFormatter = { "${it.toInt()} customers" },
+                    onViewAllClick = onOpenCustomers,
+                    viewAllLabel = "Open customers",
                 )
             }
         }
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
-        // Stock performance chart — REAL stock growth %
-        if (state.stockItems.isNotEmpty()) {
-            item {
-                Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
-                    val stockPoints = state.stockItems
-                        .map { it.stockAvailable.toFloat() }
-                        .let { pts ->
-                            val max = pts.maxOrNull() ?: 1f
-                            if (max <= 0f) pts else pts.map { it / max }
-                        }
-                    val stockRaw = state.stockItems.map { it.stockAvailable.toDouble() }
-                    val stockRawLabels = state.stockItems.map { it.name }
-                    NTLineChartCard(
-                        title         = "STOCK LEVELS",
-                        valueLabel    = "${formatCases(totalStock)} units on hand",
-                        growthPercent = metrics.stockGrowthPercent ?: 0.0,
-                        points        = if (stockPoints.size >= 2) stockPoints else List(7) { 0.5f },
-                        labels        = state.stockItems.map { it.name.take(3).uppercase() }
-                            .let { l -> if (l.size < 2) listOf("5L", "10L", "20L", "Bulk") else l },
-                        rawValues     = if (stockRaw.size >= 2) stockRaw else List(7) { 10.0 },
-                        xRawLabels    = if (stockRawLabels.size >= 2) stockRawLabels else listOf("5L", "10L", "20L", "Bulk"),
-                        valueFormatter = { "${it.toInt()} cans" }
-                    )
-                }
-            }
-            item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+        // Stock alert — warning tab at the bottom, opens Inventory.
+        item {
+            StockAlertCard(
+                lowCount = lowStockProducts.size,
+                onOpen = onOpenInventory,
+            )
         }
-
-//        // Activity feed
-//        item {
-//            NTActivityFeedSection(
-//                orders    = state.orders,
-//                customers = state.customers,
-//                onViewAll = {}
-//            )
-//        }
-
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+    }
+}
 
-//        // Staff overview row
-//        if (state.employees.isNotEmpty()) {
-//            item {
-//                Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
-//                    NTSectionHeader(label = "TEAM", title = "Staff overview")
-//                    Spacer(modifier = Modifier.height(NTDp.md))
-//                }
-//            }
-//            items(items = state.employees.take(3)) { emp ->
-//                NTStaffCard(employee = emp, modifier = Modifier.padding(horizontal = NTDp.screenPad))
-//                Spacer(modifier = Modifier.height(NTDp.sm))
-//            }
-//            item { Spacer(modifier = Modifier.height(NTDp.sm)) }
-//        }
+// ── Stock alert card ────────────────────────────────────────────
+//  Warning tab at the bottom of home; tap opens the Inventory screen.
+
+@Composable
+private fun StockAlertCard(
+    lowCount: Int,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val subtitle = when {
+        lowCount <= 0 -> "All stocks healthy"
+        lowCount == 1 -> "1 product needs restock"
+        else          -> "$lowCount products need restock"
+    }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = NTDp.screenPad)
+            .shadow(3.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(NTColors.Surface)
+            .border(1.dp, NTColors.Border, RoundedCornerShape(24.dp))
+            .clickable(onClickLabel = "Open inventory", onClick = onOpen)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(NTColors.WarningLight),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.Warning,
+                contentDescription = null,
+                tint = NTColors.Warning,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "STOCK ALERT",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp,
+                color = NTColors.TextTertiary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.2).sp,
+                color = NTColors.TextPrimary,
+                maxLines = 1,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(NTColors.SurfaceVar)
+                .border(1.dp, NTColors.Border, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = NTColors.Warning,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -551,15 +718,25 @@ private fun rangeAnalyticsTitle(range: NTDateRange): String = when (range) {
     NTDateRange.YEARLY    -> "YEARLY REVENUE"
 }
 
-/**
- * The line-chart card paints labels evenly across the bottom — too many tick
- * marks turn into illegible mush, so we down-sample to ~7 markers maximum.
- */
-private fun analyticsAxisLabels(source: List<String>, pointCount: Int): List<String> {
-    if (source.isEmpty()) return List(pointCount.coerceAtLeast(1)) { "" }
-    if (source.size <= 7) return source
-    val step = (source.size - 1) / 6.0
-    return (0..6).map { i -> source[(i * step).toInt().coerceAtMost(source.size - 1)] }
+private fun rangeCustomerTitle(range: NTDateRange): String = when (range) {
+    NTDateRange.WEEKLY    -> "WEEKLY CUSTOMERS"
+    NTDateRange.MONTHLY   -> "MONTHLY CUSTOMERS"
+    NTDateRange.QUARTERLY -> "QUARTERLY CUSTOMERS"
+    NTDateRange.YEARLY    -> "YEARLY CUSTOMERS"
+}
+
+/** "2026-08" → "Aug 2026" for the overview period chip. */
+private fun formatYearMonth(yearMonth: String): String {
+    if (yearMonth.length < 7) return "Last Month"
+    val year = yearMonth.substring(0, 4)
+    val month = yearMonth.substring(5, 7).toIntOrNull() ?: return "Last Month"
+    val abbr = when (month) {
+        1 -> "Jan"; 2 -> "Feb"; 3 -> "Mar"; 4 -> "Apr"
+        5 -> "May"; 6 -> "Jun"; 7 -> "Jul"; 8 -> "Aug"
+        9 -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; 12 -> "Dec"
+        else -> return "Last Month"
+    }
+    return "$abbr $year"
 }
 
 // ── Staff card ────────────────────────────────────────────────
@@ -632,7 +809,7 @@ private fun NTOrderCard(order: Order, @Suppress("UNUSED_PARAMETER") onAssign: (S
             Column(modifier = Modifier.weight(1f)) {
                 Text("Order #${order.id?.take(6) ?: "—"}", color = NTColors.TextPrimary,
                     fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text("Qty: ${order.qty} cans · ${order.createdAt?.take(10) ?: ""}",
+                Text("Qty: ${order.qty} cases · ${order.createdAt?.let { com.example.ruwia.util.isoToDisplayDate(it) } ?: ""}",
                     color = NTColors.TextTertiary, fontSize = 12.sp)
             }
             Box(
@@ -858,145 +1035,6 @@ private fun formatPctShort(p: Double): String {
     return rounded.toString()
 }
 
-/**
- * Builds the four KPI cards entirely from real numbers — every "+/− X% vs last
- * month" footer reflects actual data, every up/down icon flips according to
- * the sign, and every accent colour matches the direction (green = up,
- * red = down, neutral grey when there's no last-month baseline).
- */
-private fun buildKpis(state: AdminState, metrics: DashboardMetrics): List<NTKpiItem> {
-    val totalStock = metrics.totalStockUnits
-
-    // ── 1. Stock on hand ─────────────────────────────────────
-    val stockKpi = run {
-        val pct = metrics.stockGrowthPercent
-        val (footerText, footerIcon, accent) = trendCell(pct, "vs last month")
-        NTKpiItem(
-            title         = "STOCK ON HAND",
-            value         = formatCases(totalStock),
-            subtitle      = "Units across all shops",
-            subtitleColor = accent.text,
-            icon          = Icons.Rounded.Inventory2,
-            iconBg        = accent.bgLight,
-            iconFg        = accent.iconFg,
-            accentColor   = accent.iconFg,
-            footerText    = "",
-            footerIcon    = footerIcon,
-            footerColor   = accent.text,
-            cardIndex     = 0,
-        )
-    }
-
-    // ── 2. Monthly revenue ───────────────────────────────────
-    val revenueKpi = run {
-        val pct = metrics.revenueGrowthPercent
-        val (footerText, footerIcon, accent) = trendCell(pct, "vs last month")
-        NTKpiItem(
-            title         = "MONTHLY REVENUE",
-            value         = formatAmount(metrics.thisMonthRevenue),
-            subtitle      = pctSubtitle(pct, "vs last month"),
-            subtitleColor = accent.text,
-            icon          = Icons.Rounded.AccountBalanceWallet,
-            iconBg        = NTColors.PrimaryLight,
-            iconFg        = NTColors.Primary,
-            accentColor   = NTColors.Primary,
-            footerText    = "/*vs ${formatAmount(metrics.lastMonthRevenue)} last month*/",
-            footerIcon    = footerIcon,
-            footerColor   = accent.text,
-            cardIndex     = 1,
-        )
-    }
-
-    // ── 3. Empty cans (live derivation from movements) ──
-    val cansKpi = NTKpiItem(
-        title         = "EMPTY CANS",
-        value         = "${metrics.emptyCansAtShop}",
-        subtitle      = "Available at shop",
-        subtitleColor = NTColors.TextSecondary,
-        icon          = Icons.AutoMirrored.Rounded.Undo,
-        iconBg        = Color(0xFFFFF3E8),
-        iconFg        = Color(0xFFF97316),
-        accentColor   = Color(0xFFF97316),
-        footerText    = "${metrics.emptyCansOut} with customers",
-        footerIcon    = Icons.Rounded.Group,
-        footerColor   = NTColors.TextTertiary,
-        cardIndex     = 2,
-    )
-
-    // ── 4. Customers ─────────────────────────────────────────
-    val customersKpi = run {
-        val pct = metrics.customerGrowthPercent
-        val (footerText, footerIcon, accent) = trendCell(pct, "active this month")
-        NTKpiItem(
-            title         = "TOTAL CUSTOMERS",
-            value         = "${state.customers.size}",
-            subtitle      = "${metrics.newCustomersThisMonth} active this month",
-            subtitleColor = accent.text,
-            icon          = Icons.Rounded.Group,
-            iconBg        = NTColors.SuccessLight,
-            iconFg        = NTColors.Success,
-            accentColor   = NTColors.Success,
-            footerText    = "",
-            footerIcon    = footerIcon,
-            footerColor   = accent.text,
-            cardIndex     = 3,
-        )
-    }
-
-    // ── 5. Monthly profit ────────────────────────────────────
-    val profitKpi = run {
-        val pct = metrics.profitGrowthPercent
-        val (footerText, footerIcon, accent) = trendCell(pct, "vs last month")
-        NTKpiItem(
-            title         = "MONTHLY PROFIT",
-            value         = formatAmount(metrics.thisMonthProfit),
-            subtitle      = pctSubtitle(pct, "vs last month"),
-            subtitleColor = accent.text,
-            icon          = Icons.Rounded.TrendingUp,
-            iconBg        = NTColors.SuccessLight,
-            iconFg        = NTColors.Success,
-            accentColor   = NTColors.Success,
-            footerText    = "vs ${formatAmount(metrics.lastMonthProfit)} last month",
-            footerIcon    = footerIcon,
-            footerColor   = accent.text,
-            cardIndex     = 4,
-        )
-    }
-
-    return listOf(stockKpi, revenueKpi, cansKpi, customersKpi)
-}
-
-/** Picks footer text + icon + colour palette for a percent change. */
-private fun trendCell(
-    pct: Double?,
-    suffix: String,
-): Triple<String, ImageVector, TrendAccent> = when {
-    pct == null  -> Triple("No baseline yet", Icons.Rounded.Remove, TrendAccent.Neutral)
-    pct >= 0.5   -> Triple("+${formatPctShort(pct)}% $suffix",   Icons.Rounded.TrendingUp,   TrendAccent.Up)
-    pct <= -0.5  -> Triple("-${formatPctShort(-pct)}% $suffix",  Icons.Rounded.TrendingDown, TrendAccent.Down)
-    else         -> Triple("Flat $suffix",                       Icons.Rounded.Remove,       TrendAccent.Neutral)
-}
-
-private fun pctSubtitle(pct: Double?, suffix: String): String = when {
-    pct == null -> "No baseline yet"
-    pct >= 0.5  -> "+${formatPctShort(pct)}% $suffix"
-    pct <= -0.5 -> "-${formatPctShort(-pct)}% $suffix"
-    else        -> "Flat $suffix"
-}
-
-/** Coloured accent palette per trend direction. */
-private data class TrendAccent(
-    val text: Color,
-    val iconFg: Color,
-    val bgLight: Color,
-) {
-    companion object {
-        val Up      = TrendAccent(NTColors.SuccessText, NTColors.Success,      NTColors.SuccessLight)
-        val Down    = TrendAccent(NTColors.ErrorText,   NTColors.Error,        NTColors.ErrorLight)
-        val Neutral = TrendAccent(NTColors.TextSecondary, NTColors.TextTertiary, NTColors.SurfaceVar)
-    }
-}
-
 private fun formatAmount(amount: Double): String = when {
     amount >= 1_00_000 -> "₹${(amount / 1_00_000 * 10).toLong() / 10.0}L"
     amount >= 1_000    -> "₹${amount.toLong()}"
@@ -1104,18 +1142,5 @@ private fun EmpCredRow(label: String, value: String, icon: ImageVector) {
             modifier = Modifier.width(64.dp))
         Text(value, color = NTColors.TextPrimary, fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold)
-    }
-}
-
-private fun formatCases(value: Double): String {
-    return if (value % 1.0 == 0.0) {
-        value.toInt().toString()
-    } else {
-        val rounded = (value * 10).toLong() / 10.0
-        if (rounded % 1.0 == 0.0) {
-            rounded.toInt().toString()
-        } else {
-            rounded.toString()
-        }
     }
 }

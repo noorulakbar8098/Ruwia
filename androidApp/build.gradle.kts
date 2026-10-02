@@ -50,13 +50,26 @@ android {
         }
     }
 
+    // Single production build: Supabase keys come from local.properties.
+    val prodUrl = localProperties.getProperty("supabase.url.prod") ?: "https://srvertclbjcvlfdectsl.supabase.co"
+    val prodAnonKey = localProperties.getProperty("supabase.anonkey.prod") ?: "sb_publishable_N3oENikhDxobWX5dcEJoMw_FMbth7CN"
+    // Never commit a real service-role secret here: when local.properties is
+    // absent the build gets an empty key and the app shows the setup message.
+    val prodServiceKey = localProperties.getProperty("supabase.servicekey.prod") ?: ""
+
     defaultConfig {
         applicationId = "com.example.ruwia"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 4
+        versionName = "2.2"
         manifestPlaceholders["appName"] = "Ruwia"
+
+        // Single production build: keys come from local.properties
+        // (supabase.url.prod / supabase.anonkey.prod / supabase.servicekey.prod).
+        buildConfigField("String", "SUPABASE_URL", "\"$prodUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$prodAnonKey\"")
+        buildConfigField("String", "SUPABASE_SERVICE_KEY", "\"$prodServiceKey\"")
     }
     packaging {
         resources {
@@ -76,32 +89,5 @@ android {
 
     buildFeatures {
         buildConfig = true
-    }
-
-    val devUrl = localProperties.getProperty("supabase.url.dev") ?: "https://srvertclbjcvlfdectsl.supabase.co"
-    val devAnonKey = localProperties.getProperty("supabase.anonkey.dev") ?: "sb_publishable_N3oENikhDxobWX5dcEJoMw_FMbth7CN"
-    val devServiceKey = localProperties.getProperty("supabase.servicekey.dev") ?: "sb_secret_F8KyUwYsXLvzcdM_5TQqRg_a7IHDjEr"
-
-    val prodUrl = localProperties.getProperty("supabase.url.prod") ?: "https://srvertclbjcvlfdectsl.supabase.co"
-    val prodAnonKey = localProperties.getProperty("supabase.anonkey.prod") ?: "sb_publishable_N3oENikhDxobWX5dcEJoMw_FMbth7CN"
-    val prodServiceKey = localProperties.getProperty("supabase.servicekey.prod") ?: "sb_secret_F8KyUwYsXLvzcdM_5TQqRg_a7IHDjEr"
-
-    flavorDimensions += "environment"
-    productFlavors {
-        create("dev") {
-            dimension = "environment"
-            applicationIdSuffix = ".dev"
-            manifestPlaceholders["appName"] = "Ruwia Dev"
-            buildConfigField("String", "SUPABASE_URL", "\"$devUrl\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$devAnonKey\"")
-            buildConfigField("String", "SUPABASE_SERVICE_KEY", "\"$devServiceKey\"")
-        }
-        create("prod") {
-            dimension = "environment"
-            manifestPlaceholders["appName"] = "Ruwia"
-            buildConfigField("String", "SUPABASE_URL", "\"$prodUrl\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$prodAnonKey\"")
-            buildConfigField("String", "SUPABASE_SERVICE_KEY", "\"$prodServiceKey\"")
-        }
     }
 }

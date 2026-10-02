@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
+import com.example.ruwia.util.capitalizeWords
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import org.jetbrains.compose.resources.painterResource
@@ -524,7 +526,7 @@ fun ProductManagementScreen(
                             onDuplicate = {
                                 // For now, duplication will just open the add product flow.
                                 // In a future update, we can pass the data to pre-fill the form.
-                                onAddProduct(product, 0, "shop1")
+                                onAddProduct(product, 0, shops.firstOrNull()?.name.orEmpty())
                             },
                             onToggleStatus = {
                                 onUpdateProduct(product.copy(isActive = !product.isActive))
@@ -857,7 +859,7 @@ fun ProductManagementScreen(
                         Text(prod.displayName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
 
                         Text(
-                            text = "Current: $currentCases Cans",
+                            text = "Current: $currentCases Cases",
                             fontSize = 12.sp, color = NTColors.TextTertiary
                         )
 
@@ -1171,7 +1173,7 @@ private fun ProductManagementCard(
 ) {
     val themeColor = getProductColor(product.displayName)
     val casesCount = product.stockAvailable
-    val stockTypeLabel = "Cans"
+    val stockTypeLabel = "Cases"
 
     val costPrice = if (product.purchasePrice > 0) product.purchasePrice else product.purchasePriceGC
     val marginVal = product.defaultSellPrice - costPrice
@@ -1290,7 +1292,7 @@ private fun ProductManagementCard(
                     Spacer(Modifier.height(4.dp))
 
                     Text(
-                        text = "SKU: ${product.name} • Cans Category",
+                        text = "SKU: ${product.name} • Cases Category",
                         fontSize = 12.sp,
                         color = NTColors.TextTertiary,
                         fontWeight = FontWeight.Medium
@@ -1565,22 +1567,26 @@ private fun FormDialogInput(
     ) {
         Box(modifier = Modifier.weight(1f)) {
             if (value.isEmpty()) {
-                Text(placeholder, fontSize = 12.sp, color = Color.White.copy(alpha = 0.4f))
+                Text(placeholder, fontSize = 12.sp, color = NTColors.TextDisabled)
             }
             BasicTextField(
                 value = value,
-                onValueChange = {
-                    if (!isNumeric || it.all { c -> c.isDigit() || c == '.' }) {
-                        onValueChange(it)
-                    }
+                onValueChange = if (isNumeric) {
+                    { if (it.all { c -> c.isDigit() || c == '.' }) onValueChange(it) }
+                } else {
+                    { onValueChange(capitalizeWords(it)) }
                 },
                 textStyle = TextStyle(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = NTColors.TextPrimary
                 ),
                 cursorBrush = SolidColor(NTColors.Primary),
-                keyboardOptions = if (isNumeric) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
+                keyboardOptions = if (isNumeric) {
+                    KeyboardOptions(keyboardType = KeyboardType.Number)
+                } else {
+                    KeyboardOptions(capitalization = KeyboardCapitalization.Words)
+                },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -1644,7 +1650,7 @@ fun ProductFormSheet(
     var sellPrice     by remember(existing) { mutableStateOf(existing?.defaultSellPrice?.let { if (it > 0) it.toString() else "" } ?: "") }
     
     var openingStock  by remember { mutableStateOf("") }
-    var selectedShop  by remember(shops) { mutableStateOf(shops.firstOrNull()?.name ?: "Shop 1") }
+    var selectedShop  by remember(shops) { mutableStateOf(shops.firstOrNull()?.name.orEmpty()) }
     var showShopMenu  by remember { mutableStateOf(false) }
 
     Column(
@@ -1729,17 +1735,12 @@ fun ProductFormSheet(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(selectedShop, fontSize = 13.sp, color = Color.White)
-                            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
+                            Text(selectedShop, fontSize = 13.sp, color = NTColors.TextPrimary)
+                            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = NTColors.TextSecondary, modifier = Modifier.size(20.dp))
                         }
                         DropdownMenu(expanded = showShopMenu, onDismissRequest = { showShopMenu = false }) {
-                            if (shops.isEmpty()) {
-                                DropdownMenuItem(text = { Text("Shop 1") }, onClick = { selectedShop = "Shop 1"; showShopMenu = false })
-                                DropdownMenuItem(text = { Text("Shop 2") }, onClick = { selectedShop = "Shop 2"; showShopMenu = false })
-                            } else {
-                                shops.forEach { shop ->
-                                    DropdownMenuItem(text = { Text(shop.name) }, onClick = { selectedShop = shop.name; showShopMenu = false })
-                                }
+                            shops.forEach { shop ->
+                                DropdownMenuItem(text = { Text(shop.name) }, onClick = { selectedShop = shop.name; showShopMenu = false })
                             }
                         }
                     }
@@ -1791,11 +1792,12 @@ private fun FormInput(placeholder: String, value: String, onChange: (String) -> 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(modifier = Modifier.weight(1f)) {
-            if (value.isEmpty()) Text(placeholder, fontSize = 14.sp, color = Color.White.copy(alpha = 0.4f))
+            if (value.isEmpty()) Text(placeholder, fontSize = 14.sp, color = NTColors.TextDisabled)
             BasicTextField(
-                value = value, onValueChange = onChange,
-                textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White),
+                value = value, onValueChange = { onChange(capitalizeWords(it)) },
+                textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
                 cursorBrush = SolidColor(NTColors.Primary), singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -1814,10 +1816,10 @@ private fun PriceInput(value: String, onChange: (String) -> Unit) {
         Text("₹", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = NTColors.Primary)
         Spacer(Modifier.width(4.dp))
         Box(modifier = Modifier.weight(1f)) {
-            if (value.isEmpty()) Text("0.00", fontSize = 15.sp, color = Color.White.copy(alpha = 0.4f))
+            if (value.isEmpty()) Text("0.00", fontSize = 15.sp, color = NTColors.TextDisabled)
             BasicTextField(
                 value = value, onValueChange = { if (it.all { c -> c.isDigit() || c == '.' }) onChange(it) },
-                textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White),
+                textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary),
                 cursorBrush = SolidColor(NTColors.Primary),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true, modifier = Modifier.fillMaxWidth(),

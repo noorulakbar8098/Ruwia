@@ -75,7 +75,7 @@ fun EmployeeDeliveryDetailsScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("Quantity", fontSize = 12.sp, color = Color.White.copy(alpha = 0.5f))
-                        Text("${task.canQty} Cans", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text("${task.canQty} Cases", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
                 Card(
@@ -142,7 +142,7 @@ fun EmployeeDeliveryCompletionScreen(
                 OutlinedTextField(
                     value = cansDelivered,
                     onValueChange = { cansDelivered = it },
-                    label = { Text("Cans Delivered", color = Color.White.copy(alpha = 0.8f)) },
+                    label = { Text("Cases Delivered", color = Color.White.copy(alpha = 0.8f)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     textStyle = TextStyle(color = Color.White),
@@ -157,7 +157,7 @@ fun EmployeeDeliveryCompletionScreen(
                 OutlinedTextField(
                     value = emptyCansReturned,
                     onValueChange = { emptyCansReturned = it },
-                    label = { Text("Empty Cans Returned", color = Color.White.copy(alpha = 0.8f)) },
+                    label = { Text("Empty Cases Returned", color = Color.White.copy(alpha = 0.8f)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     textStyle = TextStyle(color = Color.White),

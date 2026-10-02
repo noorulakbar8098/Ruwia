@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -19,6 +21,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,9 +31,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
+import com.example.ruwia.appVersionLabel
 import com.example.ruwia.presentation.AdminState
+import com.example.ruwia.presentation.toDashboardMetrics
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import com.example.ruwia.ui.dashboard.*
+import com.example.ruwia.util.capitalizeWords
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -44,7 +52,9 @@ fun SettingsScreen(
     onNavigateToPricing: () -> Unit,
     onNavigateToCustomers: () -> Unit = {},
     onLogout: () -> Unit,
-    onDeleteAllData: () -> Unit,
+    onResetEmptyCases: () -> Unit = {},
+    onAddEmptyCases: (Int) -> Unit = {},
+    onShopNameChange: (Int, String) -> Unit = { _, _ -> },
     contentPadding: PaddingValues = PaddingValues()
 ) {
     // Toggle states
@@ -52,9 +62,14 @@ fun SettingsScreen(
     var whatsApp     by remember { mutableStateOf(true) }
     var autoBackup   by remember { mutableStateOf(true) }
     var darkMode     by remember { mutableStateOf(NTColors.isDarkMode) }
-    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showResetDialog  by remember { mutableStateOf(false) }
+    var showAddEmptyDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
-    var isLoggingOut by remember { mutableStateOf(false) }
+    var isLoggingOut   by remember { mutableStateOf(false) }
+    var shopOneName    by remember { mutableStateOf(state.shopNames.getOrNull(0).orEmpty()) }
+    var shopTwoName    by remember { mutableStateOf(state.shopNames.getOrNull(1).orEmpty()) }
+    var editingShopIndex by remember { mutableStateOf<Int?>(null) }
+    var editingShopName  by remember { mutableStateOf("") }
 
     if (isLoggingOut) {
         SaaSLoadingOverlay(message = "Signing Out")
@@ -65,27 +80,40 @@ fun SettingsScreen(
     }
 
     val shopCount  = state.shopStocks.size.coerceAtLeast(2)
-    val staffCount = state.employees.size
+    val staffCount = state.employees.count { it.status != "inactive" }
     val custCount  = state.customers.size
+    // Live Empty Cases figure for the stepper dialog (same source as dashboards).
+    val liveEmptyCases = remember(state) { state.toDashboardMetrics().emptyCansAtShop }
 
-    if (showDeleteDialog) {
+    if (showAddEmptyDialog) {
+        EmptyCasesStepperDialog(
+            currentCount = liveEmptyCases,
+            onDismiss    = { showAddEmptyDialog = false },
+            onConfirm    = { qty ->
+                showAddEmptyDialog = false
+                onAddEmptyCases(qty)
+            },
+        )
+    }
+
+    if (showResetDialog) {
         AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete All Data?", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
-            text = { Text("This will permanently delete all transactions, customers, suppliers, expenses, and staff accounts. Product stocks will be reset to 0. This action cannot be undone.", color = NTColors.TextSecondary) },
+            onDismissRequest = { showResetDialog = false },
+            title = { Text("Reset Empty Cases?", fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+            text = { Text("This sets the live Empty Cases figure to 0 business-wide, shown on the Stock tab and dashboards. Movement history is preserved. This cannot be undone.", color = NTColors.TextSecondary) },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        showDeleteDialog = false
-                        onDeleteAllData()
+                        showResetDialog = false
+                        onResetEmptyCases()
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = NTColors.Error)
                 ) {
-                    Text("Delete Everything", fontWeight = FontWeight.Bold)
+                    Text("Reset Empty Cases", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
+                TextButton(onClick = { showResetDialog = false }) {
                     Text("Cancel", color = NTColors.TextSecondary)
                 }
             },
@@ -118,56 +146,33 @@ fun SettingsScreen(
         )
     }
 
+    editingShopIndex?.let { index ->
+        val editingTitle = (if (index == 0) shopOneName else shopTwoName).ifBlank { "Shop" }
+        ShopNameDialog(
+            title = "Rename $editingTitle",
+            value = editingShopName,
+            onValueChange = { editingShopName = it },
+            onDismiss = { editingShopIndex = null },
+            onConfirm = {
+                val clean = editingShopName.trim()
+                if (clean.isNotBlank()) {
+                    if (index == 0) shopOneName = clean else shopTwoName = clean
+                    onShopNameChange(index, clean)
+                }
+                editingShopIndex = null
+            }
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
         Column(modifier = Modifier.fillMaxSize()) {
-            
+
             // ── Unified Top Bar ──
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(NTColors.Surface)
-                    .statusBarsPadding()
-                    .padding(bottom = 12.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(NTColors.SurfaceVar, RoundedCornerShape(10.dp))
-                            .border(1.dp, NTColors.Border, RoundedCornerShape(10.dp))
-                            .clickable(onClick = onBack),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.ArrowBack,
-                            contentDescription = "Back",
-                            tint = NTColors.TextPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Settings",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = NTColors.TextPrimary
-                        )
-                        Text(
-                            text = "Workspace & Account Customization",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = NTColors.TextTertiary
-                        )
-                    }
-                }
-            }
+            NTPrimaryTopBar(
+                title = "Settings",
+                subtitle = "Workspace & Account Customization",
+                onBack = onBack,
+            )
 
             // ── Scrollable Body ──
             LazyColumn(
@@ -183,21 +188,18 @@ fun SettingsScreen(
 
                 // ── 1. Business Hero Profile Card ──
                 item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
+                    GlossyTealBox(
                         shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-                        border = BorderStroke(1.dp, NTColors.Border),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.TopStart,
                     ) {
                         Column(modifier = Modifier.padding(20.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                // Premium Gradient Logo Avatar
+                                // Logo avatar
                                 Box(
                                     modifier = Modifier
                                         .size(60.dp)
-                                        .clip(RoundedCornerShape(20.dp))
-                                    ,
+                                        .clip(RoundedCornerShape(20.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Image(
@@ -213,7 +215,7 @@ fun SettingsScreen(
                                         text = adminName.ifEmpty { "Neerthuli Water" },
                                         fontSize = 18.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = NTColors.TextPrimary,
+                                        color = Color.White,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -221,52 +223,28 @@ fun SettingsScreen(
                                         Text(
                                             text = adminEmail,
                                             fontSize = 12.sp,
-                                            color = NTColors.TextTertiary,
+                                            color = Color.White.copy(alpha = 0.65f),
                                             fontWeight = FontWeight.Medium
                                         )
                                         Spacer(Modifier.height(4.dp))
                                     }
-//                                    Row(
-//                                        verticalAlignment = Alignment.CenterVertically,
-//                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-//                                    ) {
-//                                        Box(
-//                                            modifier = Modifier
-//                                                .clip(RoundedCornerShape(6.dp))
-//                                                .background(NTColors.AccentLight)
-//                                                .padding(horizontal = 8.dp, vertical = 2.dp)
-//                                        ) {
-//                                            Text(
-//                                                "Business Pro",
-//                                                color = NTColors.Accent,
-//                                                fontSize = 10.sp,
-//                                                fontWeight = FontWeight.Bold
-//                                            )
-//                                        }
-//                                        Text(
-//                                            "★★★★ Premium",
-//                                            fontSize = 11.sp,
-//                                            color = NTColors.Accent,
-//                                            fontWeight = FontWeight.SemiBold
-//                                        )
-//                                    }
                                 }
                             }
-                            
+
                             Spacer(Modifier.height(16.dp))
-                            HorizontalDivider(color = NTColors.Divider)
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
                             Spacer(Modifier.height(16.dp))
-                            
+
                             // Stats strip cells
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceEvenly
                             ) {
-                                StatCell("$shopCount", "SHOPS")
-                                Box(modifier = Modifier.width(1.dp).height(30.dp).background(NTColors.Border))
-                                StatCell("$staffCount", "STAFF")
-                                Box(modifier = Modifier.width(1.dp).height(30.dp).background(NTColors.Border))
-                                StatCell("$custCount", "CUSTOMERS")
+                                GlossStatCell("$shopCount", "SHOPS")
+                                Box(modifier = Modifier.width(1.dp).height(30.dp).background(Color.White.copy(alpha = 0.12f)))
+                                GlossStatCell("$staffCount", "STAFF")
+                                Box(modifier = Modifier.width(1.dp).height(30.dp).background(Color.White.copy(alpha = 0.12f)))
+                                GlossStatCell("$custCount", "CUSTOMERS")
                             }
                         }
                     }
@@ -277,8 +255,8 @@ fun SettingsScreen(
                     SettingsGroupCard("BUSINESS MANAGEMENT") {
                         SettingsNavItem(
                             icon = Icons.Rounded.Group,
-                            iconBg = NTColors.AccentLight,
-                            iconFg = NTColors.Accent,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
                             title = "Staff & Roles",
                             subtitle = "Manage $staffCount active team members and access controls",
                             onClick = onNavigateToEmployees
@@ -287,11 +265,29 @@ fun SettingsScreen(
                         SettingsDivider()
                         SettingsNavItem(
                             icon = Icons.Rounded.People,
-                            iconBg = Color(0xFF1E153A),
-                            iconFg = Color(0xFF8B5CF6),
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
                             title = "Customers",
                             subtitle = "$custCount registered distribution clients",
                             onClick = onNavigateToCustomers
+                        )
+                        SettingsDivider()
+                        SettingsNavItem(
+                            icon = Icons.Rounded.AddBox,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
+                            title = "Add Empty Cases",
+                            subtitle = "$liveEmptyCases available · record returned cases",
+                            onClick = { showAddEmptyDialog = true }
+                        )
+                        SettingsDivider()
+                        SettingsNavItem(
+                            icon = Icons.Rounded.Undo,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
+                            title = "Reset Empty Cases",
+                            subtitle = "Zero out the live Empty Cases figure business-wide",
+                            onClick = { showResetDialog = true }
                         )
                     }
                 }
@@ -301,8 +297,8 @@ fun SettingsScreen(
                     SettingsGroupCard("SYSTEM PREFERENCES") {
                         SettingsToggleItem(
                             icon = Icons.Rounded.NotificationsActive,
-                            iconBg = Color(0xFF1E153A),
-                            iconFg = Color(0xFF8B5CF6),
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
                             title = "Push Notifications",
                             subtitle = "Orders, dues, and transaction alerts",
                             checked = pushNotif,
@@ -321,54 +317,35 @@ fun SettingsScreen(
                                 NTColors.isDarkMode = it
                             }
                         )
+                        SettingsDivider()
+                        SettingsShopNameItem(
+                            icon = Icons.Rounded.Edit,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
+                            title = "Rename Shop",
+                            subtitle = "Current: ${shopOneName.ifBlank { "Not set" }}",
+                            value = shopOneName,
+                            onClick = {
+                                editingShopIndex = 0
+                                editingShopName = shopOneName
+                            }
+                        )
+                        SettingsDivider()
+                        SettingsShopNameItem(
+                            icon = Icons.Rounded.Edit,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
+                            title = "Rename Shop",
+                            subtitle = "Current: ${shopTwoName.ifBlank { "Not set" }}",
+                            value = shopTwoName,
+                            onClick = {
+                                editingShopIndex = 1
+                                editingShopName = shopTwoName
+                            }
+                        )
                     }
                 }
 
-                // ── 5. Danger Zone ──
-//                item {
-//                    Card(
-//                        modifier = Modifier.fillMaxWidth(),
-//                        shape = RoundedCornerShape(24.dp),
-//                        colors = CardDefaults.cardColors(containerColor = NTColors.ErrorLight),
-//                        border = BorderStroke(1.dp, NTColors.Error)
-//                    ) {
-//                        Column(modifier = Modifier.padding(20.dp)) {
-//                            Text(
-//                                "DANGER ZONE",
-//                                fontSize = 11.sp,
-//                                fontWeight = FontWeight.Bold,
-//                                color = NTColors.ErrorText,
-//                                letterSpacing = 1.2.sp
-//                            )
-//                            Spacer(Modifier.height(14.dp))
-//
-//                            Row(
-//                                modifier = Modifier
-//                                    .fillMaxWidth()
-//                                    .clickable { showDeleteDialog = true }
-//                                    .padding(vertical = 4.dp),
-//                                verticalAlignment = Alignment.CenterVertically,
-//                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-//                            ) {
-//                                Box(
-//                                    modifier = Modifier
-//                                        .size(36.dp)
-//                                        .clip(RoundedCornerShape(8.dp))
-//                                        .background(NTColors.ErrorLight),
-//                                    contentAlignment = Alignment.Center
-//                                ) {
-//                                    Icon(Icons.Rounded.DeleteForever, null, tint = NTColors.Error, modifier = Modifier.size(20.dp))
-//                                }
-//                                Column(modifier = Modifier.weight(1f)) {
-//                                    Text("Delete All Data", color = NTColors.ErrorText, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-//                                    Text("Permanently erase database transactions", color = NTColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-//                                }
-//                                Icon(Icons.Rounded.ChevronRight, null, tint = NTColors.Error, modifier = Modifier.size(20.dp))
-//                            }
-//                        }
-//                    }
-//                }
-                
                 // ── 6. Sign Out Button ──
                 item {
                     Button(
@@ -383,6 +360,17 @@ fun SettingsScreen(
                         Text("Sign Out of Account", color = NTColors.Error, fontWeight = FontWeight.Bold)
                     }
                 }
+
+                // ── 7. App version ──
+                item {
+                    Text(
+                        text = "Version ${appVersionLabel()}",
+                        fontSize = 11.sp,
+                        color = NTColors.TextTertiary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    )
+                }
             }
         }
     }
@@ -391,11 +379,11 @@ fun SettingsScreen(
 // ── Helper Mini Composables ──
 
 @Composable
-private fun StatCell(value: String, label: String) {
+private fun GlossStatCell(value: String, label: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = NTColors.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+        Text(value, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         Spacer(Modifier.height(2.dp))
-        Text(label, color = NTColors.TextTertiary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+        Text(label, color = Color.White.copy(alpha = 0.60f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
     }
 }
 
@@ -529,4 +517,104 @@ private fun SettingsToggleItem(
             )
         )
     }
+}
+
+@Composable
+private fun SettingsShopNameItem(
+    icon: ImageVector,
+    iconBg: Color,
+    iconFg: Color,
+    title: String,
+    subtitle: String,
+    value: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(iconBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = iconFg, modifier = Modifier.size(18.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = NTColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            if (subtitle.isNotEmpty()) {
+                Text(
+                    subtitle,
+                    color = NTColors.TextTertiary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Icon(
+            imageVector = Icons.Rounded.ChevronRight,
+            contentDescription = null,
+            tint = NTColors.TextTertiary,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+@Composable
+private fun ShopNameDialog(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary) },
+        text = {
+            Column {
+                Text(
+                    "Set the display name for this shop. It will update on the inventory and employee screens.",
+                    color = NTColors.TextSecondary,
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(14.dp))
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { onValueChange(capitalizeWords(it)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Shop name", color = NTColors.TextTertiary, fontSize = 12.sp) },
+                    placeholder = { Text("e.g. Main Outlet", color = NTColors.TextTertiary) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = ImeAction.Done,
+                        capitalization = KeyboardCapitalization.Words,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { onConfirm() })
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(contentColor = NTColors.Primary)
+            ) {
+                Text("Save", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = NTColors.TextSecondary)
+            }
+        },
+        containerColor = NTColors.Surface
+    )
 }

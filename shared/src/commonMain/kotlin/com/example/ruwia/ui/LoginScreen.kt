@@ -58,7 +58,7 @@ import com.example.ruwia.presentation.AuthViewModel
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
-import ruwia.shared.generated.resources.logo
+import ruwia.shared.generated.resources.app_icon
 
 // ── Premium SaaS Color Palette ─────────────────────────────────────────────
 private object DroplyColor {
@@ -235,9 +235,11 @@ private fun HeroBrandSection() {
             contentAlignment = Alignment.Center
         ) {
             Image(
-                painter = painterResource(Res.drawable.logo),
+                painter = painterResource(Res.drawable.app_icon),
                 contentDescription = "NEER THULI",
-                modifier = Modifier.size(140.dp),
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(RoundedCornerShape(26.dp)),
                 contentScale = ContentScale.Crop
             )
         }

@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS product_categories (
     purchase_price_mb  DECIMAL(10,2) DEFAULT 0,
     default_sell_price DECIMAL(10,2) DEFAULT 0,
     stock_available  INT DEFAULT 0,
+    low_stock_alert  INT DEFAULT 5,
     is_active        BOOLEAN DEFAULT true,
     is_deleted       BOOLEAN DEFAULT false,
     created_at       TIMESTAMPTZ DEFAULT now()
@@ -159,12 +160,22 @@ CREATE TABLE IF NOT EXISTS monthly_expenses (id UUID DEFAULT uuid_generate_v4() 
 CREATE TABLE IF NOT EXISTS outward (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, order_id UUID, customer_id UUID, qty_delivered INT, qty_empty_returned INT, rate DECIMAL, employee_id UUID, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS payments (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, customer_id UUID, amount DECIMAL, mode TEXT, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS route_tasks (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, customer_name TEXT, phone TEXT, address TEXT, can_qty INT, eta_text TEXT, status TEXT, employee_id UUID, order_id UUID, scheduled_date DATE, created_at TIMESTAMPTZ);
+CREATE TABLE IF NOT EXISTS app_settings (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, settings_key TEXT NOT NULL, settings_value TEXT, updated_at TIMESTAMPTZ);
+CREATE TABLE IF NOT EXISTS customer_product_prices (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    customer_id UUID NOT NULL,
+    product_id UUID NOT NULL,
+    selling_price DECIMAL(10,2) NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
 
 -- Migrate all tables
 SELECT migrate_to_tenant_table('product_categories');
 ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS brand_name TEXT DEFAULT '';
 ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS purchase_price DECIMAL(10,2) DEFAULT 0;
 ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false;
+ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS low_stock_alert INT DEFAULT 5;
 SELECT migrate_to_tenant_table('shop_stocks');
 SELECT migrate_to_tenant_table('suppliers');
 SELECT migrate_to_tenant_table('customers');
@@ -176,6 +187,16 @@ SELECT migrate_to_tenant_table('monthly_expenses');
 SELECT migrate_to_tenant_table('outward');
 SELECT migrate_to_tenant_table('payments');
 SELECT migrate_to_tenant_table('route_tasks');
+SELECT migrate_to_tenant_table('app_settings');
+SELECT migrate_to_tenant_table('customer_product_prices');
+
+-- Write-time snapshots + sale idempotency (safe to re-run: IF NOT EXISTS).
+-- product_name keeps history showing real names after soft-delete;
+-- client_key lets retried sales skip already-written lines instead of
+-- deducting stock twice.
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS product_name TEXT;
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS client_key TEXT;
+ALTER TABLE sale_entries ADD COLUMN IF NOT EXISTS client_key TEXT;
 
 -- Special case: Profiles RLS
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;

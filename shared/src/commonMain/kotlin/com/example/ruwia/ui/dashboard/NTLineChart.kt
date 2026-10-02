@@ -1,6 +1,7 @@
 package com.example.ruwia.ui.dashboard
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -24,6 +25,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,15 +46,19 @@ fun NTLineChartCard(
     modifier: Modifier = Modifier,
     rawValues: List<Double>? = null,
     xRawLabels: List<String>? = null,
-    valueFormatter: ((Double) -> String)? = null
+    valueFormatter: ((Double) -> String)? = null,
+    /** When non-null, a small arrow button is shown on the right that invokes it. */
+    onViewAllClick: (() -> Unit)? = null,
+    viewAllLabel: String = "View all",
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(NTDp.radXxl),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
+        border = BorderStroke(1.dp, NTColors.Border),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(NTDp.cardPad)) {
+        Column(modifier = Modifier.padding(20.dp)) {
             val isPos = growthPercent >= 0.5
             val isNeg = growthPercent <= -0.5
             val badgeBgColor = when {
@@ -74,13 +81,25 @@ fun NTLineChartCard(
                 isNeg -> Icons.Rounded.TrendingDown
                 else -> Icons.Rounded.Remove
             }
+            // Explicit meaning: +X% = growth, -X% = decline, 0% = flat.
+            // The sign is never dropped — a decline must not read as growth.
+            val badgeText = when {
+                isPos -> "+${abs(growthPercent).toInt()}%"
+                isNeg -> "-${abs(growthPercent).toInt()}%"
+                else  -> "0%"
+            }
+            val badgeDesc = when {
+                isPos -> "Growing, up ${abs(growthPercent).toInt()} percent"
+                isNeg -> "Declining, down ${abs(growthPercent).toInt()} percent"
+                else  -> "No change"
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = title,
                         color = NTColors.Primary,
@@ -92,31 +111,45 @@ fun NTLineChartCard(
                     Text(
                         text = valueLabel,
                         color = NTColors.TextPrimary,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.3).sp,
+                        maxLines = 1
                     )
                 }
-                // Growth badge
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(NTDp.radFull))
-                        .background(badgeBgColor)
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // Right side — arrow on top, growth badge below it.
+                Column(
+                    horizontalAlignment = Alignment.End,
                 ) {
-                    Icon(
-                        imageVector = badgeIcon,
-                        contentDescription = null,
-                        tint = badgeIconColor,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        text = "${if (isPos) "+" else ""}${growthPercent.toInt()}%",
-                        color = badgeTextColor,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    if (onViewAllClick != null) {
+                        GlossyArrowButton(
+                            onClick = onViewAllClick,
+                            contentDescription = viewAllLabel,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(NTDp.radFull))
+                            .background(badgeBgColor)
+                            .semantics(mergeDescendants = true) { contentDescription = badgeDesc }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = badgeIcon,
+                            contentDescription = null,
+                            tint = badgeIconColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = badgeText,
+                            color = badgeTextColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 
@@ -325,4 +358,203 @@ private fun smoothPath(pts: List<Offset>): Path {
         path.cubicTo(midX, prev.y, midX, curr.y, curr.x, curr.y)
     }
     return path
+}
+
+// ── Professional bar-chart analytics card ─────────────────────
+//  Premium minimal: white card, subtle border, clean bars, minimal grid.
+
+@Composable
+fun NTAnalyticsBarCard(
+    title: String,
+    valueLabel: String,
+    growthPercent: Double?,
+    vsLabel: String = "vs last month",
+    rawValues: List<Double>,
+    labels: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, NTColors.Border),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            val isPos = (growthPercent ?: 0.0) >= 0.0
+            val isNeg = (growthPercent ?: 0.0) <= -0.5
+            val badgeBg = when {
+                growthPercent == null -> NTColors.SurfaceVar
+                isPos -> NTColors.SuccessLight
+                else -> NTColors.ErrorLight
+            }
+            val badgeFg = when {
+                growthPercent == null -> NTColors.TextSecondary
+                isPos -> NTColors.SuccessText
+                else -> NTColors.ErrorText
+            }
+            val badgeIcon = when {
+                growthPercent == null -> Icons.Rounded.Remove
+                isPos -> Icons.Rounded.TrendingUp
+                else -> Icons.Rounded.TrendingDown
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        color = NTColors.TextTertiary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.8.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = valueLabel,
+                        color = NTColors.TextPrimary,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.6).sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = vsLabel,
+                        color = NTColors.TextTertiary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(badgeBg)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = badgeIcon,
+                        contentDescription = null,
+                        tint = badgeFg,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = formatBarDelta(growthPercent),
+                        color = badgeFg,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            if (rawValues.all { it == 0.0 }) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(150.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "No revenue data yet",
+                        color = NTColors.TextTertiary, fontSize = 13.sp
+                    )
+                }
+            } else {
+                NTRevenueBars(
+                    values = rawValues,
+                    labels = labels,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+private fun formatBarDelta(pct: Double?): String {
+    if (pct == null) return "—"
+    val rounded = (abs(pct) * 10).toLong() / 10.0
+    val str = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+    return if (pct >= 0) "+$str%" else "-$str%"
+}
+
+@Composable
+private fun NTRevenueBars(
+    values: List<Double>,
+    labels: List<String>,
+    height: Dp = 150.dp,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Canvas(
+            modifier = Modifier.fillMaxWidth().height(height)
+        ) {
+            val w = size.width
+            val h = size.height
+            val bottomPad = 8.dp.toPx()
+            val topPad = 8.dp.toPx()
+            val drawH = h - topPad - bottomPad
+            val maxV = values.maxOrNull()?.takeIf { it > 0 } ?: 1.0
+
+            // Minimal grid — 3 faint lines
+            listOf(0.25f, 0.5f, 0.75f).forEach { r ->
+                val y = topPad + drawH * (1f - r)
+                drawLine(
+                    color = Color(0xFFE3ECEB),
+                    start = Offset(0f, y), end = Offset(w, y),
+                    strokeWidth = 1.dp.toPx()
+                )
+            }
+
+            val n = values.size
+            if (n == 0) return@Canvas
+            val gap = if (n > 20) 3.dp.toPx() else if (n > 10) 6.dp.toPx() else 10.dp.toPx()
+            val totalGap = gap * (n - 1)
+            val barW = ((w - totalGap) / n).coerceAtLeast(4.dp.toPx())
+            val barColor = Color(0xFF0F9D8A)
+            val barColorSoft = Color(0xFF0F9D8A).copy(alpha = 0.22f)
+            val maxIdx = values.indexOf(maxV)
+
+            values.forEachIndexed { i, v ->
+                val frac = (v / maxV).toFloat().coerceIn(0f, 1f)
+                val barH = (drawH * frac).coerceAtLeast(if (v > 0) 4.dp.toPx() else 2.dp.toPx())
+                val x = i * (barW + gap)
+                val y = topPad + drawH - barH
+                drawRoundRect(
+                    color = if (i == maxIdx) barColor else if (frac < 0.02f) barColorSoft.copy(alpha = 0.4f) else barColor.copy(alpha = 0.78f),
+                    topLeft = Offset(x, y),
+                    size = Size(barW, barH),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // X labels — evenly spaced, max ~5
+        val displayLabels = downsampleLabels(labels, values.size, 5)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            displayLabels.forEach { lbl ->
+                Text(
+                    text = lbl,
+                    color = NTColors.TextTertiary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+private fun downsampleLabels(source: List<String>, pointCount: Int, max: Int): List<String> {
+    if (source.isEmpty()) return List(pointCount.coerceAtLeast(1).coerceAtMost(max)) { "" }
+    if (source.size <= max) return source
+    val step = (source.size - 1).toDouble() / (max - 1)
+    return (0 until max).map { i -> source[(i * step).toInt().coerceAtMost(source.size - 1)] }
 }

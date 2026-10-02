@@ -24,11 +24,14 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.theme.RuwiaColor
+import com.example.ruwia.util.capitalizeWords
+import com.example.ruwia.util.isTextField
 
 // ── Two modes inside the sheet ────────────────────────────────────────────────
 
@@ -553,7 +556,7 @@ private fun AddCustomerField(
                 }
                 BasicTextField(
                     value            = value,
-                    onValueChange    = onChange,
+                    onValueChange    = if (keyboardType.isTextField()) { { v -> onChange(capitalizeWords(v)) } } else onChange,
                     textStyle        = TextStyle(
                         fontSize   = 14.sp,
                         fontWeight = FontWeight.Medium,
@@ -562,7 +565,10 @@ private fun AddCustomerField(
                     cursorBrush      = SolidColor(RuwiaColor.TealPrimary),
                     singleLine       = !multiline,
                     maxLines         = if (multiline) 4 else 1,
-                    keyboardOptions  = KeyboardOptions(keyboardType = keyboardType),
+                    keyboardOptions  = KeyboardOptions(
+                        keyboardType  = keyboardType,
+                        capitalization = if (keyboardType.isTextField()) KeyboardCapitalization.Words else KeyboardCapitalization.None,
+                    ),
                     modifier         = Modifier.fillMaxWidth(),
                 )
             }
