@@ -243,6 +243,20 @@ fun EmployeeDashboardScreen(
 
             EmpScreen.AddSale -> {
                 val shopPart = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
+                // Dynamic shop options from live backend data (survives
+                // renames): configured shop rows + every bucket seen in the
+                // movement log + the employee's assigned shop. shop_stocks
+                // may be empty (unconfigured), so movements are the source
+                // that guarantees both shops actually appear.
+                val saleShops = remember(state.shopStocks, state.shopMovements, shopPart) {
+                    (state.shopStocks.map { it.name } +
+                        state.shopMovements.map { it.shopName } +
+                        shopPart)
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                        .distinctBy { com.example.ruwia.domain.shopMatchKey(it) }
+                        .takeIf { it.isNotEmpty() } ?: listOf("Shop 1", "Shop 2")
+                }
                 AddSaleScreen(
                     products      = state.productCategories,
                     customers     = state.customers,
@@ -263,13 +277,15 @@ fun EmployeeDashboardScreen(
                     onClearError  = vm::clearError,
                     onBack        = { screen = EmpScreen.Home },
                     shopName      = shopPart,
+                    shops         = saleShops,
                     isSaving      = isSubmittingAction,
-                    onSave        = { customerName, items, emptyCans, saleDate, saleTime, saleKey ->
+                    onSave        = { customerName, items, emptyCans, saleDate, saleTime, saleKey, saleShop ->
                         // Persist the sale: each line item creates one sale_entries
-                        // row and one outward stock movement; any empties picked up
-                        // from the customer become an inward movement (visible to
-                        // the admin on the stock dashboard).
-                        val shopPart = resolvedShopInfo.split("·").getOrNull(0)?.trim() ?: ""
+                        // row and outward stock movement(s) in the picked shop's
+                        // bucket; any empties picked up from the customer become
+                        // an inward movement (visible to the admin on the stock
+                        // dashboard).
+                        val saleShop = saleShop.trim().ifBlank { shopPart }
                         // sale_entries.date is a YYYY-MM-DD day bucket (all filters,
                         // grouping and charts compare on that prefix). Never append
                         // the display time — the insert's created_at already keeps
@@ -291,7 +307,7 @@ fun EmployeeDashboardScreen(
                             isSubmittingAction = true
                             vm.addOutwardSale(
                                 customerName       = customerName,
-                                shopName           = shopPart,
+                                shopName           = saleShop,
                                 lines              = lines,
                                 emptyCansCollected = emptyCans,
                                 saleDate           = saleDay,

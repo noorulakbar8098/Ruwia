@@ -41,7 +41,10 @@ import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
 import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.isoToDisplayTime
 import kotlin.time.Clock
+import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.*
@@ -90,6 +93,8 @@ fun TransactionsScreen(
     var fProduct by remember { mutableStateOf("") }
     var fEmployee by remember { mutableStateOf("") }
     var fShop by remember { mutableStateOf("") }
+    var fDateFrom by remember { mutableStateOf("") }
+    var fDateTo by remember { mutableStateOf("") }
 
     val customerByName = remember(state.customers) {
         state.customers.associateBy { it.name.trim().lowercase() }
@@ -110,7 +115,7 @@ fun TransactionsScreen(
 
     val filtered = remember(
         state.saleEntries, query, preset, sort,
-        fCustomer, fProduct, fEmployee, fShop, todayStr,
+        fCustomer, fProduct, fEmployee, fShop, fDateFrom, fDateTo, todayStr,
     ) {
         val q = query.trim().lowercase()
         state.saleEntries
@@ -125,6 +130,15 @@ fun TransactionsScreen(
                     TxPreset.WEEK -> day >= weekAgoStr(todayStr)
                     TxPreset.MONTH -> day.startsWith(todayStr.substring(0, 7))
                 }
+            }
+            .filter { s ->
+                // Custom From/To range (day-prefix compare, same as presets).
+                // Rows without a parseable ISO day stay visible.
+                val day = s.date.take(10)
+                if (day.length != 10 || day[4] != '-') return@filter true
+                if (fDateFrom.isNotBlank() && day < fDateFrom) return@filter false
+                if (fDateTo.isNotBlank() && day > fDateTo) return@filter false
+                true
             }
             .filter { s -> fCustomer.isBlank() || s.customerName.equals(fCustomer, ignoreCase = true) }
             .filter { s -> fProduct.isBlank() || s.productName.equals(fProduct, ignoreCase = true) }
@@ -162,7 +176,9 @@ fun TransactionsScreen(
         (if (fCustomer.isNotBlank()) 1 else 0) +
         (if (fProduct.isNotBlank()) 1 else 0) +
         (if (fEmployee.isNotBlank()) 1 else 0) +
-        (if (fShop.isNotBlank()) 1 else 0)
+        (if (fShop.isNotBlank()) 1 else 0) +
+        (if (fDateFrom.isNotBlank()) 1 else 0) +
+        (if (fDateTo.isNotBlank()) 1 else 0)
 
     val customerOptions = remember(state.saleEntries) {
         state.saleEntries.map { it.customerName.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
@@ -270,9 +286,17 @@ fun TransactionsScreen(
             shopOptions = shopOptions,
             selectedShop = fShop,
             onSelectShop = { fShop = it },
+            dateFrom = fDateFrom,
+            dateTo = fDateTo,
+            // A custom range takes over from the quick presets (Today/Week/
+            // Month) so the two can never contradict each other into an
+            // always-empty list.
+            onDateFromChange = { fDateFrom = it; if (it.isNotBlank()) preset = TxPreset.ALL },
+            onDateToChange = { fDateTo = it; if (it.isNotBlank()) preset = TxPreset.ALL },
             resultCount = filtered.size,
             onClearAll = {
                 fCustomer = ""; fProduct = ""; fEmployee = ""; fShop = ""
+                fDateFrom = ""; fDateTo = ""
             },
             onDismiss = { showFilters = false },
         )
@@ -827,6 +851,10 @@ private fun TxFilterSheet(
     shopOptions: List<String>,
     selectedShop: String,
     onSelectShop: (String) -> Unit,
+    dateFrom: String,
+    dateTo: String,
+    onDateFromChange: (String) -> Unit,
+    onDateToChange: (String) -> Unit,
     resultCount: Int,
     onClearAll: () -> Unit,
     onDismiss: () -> Unit,
@@ -851,7 +879,7 @@ private fun TxFilterSheet(
                         letterSpacing = (-0.2).sp, color = NTColors.TextPrimary,
                     )
                     Text(
-                        "Refine by customer, product, staff or shop",
+                        "Refine by date, customer, product, staff or shop",
                         fontSize = 13.sp, color = NTColors.TextSecondary,
                     )
                 }
@@ -869,6 +897,18 @@ private fun TxFilterSheet(
                 }
             }
             Spacer(Modifier.height(16.dp))
+            Text(
+                "DATES", color = NTColors.TextTertiary, fontSize = 11.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            TxDateRangeRow(
+                dateFrom = dateFrom,
+                dateTo = dateTo,
+                onFromChange = onDateFromChange,
+                onToChange = onDateToChange,
+            )
+            Spacer(Modifier.height(14.dp))
             if (shopOptions.isNotEmpty()) {
                 TxFilterSection(
                     label = "SHOP",
@@ -919,6 +959,142 @@ private fun TxFilterSheet(
                     Text("Show $resultCount", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
+        }
+    }
+}
+
+private fun txDateStrToEpochMillis(s: String): Long? = try {
+    LocalDate.parse(s).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
+} catch (_: Exception) {
+    null
+}
+
+private fun txEpochMillisToDateStr(millis: Long): String {
+    val d = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.UTC).date
+    return "${d.year}-${d.monthNumber.toString().padStart(2, '0')}-${d.dayOfMonth.toString().padStart(2, '0')}"
+}
+
+private fun txIsoToDisplay(s: String): String {
+    val parts = s.split("-")
+    return if (parts.size == 3) "${parts[2]}/${parts[1]}/${parts[0]}" else s
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TxDateRangeRow(
+    dateFrom: String,
+    dateTo: String,
+    onFromChange: (String) -> Unit,
+    onToChange: (String) -> Unit,
+) {
+    var showFromPicker by remember { mutableStateOf(false) }
+    var showToPicker by remember { mutableStateOf(false) }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        TxDateChip(
+            label = "From",
+            date = dateFrom,
+            onClick = { showFromPicker = true },
+            onClear = { onFromChange("") },
+            modifier = Modifier.weight(1f),
+        )
+        TxDateChip(
+            label = "To",
+            date = dateTo,
+            onClick = { showToPicker = true },
+            onClear = { onToChange("") },
+            modifier = Modifier.weight(1f),
+        )
+    }
+
+    if (showFromPicker) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = txDateStrToEpochMillis(dateFrom),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showFromPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { onFromChange(txEpochMillisToDateStr(it)) }
+                    showFromPicker = false
+                }) { Text("OK", color = NTColors.Primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFromPicker = false }) { Text("Cancel", color = NTColors.TextSecondary) }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+
+    if (showToPicker) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = txDateStrToEpochMillis(dateTo),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showToPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { onToChange(txEpochMillisToDateStr(it)) }
+                    showToPicker = false
+                }) { Text("OK", color = NTColors.Primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showToPicker = false }) { Text("Cancel", color = NTColors.TextSecondary) }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+}
+
+@Composable
+private fun TxDateChip(
+    label: String,
+    date: String,
+    onClick: () -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val displayText = if (date.isNotBlank()) txIsoToDisplay(date) else label
+    val isActive = date.isNotBlank()
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (isActive) NTColors.Primary.copy(alpha = 0.10f) else NTColors.SurfaceVar)
+            .border(
+                1.dp,
+                if (isActive) NTColors.Primary else NTColors.Border,
+                RoundedCornerShape(50),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.CalendarToday,
+            null,
+            tint = if (isActive) NTColors.Primary else NTColors.TextSecondary,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = displayText,
+            color = if (isActive) NTColors.Primary else NTColors.TextSecondary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (isActive) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                Icons.Rounded.Close,
+                "Clear",
+                tint = NTColors.Primary,
+                modifier = Modifier.size(12.dp).clickable(onClick = onClear),
+            )
         }
     }
 }

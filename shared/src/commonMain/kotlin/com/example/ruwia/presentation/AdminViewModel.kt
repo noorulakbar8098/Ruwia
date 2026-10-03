@@ -466,12 +466,13 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         type: String,
         shopName: String,
         productId: String? = null,
+        createdAt: String? = null,
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         // Canonicalize to the shop's existing history bucket so per-shop tabs
         // keep seeing the row (see canonicalShopName).
         val canonicalShop = canonicalShopName(shopName, _state.value.recentMovements)
-        runCatching { repo.addStockMovement(source, qty, type, canonicalShop, productId) }
+        runCatching { repo.addStockMovement(source, qty, type, canonicalShop, productId, createdAt = createdAt) }
             .onSuccess {
                 // Refresh all data that feeds the stock dashboard so the totals
                 // and per-shop breakdowns are immediately correct after saving.

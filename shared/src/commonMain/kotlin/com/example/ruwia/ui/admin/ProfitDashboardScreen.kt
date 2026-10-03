@@ -97,7 +97,6 @@ fun ProfitDashboardScreen(
     var periodMode    by remember { mutableStateOf(AnalyticsPeriod.MONTH) }
     var filterFrom    by remember { mutableStateOf("") } // YYYY-MM-DD or ""
     var filterTo      by remember { mutableStateOf("") }
-    var showRangeDialog by remember { mutableStateOf(false) }
     var showPeriodSheet by remember { mutableStateOf(false) }
     // Chart-card scope: independent 7D / 30D / 3M / 1Y window ending at the analysis end.
     var chartRange    by remember { mutableStateOf(ChartRange.M3) }
@@ -364,7 +363,7 @@ fun ProfitDashboardScreen(
                 availableYears = availableYears,
                 onYearChange = { selectedYear = it },
                 onBack   = onBack,
-                onOpenRange = { showRangeDialog = true },
+                onOpenRange = { showPeriodSheet = true },
                 customActive = customActive,
                 customLabel = if (customActive) rangeLabel(
                     filterFrom.takeIf { it.isNotBlank() }?.let { strToMs(it) } ?: winStartMs,
@@ -478,19 +477,8 @@ fun ProfitDashboardScreen(
         }
     }
 
-    // From/To range dialog (calendar entry point).
-    if (showRangeDialog) {
-        DateRangeDialog(
-            from = filterFrom,
-            to = filterTo,
-            onFromChange = { filterFrom = it },
-            onToChange = { filterTo = it },
-            onClear = { filterFrom = ""; filterTo = "" },
-            onDismiss = { showRangeDialog = false },
-        )
-    }
-
-    // Analysis period sheet (single entry point for presets + anchor).
+    // Analysis period sheet (single entry point for presets + anchor +
+    // custom From/To range).
     if (showPeriodSheet) {
         AnalysisPeriodSheet(
             periodMode = periodMode,
@@ -499,6 +487,11 @@ fun ProfitDashboardScreen(
                 filterFrom = ""
                 filterTo = ""
             },
+            filterFrom = filterFrom,
+            filterTo = filterTo,
+            onFromChange = { filterFrom = it },
+            onToChange = { filterTo = it },
+            onClearCustom = { filterFrom = ""; filterTo = "" },
             months = months,
             selectedMonth = selectedMonth,
             onSelectMonth = {
@@ -2076,153 +2069,6 @@ private fun TopBarSection(
 
 // ── Month anchor pills ─────────────────────────────────────────────────────
 
-// ── From / To range dialog ─────────────────────────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DateRangeDialog(
-    from: String,
-    to: String,
-    onFromChange: (String) -> Unit,
-    onToChange: (String) -> Unit,
-    onClear: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var picking by remember { mutableStateOf<String?>(null) }
-
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                .background(SaaSColors.Surface)
-                .border(1.dp, SaaSColors.Border, RoundedCornerShape(24.dp))
-                .padding(20.dp),
-        ) {
-            Text(
-                "Custom date range",
-                fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
-                color = SaaSColors.TextPrimary,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Analyse any duration — analytics compare against the previous equal window.",
-                fontSize = 12.sp, color = SaaSColors.TextSecondary, lineHeight = 17.sp,
-            )
-            Spacer(Modifier.height(16.dp))
-            RangeFieldRow(
-                label = "From",
-                value = from,
-                onClick = { picking = "from" },
-                onClear = { onFromChange("") },
-            )
-            Spacer(Modifier.height(10.dp))
-            RangeFieldRow(
-                label = "To",
-                value = to,
-                onClick = { picking = "to" },
-                onClear = { onToChange("") },
-            )
-            Spacer(Modifier.height(20.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(onClick = onClear, modifier = Modifier.weight(1f)) {
-                    Text("Clear", color = SaaSColors.TextSecondary, fontWeight = FontWeight.Bold)
-                }
-                Button(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.weight(1f).height(48.dp),
-                ) {
-                    Text("Apply", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-
-    if (picking != null) {
-        val tag = picking!!
-        val pickerState = rememberDatePickerState(
-            initialSelectedDateMillis = runCatching {
-                val cur = if (tag == "from") from else to
-                if (cur.isBlank()) null
-                else LocalDate.parse(cur).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
-            }.getOrNull(),
-        )
-        DatePickerDialog(
-            onDismissRequest = { picking = null },
-            confirmButton = {
-                TextButton(onClick = {
-                    pickerState.selectedDateMillis?.let { millis ->
-                        val v = msToDateStr(millis)
-                        if (tag == "from") onFromChange(v) else onToChange(v)
-                    }
-                    picking = null
-                }) { Text("OK", color = SaaSColors.Primary) }
-            },
-            dismissButton = {
-                TextButton(onClick = { picking = null }) { Text("Cancel", color = SaaSColors.TextSecondary) }
-            },
-        ) {
-            DatePicker(state = pickerState)
-        }
-    }
-}
-
-@Composable
-private fun RangeFieldRow(
-    label: String,
-    value: String,
-    onClick: () -> Unit,
-    onClear: () -> Unit,
-) {
-    val active = value.isNotBlank()
-    val display = if (active) isoToDisplay(value) else when (label) {
-        "From" -> "Start date"
-        else -> "End date"
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (active) SaaSColors.Primary.copy(alpha = 0.08f) else SaaSColors.SurfaceVar)
-            .border(
-                1.dp,
-                if (active) SaaSColors.Primary else SaaSColors.Border,
-                RoundedCornerShape(12.dp)
-            )
-            .clickable(onClickLabel = "Pick $label date", onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            Icons.Rounded.CalendarToday, null,
-            tint = if (active) SaaSColors.Primary else SaaSColors.TextMuted,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                label.uppercase(),
-                fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                letterSpacing = 0.6.sp, color = SaaSColors.TextMuted,
-            )
-            Text(
-                display,
-                fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                color = if (active) SaaSColors.TextPrimary else SaaSColors.TextMuted,
-            )
-        }
-        if (active) {
-            Icon(
-                Icons.Rounded.Close, "Clear",
-                tint = SaaSColors.TextMuted,
-                modifier = Modifier.size(16.dp).clickable(onClick = onClear),
-            )
-        }
-    }
-}
-
 private fun isoToDisplay(iso: String): String {
     val p = iso.split("-")
     if (p.size != 3) return iso
@@ -2300,8 +2146,55 @@ private fun AnalysisPeriodSheet(
     availableYears: List<Int>,
     selectedYear: Int,
     onSelectYear: (Int) -> Unit,
+    filterFrom: String,
+    filterTo: String,
+    onFromChange: (String) -> Unit,
+    onToChange: (String) -> Unit,
+    onClearCustom: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var picking by remember { mutableStateOf<String?>(null) }
+    val customActive = filterFrom.isNotBlank() || filterTo.isNotBlank()
+
+    // Shared Material date picker restricted to today + past (same guard as
+    // the stock-entry screens): future ranges would push the analysis window
+    // past today and render it empty.
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun CustomDatePicker(tag: String, current: String, onPick: (String) -> Unit) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = runCatching {
+                if (current.isBlank()) null
+                else LocalDate.parse(current).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
+            }.getOrNull(),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    val picked = Instant.fromEpochMilliseconds(utcTimeMillis)
+                        .toLocalDateTime(TimeZone.UTC).date
+                    val today = Clock.System.now()
+                        .toLocalDateTime(TimeZone.UTC).date
+                    return picked <= today
+                }
+            },
+        )
+        DatePickerDialog(
+            onDismissRequest = { picking = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { onPick(msToDateStr(it)) }
+                    picking = null
+                }) { Text("OK", color = NTColors.Primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { picking = null }) {
+                    Text("Cancel", color = NTColors.TextSecondary)
+                }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = NTColors.Surface,
@@ -2443,6 +2336,49 @@ private fun AnalysisPeriodSheet(
                 }
             }
 
+            Spacer(Modifier.height(18.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                SheetSectionLabel("CUSTOM RANGE")
+                if (customActive) {
+                    Text(
+                        "Clear",
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        color = NTColors.Primary,
+                        modifier = Modifier.clickable(onClick = onClearCustom),
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SheetDateCard(
+                    label = "From",
+                    value = filterFrom,
+                    active = customActive,
+                    onClick = { picking = "from" },
+                    onClear = { onFromChange("") },
+                    modifier = Modifier.weight(1f),
+                )
+                SheetDateCard(
+                    label = "To",
+                    value = filterTo,
+                    active = customActive,
+                    onClick = { picking = "to" },
+                    onClear = { onToChange("") },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (customActive) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Custom dates override the preset period above",
+                    fontSize = 11.sp, color = NTColors.TextTertiary,
+                )
+            }
+
             Spacer(Modifier.height(20.dp))
             Button(
                 onClick = onDismiss,
@@ -2453,6 +2389,67 @@ private fun AnalysisPeriodSheet(
             ) {
                 Text("Done", fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
+        }
+    }
+
+    if (picking != null) {
+        val tag = picking!!
+        CustomDatePicker(
+            tag = tag,
+            current = if (tag == "from") filterFrom else filterTo,
+            onPick = { if (tag == "from") onFromChange(it) else onToChange(it) },
+        )
+    }
+}
+
+@Composable
+private fun SheetDateCard(
+    label: String,
+    value: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val hasValue = value.isNotBlank()
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (hasValue) NTColors.PrimaryLight else NTColors.SurfaceVar)
+            .border(
+                1.dp,
+                if (hasValue) NTColors.Primary else NTColors.Border,
+                RoundedCornerShape(12.dp),
+            )
+            .clickable(onClickLabel = "Pick $label date", onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.CalendarToday, null,
+            tint = if (hasValue) NTColors.Primary else NTColors.TextSecondary,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label.uppercase(),
+                fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                letterSpacing = 0.6.sp, color = NTColors.TextTertiary,
+            )
+            Text(
+                text = if (hasValue) isoToDisplay(value) else "Select",
+                fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                color = if (hasValue) NTColors.TextPrimary else NTColors.TextSecondary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (hasValue) {
+            Icon(
+                Icons.Rounded.Close, "Clear",
+                tint = NTColors.Primary,
+                modifier = Modifier.size(14.dp).clickable(onClick = onClear),
+            )
         }
     }
 }
@@ -2477,7 +2474,12 @@ private fun PeriodViewOption(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) NTColors.PrimaryLight else Color.Transparent)
+            .background(if (selected) NTColors.PrimaryLight else NTColors.Surface)
+            .border(
+                1.dp,
+                if (selected) NTColors.Primary else NTColors.Border,
+                RoundedCornerShape(14.dp),
+            )
             .clickable(onClickLabel = title, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -21,7 +21,7 @@ fun InventoryScreen(
     onAddProductCategory: (ProductCategory, Int, String) -> Unit,
     onUpdateProduct: (ProductCategory) -> Unit,
     onDeleteProduct: (String) -> Unit,
-    onAddMovement: (source: String, qty: Int, type: String, shopName: String, productId: String?) -> Unit,
+    onAddMovement: (source: String, qty: Int, type: String, shopName: String, productId: String?, createdAt: String?) -> Unit = { _, _, _, _, _, _ -> },
     onAddStockPurchase: (product: ProductCategory?, currentStock: Int) -> Unit,
     onToggleProductStatus: (ProductCategory) -> Unit = {},
     onOpenStockHistory: () -> Unit = {},
