@@ -61,8 +61,8 @@ android {
         applicationId = "com.example.ruwia"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 4
-        versionName = "2.2"
+        versionCode = 5
+        versionName = "2.3"
         manifestPlaceholders["appName"] = "Ruwia"
 
         // Single production build: keys come from local.properties

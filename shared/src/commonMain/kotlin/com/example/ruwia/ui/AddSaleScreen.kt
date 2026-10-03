@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,6 +37,8 @@ import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.effectiveStockMap
+import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.theme.RuwiaColor
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
@@ -83,9 +86,14 @@ fun AddSaleScreen(
      *  The fifth arg is the selected sale time in display format (e.g. "2:30 PM").
      *  The sixth arg is this draft's idempotency key: stable for the screen's
      *  lifetime, so retried/double-tapped saves with the same key can never
-     *  deduct stock twice. */
-    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String, saleTime: String, saleKey: String) -> Unit = { _, _, _, _, _, _ -> },
+     *  deduct stock twice. The seventh arg is the shop the employee picked in
+     *  the shop selector — the movement lands in that shop's bucket. */
+    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String, saleTime: String, saleKey: String, saleShop: String) -> Unit = { _, _, _, _, _, _, _ -> },
+    /** The employee's assigned shop (default selection). */
     shopName: String = "",
+    /** All shops of the business, from the backend — drives the shop
+     *  selector, so renames flow through automatically. */
+    shops: List<String> = emptyList(),
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     /** Idempotency key for this sale draft (see onSave). */
@@ -180,14 +188,38 @@ fun AddSaleScreen(
     val totalQty   = lineItems.sumOf { it.qty }
     val isSaveEnabled = !isSaving && selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
 
-    // ── Per-product available stock ─────────────────────────────────────────
-    // Same business-wide figure as the Stock tab's "All Shops" view, the
-    // home KPI and the admin inventory (see effectiveStockMap) — the screen
-    // must never show 0 for stock the user can see elsewhere. The repo
-    // deducts each line shop-wise (own shop first, spillover to the buckets
-    // holding the stock), so saving always reduces the total correctly.
-    val availableUnitsMap: Map<String, Int> = remember(stockMovements, products) {
-        com.example.ruwia.domain.effectiveStockMap(products, stockMovements)
+    // ── Shop selector ─────────────────────────────────────────────────────
+    // The sale deducts the picked shop's bucket, so the employee chooses
+    // Shop 1 / Shop 2 here instead of a static assignment. Options come from
+    // the backend, so admin renames flow through; matching is key-based
+    // (see shopMatchKey), so a rename never orphans the selection.
+    val shopOptions = remember(shopName, shops) {
+        (listOf(shopName) + shops)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinctBy { shopMatchKey(it) }
+            .takeIf { it.isNotEmpty() } ?: listOf("Shop 1")
+    }
+    // Keyless remember: background refreshes rebuild the options list every
+    // 15 s, and re-keying on it would snap the employee's pick back to the
+    // default (selection looks stuck). The effect below only assigns when
+    // there is no valid selection yet (first load / renamed away).
+    var selectedShop by remember { mutableStateOf("") }
+    LaunchedEffect(shopName, shopOptions) {
+        val currentValid = selectedShop.isNotBlank() &&
+            shopOptions.any { shopMatchKey(it) == shopMatchKey(selectedShop) }
+        if (!currentValid) {
+            selectedShop = shopOptions.firstOrNull { shopMatchKey(it) == shopMatchKey(shopName) }
+                ?: shopOptions.firstOrNull().orEmpty()
+        }
+    }
+
+    // ── Per-product available stock, scoped to the picked shop ──────────────
+    // Same formula as that shop's inventory tab (see effectiveStockMap), so
+    // the "X Cases available" figures and the over-stock block always agree
+    // with what the Stock tab shows for the selected shop.
+    val availableUnitsMap: Map<String, Int> = remember(stockMovements, products, selectedShop) {
+        effectiveStockMap(products, stockMovements, shopMatchKey(selectedShop).ifBlank { null })
     }
 
     Box(modifier = Modifier.fillMaxSize().background(RuwiaColor.Background)) {
@@ -219,7 +251,14 @@ fun AddSaleScreen(
                             errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cases\nAvailable: $availRaw Cases\n\nPlease reduce the quantity and try again."
                             return@SaleBottomBar
                         }
-                        onSave(selectedCustomer!!.name, lineItems, empties, nowSaleDate(), nowSaleTime(), saleKey)
+                        // The picked shop travels with the save so the outward
+                        // movement lands in that shop's bucket (never blank —
+                        // a blank shop_name would orphan the row from every
+                        // shop tab).
+                        val saleShop = selectedShop.ifBlank {
+                            shopOptions.firstOrNull().orEmpty()
+                        }
+                        onSave(selectedCustomer!!.name, lineItems, empties, nowSaleDate(), nowSaleTime(), saleKey, saleShop)
                     },
                 )
             },
@@ -235,8 +274,48 @@ fun AddSaleScreen(
                 SaleHeroCard()
                 Spacer(Modifier.height(14.dp))
 
-                // ── Section 1: Customer ────────────────────────
-                SaleFormSection(number = 1, title = "Customer") {
+                // ── Shop (which bucket this sale deducts) ──
+                SaleFormSection(title = "Shop") {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        shopOptions.forEach { option ->
+                            val isSelected = shopMatchKey(option) == shopMatchKey(selectedShop)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (isSelected) RuwiaColor.TealPrimary
+                                        else RuwiaColor.Background
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) RuwiaColor.TealPrimary else RuwiaColor.Divider,
+                                        RoundedCornerShape(12.dp),
+                                    )
+                                    .clickable(onClickLabel = "Sell from $option") {
+                                        selectedShop = option
+                                    }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    option,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else RuwiaColor.TextSecondary,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+
+                // ── Customer ───────────────────────────────────
+                SaleFormSection(title = "Customer") {
                     CustomerPickerRow(
                         selectedCustomer = selectedCustomer,
                         onClick          = { showCustomerPicker = true },
@@ -244,9 +323,8 @@ fun AddSaleScreen(
                 }
                 Spacer(Modifier.height(10.dp))
 
-                // ── Section 2: Products (multi) ────────────
+                // ── Products (multi) ─────────────────────────
                 MultiProductSection(
-                    sectionNumber = 2,
                     products      = products,
                     lineItems     = lineItems,
                     availableUnitsMap = availableUnitsMap,
@@ -276,8 +354,8 @@ fun AddSaleScreen(
                 )
                 Spacer(Modifier.height(10.dp))
 
-                // ── Section 3: Entry time (locked to now, not editable) ──
-                SaleFormSection(number = 3, title = "Entry time") {
+                // ── Entry time (locked to now, not editable) ──
+                SaleFormSection(title = "Entry time") {
                     Row(modifier = Modifier.fillMaxWidth()) {
                         SaleTimestampView(
                             icon    = Icons.Rounded.DateRange,
@@ -305,7 +383,6 @@ fun AddSaleScreen(
                 // customer at delivery time. Saved as an inward stock movement
                 // so the admin's stock dashboard reflects the returned empties.
                 EmptyCansSection(
-                    sectionNumber = 4,
                     value = emptyCansText,
                     onValueChange = { newVal ->
                         if (newVal.all { it.isDigit() }) emptyCansText = newVal
@@ -469,7 +546,7 @@ private fun SaleTopBar(onBack: () -> Unit) {
                     .align(Alignment.CenterStart),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Rounded.ArrowBack, "Back", tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
             }
             Text(
                 text = "Add sale", fontSize = 17.sp, fontWeight = FontWeight.Bold,
@@ -510,7 +587,7 @@ private fun SaleHeroCard() {
                     .background(Color.White.copy(alpha = 0.18f), RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Rounded.ArrowForward, null, tint = Color.White,
+                Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Color.White,
                     modifier = Modifier.size(20.dp).rotate(-45f))
             }
             Spacer(Modifier.width(14.dp))
@@ -528,7 +605,6 @@ private fun SaleHeroCard() {
 
 @Composable
 private fun SaleFormSection(
-    number: Int,
     title: String,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -538,13 +614,7 @@ private fun SaleFormSection(
             .background(RuwiaColor.Surface, RoundedCornerShape(16.dp))
             .padding(16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(
-                modifier = Modifier.size(26.dp).background(RuwiaColor.TealPrimary, RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center,
-            ) { Text("$number", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
-        }
+        Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
         Spacer(Modifier.height(14.dp))
         content()
     }
@@ -554,7 +624,6 @@ private fun SaleFormSection(
 
 @Composable
 private fun MultiProductSection(
-    sectionNumber: Int,
     products: List<ProductCategory>,
     lineItems: List<OutwardLineItem>,
     availableUnitsMap: Map<String, Int> = emptyMap(),
@@ -571,10 +640,6 @@ private fun MultiProductSection(
             .padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(
-                modifier = Modifier.size(26.dp).background(RuwiaColor.TealPrimary, RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center,
-            ) { Text("$sectionNumber", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
             Text("Products", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary, modifier = Modifier.weight(1f))
             if (totalQty > 0) {
                 Box(
@@ -905,7 +970,7 @@ private fun SaleBottomBar(
                     modifier = Modifier.weight(1f).height(50.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = RuwiaColor.TextSecondary),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(RuwiaColor.Divider))
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(brush = SolidColor(RuwiaColor.Divider))
                 ) {
                     Text("Cancel", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
@@ -973,7 +1038,6 @@ private fun SaleStepBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, e
 
 @Composable
 private fun EmptyCansSection(
-    sectionNumber: Int,
     value: String,
     onValueChange: (String) -> Unit,
 ) {
@@ -984,10 +1048,6 @@ private fun EmptyCansSection(
             .padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(
-                modifier = Modifier.size(26.dp).background(RuwiaColor.TealPrimary, RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center,
-            ) { Text("$sectionNumber", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
             Column(modifier = Modifier.weight(1f)) {
                 Text("Empty Cases collected", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
                 Text("Returned by this customer at delivery", fontSize = 11.sp, color = RuwiaColor.TextMuted)

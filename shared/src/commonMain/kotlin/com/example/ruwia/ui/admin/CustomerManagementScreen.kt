@@ -1023,27 +1023,50 @@ private fun CustomerDetailsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
-                                Icons.Rounded.Search, null,
-                                tint = NTColors.TextTertiary, modifier = Modifier.size(17.dp),
+                                Icons.Rounded.Search,
+                                contentDescription = null,
+                                tint = NTColors.TextTertiary,
+                                modifier = Modifier.size(17.dp),
                             )
+
                             Spacer(Modifier.width(8.dp))
+
                             BasicTextField(
                                 value = historyQuery,
                                 onValueChange = { historyQuery = it },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
                                 textStyle = LocalTextStyle.current.copy(
-                                    color = NTColors.TextPrimary, fontSize = 13.sp,
+                                    color = NTColors.TextPrimary,
+                                    fontSize = 13.sp,
                                 ),
                                 cursorBrush = SolidColor(NTColors.Primary),
+
+                                decorationBox = { innerTextField ->
+                                    Box {
+                                        if (historyQuery.isEmpty()) {
+                                            Text(
+                                                text = "Search customer, phone, product or bill...",
+                                                color = NTColors.TextTertiary,
+                                                fontSize = 13.sp,
+                                            )
+                                        }
+
+                                        innerTextField()
+                                    }
+                                }
                             )
+
                             if (historyQuery.isNotEmpty()) {
                                 Icon(
                                     Icons.Rounded.Close,
-                                    "Clear search",
+                                    contentDescription = "Clear search",
                                     tint = NTColors.TextTertiary,
-                                    modifier = Modifier.size(16.dp)
-                                        .clickable { historyQuery = "" },
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clickable {
+                                            historyQuery = ""
+                                        },
                                 )
                             }
                         }

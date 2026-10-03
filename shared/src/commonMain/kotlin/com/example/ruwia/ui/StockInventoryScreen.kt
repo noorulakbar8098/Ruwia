@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.ruwia.data.getCurrentDateTimeIso
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.CustomerProductPrice
 import com.example.ruwia.domain.EmployeeInfo
@@ -57,8 +58,14 @@ import org.jetbrains.compose.resources.stringResource
 import ruwia.shared.generated.resources.*
 import kotlin.math.*
 import kotlin.time.Clock
+import kotlin.time.Instant
+import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import com.example.ruwia.util.isFutureTimestamp
+import com.example.ruwia.util.isoToDisplayDate
+import com.example.ruwia.util.isoToDisplayTime
+import kotlinx.datetime.toInstant
 
 // Deep-teal brand color shared with the home Business Overview card.
 // Green accents across this screen map to it via SaaSColors below.
@@ -97,7 +104,7 @@ private enum class InvSort { NAME, QTY_DESC, QTY_ASC, VALUE_DESC }
 fun StockInventoryScreen(
     state: AdminState,
     onBack: () -> Unit,
-    onAddMovement: (source: String, qty: Int, type: String, shopName: String, productId: String?) -> Unit = { _, _, _, _, _ -> },
+    onAddMovement: (source: String, qty: Int, type: String, shopName: String, productId: String?, createdAt: String?) -> Unit = { _, _, _, _, _, _ -> },
     onAddStock: (product: ProductCategory?, currentStock: Int) -> Unit = { _, _ -> },
     onAddProduct: () -> Unit = {},
     onDeleteProduct: (String) -> Unit = {},
@@ -457,7 +464,7 @@ fun StockInventoryScreen(
                                 )
                             }
                             Icon(
-                                imageVector = Icons.Rounded.KeyboardArrowRight,
+                                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                                 contentDescription = "Open stock history",
                                 tint = SaaSColors.TextMuted,
                             )
@@ -510,8 +517,8 @@ fun StockInventoryScreen(
                     // neither leg opens a stray shop bucket (see canonicalShopName).
                     val canonFrom = canonicalShopName(fromShopName, movements)
                     val canonTo = canonicalShopName(toShopName, movements)
-                    onAddMovement("Transfer to $canonTo", totalQty, "outward", canonFrom, product.id)
-                    onAddMovement("Transfer from $canonFrom", totalQty, "inward", canonTo, product.id)
+                    onAddMovement("Transfer to $canonTo", totalQty, "outward", canonFrom, product.id, null)
+                    onAddMovement("Transfer from $canonFrom", totalQty, "inward", canonTo, product.id, null)
                     activeTransferProduct = null
                 }
             )
@@ -550,15 +557,17 @@ fun StockInventoryScreen(
                 shops = shopOptions,
                 shopStocks = perShopBase,
                 onDismiss = { activeAdjustProduct = null },
-                onConfirm = { targetCases, reason, shop ->
+                onConfirm = { targetCases, reason, shop, dateTimeIso ->
                     // Base must be THAT shop's live figure, then canonicalize
                     // the label so the row lands in the shop's real bucket.
+                    // The picked timestamp becomes the movement's created_at
+                    // so history sorts on the real moment of correction.
                     val base = if (onAllShops) (perShopBase[shop] ?: currentCases) else currentCases
                     val canonShop = canonicalShopName(shop, movements)
                     if (targetCases > base) {
-                        onAddMovement("Manual adjustment", targetCases - base, "inward", canonShop, product.id)
+                        onAddMovement("Manual adjustment", targetCases - base, "inward", canonShop, product.id, dateTimeIso)
                     } else if (targetCases < base) {
-                        onAddMovement("Manual adjustment", base - targetCases, "outward", canonShop, product.id)
+                        onAddMovement("Manual adjustment", base - targetCases, "outward", canonShop, product.id, dateTimeIso)
                     }
                     activeAdjustProduct = null
                 }
@@ -829,7 +838,7 @@ private fun InventoryHeader(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.Sort,
+                        imageVector = Icons.AutoMirrored.Rounded.Sort,
                         contentDescription = "Sort",
                         tint = SaaSColors.TextSecondary,
                         modifier = Modifier.size(18.dp)
@@ -1535,14 +1544,14 @@ internal fun ActivityDetailSheet(
 
     val rows = buildList {
         if (isAdd) {
-            add("Added by" to (employeeName ?: "Admin"))
+            add("Added by" to employeeName)
             add("Shop" to shopName)
             add("Date" to date)
             add("Time" to time)
             add("Total items" to "${movement.qty} Units")
             if (customerName != null && isReturn) add("Customer" to customerName)
         } else {
-            add("Employee" to (employeeName ?: "Admin"))
+            add("Employee" to employeeName)
             add("Shop" to shopName)
             add("Date" to date)
             add("Time" to time)
@@ -2333,6 +2342,7 @@ private fun TransferStockDialog(
 }
 
 // ── Adjust Dialog Component ───────────────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AdjustStockDialog(
     product: ProductCategory,
@@ -2343,14 +2353,34 @@ private fun AdjustStockDialog(
     /** Live per-shop figure for this product, keyed by shop option. */
     shopStocks: Map<String, Int> = emptyMap(),
     onDismiss: () -> Unit,
-    onConfirm: (targetCases: Int, reason: String, shopName: String) -> Unit
+    onConfirm: (targetCases: Int, reason: String, shopName: String, dateTimeIso: String?) -> Unit
 ) {
     var selectedShop by remember(shopName) { mutableStateOf(shopName) }
+    // Entry timestamp — defaults to now, past only. Becomes the movement's
+    // created_at so history sorts on the real moment of correction.
+    var dateTimeIso by remember { mutableStateOf(getCurrentDateTimeIso()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
+    var dateError by remember { mutableStateOf<String?>(null) }
+
+    fun applyAdjustDateTime(dateDisplay: String, timeDisplay: String) {
+        val iso = buildAdjustIsoOrNull(dateDisplay, timeDisplay)
+        if (iso == null) {
+            dateError = "Could not understand that date/time. Please pick again."
+            return
+        }
+        if (isFutureTimestamp(iso)) {
+            dateError = "Future date/time is not allowed. Pick today or a past date/time."
+            return
+        }
+        dateError = null
+        dateTimeIso = iso
+    }
     // Base follows the selected shop: switching shops re-bases the steppers
     // on that shop's live figure so the delta always hits the right shop.
     val baseCases = if (shops.isEmpty()) currentCases else (shopStocks[selectedShop] ?: currentCases)
     var targetCount by remember(selectedShop, baseCases) { mutableStateOf(baseCases) }
-    var reason by remember { mutableStateOf("Manual stock count audit") }
+    var reason by remember { mutableStateOf("Add Stock") }
     var expandedReason by remember { mutableStateOf(false) }
     var expandedShop by remember { mutableStateOf(false) }
 
@@ -2505,7 +2535,7 @@ private fun AdjustStockDialog(
                     }
                     DropdownMenu(expanded = expandedReason, onDismissRequest = { expandedReason = false }) {
                         val reasons = listOf(
-                            "Manual stock count audit",
+                            "Add Stock",
                             "Reported leakage or damage",
                             "Free sample distribution",
                             "Supplier returns",
@@ -2518,6 +2548,50 @@ private fun AdjustStockDialog(
                             )
                         }
                     }
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                // Adjustment date & time — past or now only. The chosen stamp
+                // becomes the movement's created_at so history sorts on it.
+                Text("Adjustment date & time", fontSize = 12.sp, color = SaaSColors.TextSecondary, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "${isoToDisplayDate(dateTimeIso)} · ${isoToDisplayTime(dateTimeIso).ifBlank { "—" }}",
+                    fontSize = 12.sp, color = SaaSColors.TextMuted,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = { showDatePicker = true },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SaaSColors.TextSecondary),
+                        border = BorderStroke(1.dp, SaaSColors.Border)
+                    ) {
+                        Icon(Icons.Rounded.CalendarToday, null, tint = SaaSColors.Primary, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Date", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { showTimePicker = true },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SaaSColors.TextSecondary),
+                        border = BorderStroke(1.dp, SaaSColors.Border)
+                    ) {
+                        Icon(Icons.Rounded.Schedule, null, tint = SaaSColors.Primary, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Time", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+                if (dateError != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        dateError ?: "",
+                        fontSize = 11.sp, color = SaaSColors.Critical,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
 
                 Spacer(Modifier.height(24.dp))
@@ -2537,16 +2611,142 @@ private fun AdjustStockDialog(
                         Text("Cancel", fontWeight = FontWeight.Bold)
                     }
                     Button(
-                        onClick = { onConfirm(targetCount, reason, selectedShop) },
+                        onClick = {
+                            // Last line of defence: a future stamp must never
+                            // be saved even if it slipped past the pickers.
+                            if (isFutureTimestamp(dateTimeIso)) {
+                                dateError = "Future date/time is not allowed. Pick today or a past date/time."
+                                return@Button
+                            }
+                            onConfirm(targetCount, reason, selectedShop, dateTimeIso)
+                        },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary)
                     ) {
-                        Text("Save", fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("Save", fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
             }
         }
+    }
+
+    // Entry date picker — today and past only.
+    if (showDatePicker) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = runCatching { Instant.parse(dateTimeIso).toEpochMilliseconds() }.getOrNull(),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    val picked = Instant.fromEpochMilliseconds(utcTimeMillis)
+                        .toLocalDateTime(TimeZone.UTC).date
+                    val today = Clock.System.now()
+                        .toLocalDateTime(TimeZone.UTC).date
+                    return picked <= today
+                }
+            }
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { millis ->
+                        val d = Instant.fromEpochMilliseconds(millis)
+                            .toLocalDateTime(TimeZone.UTC).date
+                        val dd = d.day.toString().padStart(2, '0')
+                        val mm = (d.month.ordinal + 1).toString().padStart(2, '0')
+                        applyAdjustDateTime(
+                            "$dd/$mm/${d.year}",
+                            isoToDisplayTime(dateTimeIso).ifBlank { "12:00 AM" }
+                        )
+                    }
+                    showDatePicker = false
+                }) { Text("OK", color = SaaSColors.Primary, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel", color = SaaSColors.TextSecondary)
+                }
+            }
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+
+    // Entry time picker — combined with the chosen date; future rejected.
+    if (showTimePicker) {
+        val nowLocal = runCatching {
+            Instant.parse(dateTimeIso)
+                .toLocalDateTime(TimeZone.currentSystemDefault())
+        }.getOrNull()
+        val timeState = rememberTimePickerState(
+            initialHour = nowLocal?.hour ?: 12,
+            initialMinute = nowLocal?.minute ?: 0,
+            is24Hour = false,
+        )
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text("Adjustment time", fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary) },
+            text = {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TimePicker(state = timeState)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val h24 = timeState.hour
+                    val hh = when {
+                        h24 == 0 -> 12
+                        h24 > 12 -> h24 - 12
+                        else -> h24
+                    }
+                    val ampm = if (h24 >= 12) "PM" else "AM"
+                    val mm = timeState.minute.toString().padStart(2, '0')
+                    applyAdjustDateTime(isoToDisplayDate(dateTimeIso), "$hh:$mm $ampm")
+                    showTimePicker = false
+                }) { Text("OK", color = SaaSColors.Primary, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePicker = false }) {
+                    Text("Cancel", color = SaaSColors.TextSecondary)
+                }
+            },
+            containerColor = SaaSColors.Surface,
+            shape = RoundedCornerShape(20.dp)
+        )
+    }
+}
+
+/**
+ * Builds a TZ-aware ISO instant from "DD/MM/YYYY" + "h:mm AM" display parts.
+ * Returns null when unparseable; callers reject future results via
+ * [isFutureTimestamp].
+ */
+private fun buildAdjustIsoOrNull(dateDisplay: String, timeDisplay: String): String? {
+    return try {
+        val dp = dateDisplay.trim().split("/")
+        if (dp.size != 3) return null
+        val d = dp[0].toIntOrNull() ?: return null
+        val m = dp[1].toIntOrNull() ?: return null
+        val y = dp[2].toIntOrNull() ?: return null
+        val tp = timeDisplay.trim().split(" ", limit = 2)
+        if (tp.size != 2) return null
+        val hm = tp[0].split(":")
+        if (hm.size != 2) return null
+        var h = hm[0].toIntOrNull() ?: return null
+        val min = hm[1].toIntOrNull() ?: return null
+        val ampm = tp[1].trim().uppercase()
+        if (ampm != "AM" && ampm != "PM") return null
+        if (h !in 1..12 || min !in 0..59 || m !in 1..12 || d !in 1..31) return null
+        h = when {
+            ampm == "AM" && h == 12 -> 0
+            ampm == "PM" && h < 12 -> h + 12
+            else -> h
+        }
+        LocalDateTime(y, m, d, h, min, 0, 0)
+            .toInstant(TimeZone.currentSystemDefault())
+            .toString()
+    } catch (_: Exception) {
+        null
     }
 }
 

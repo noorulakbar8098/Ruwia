@@ -5,7 +5,7 @@ package com.example.ruwia
  * non-Android targets). Keep in sync with the androidApp `versionName`
  * (`versionCode`) on every release.
  */
-const val appVersionFallbackLabel = "v2.2 (4)"
+const val appVersionFallbackLabel = "v2.3 (5)"
 
 /**
  * Human-readable app version, e.g. "v2.2 (4)". Android reads the real
