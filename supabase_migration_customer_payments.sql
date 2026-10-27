@@ -87,13 +87,7 @@ BEGIN
     IF p_total < 0 OR p_paid_now < 0 THEN
         RAISE EXCEPTION 'Sale total and payment cannot be negative';
     END IF;
-    IF p_paid_now > p_total + 0.001 THEN
-        RAISE EXCEPTION 'Payment received cannot be more than the sale total';
-    END IF;
-
-    v_sale_ref    := 'sale:' || p_sale_key;
-    v_payment_ref := 'sale-payment:' || p_sale_key;
-
+    -- Lock customer row first so we can read the live balance for validation.
     SELECT * INTO v_customer
     FROM public.customers
     WHERE id = p_customer_id AND admin_id = v_admin
@@ -102,6 +96,15 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Customer not found for this business' USING ERRCODE = 'P0002';
     END IF;
+
+    -- Payment may cover both the current invoice AND any previous outstanding
+    -- balance, but cannot exceed the combined total.
+    IF p_paid_now > COALESCE(v_customer.balance, 0) + p_total + 0.001 THEN
+        RAISE EXCEPTION 'Payment received cannot be more than the total amount due (previous balance + this sale)';
+    END IF;
+
+    v_sale_ref    := 'sale:' || p_sale_key;
+    v_payment_ref := 'sale-payment:' || p_sale_key;
 
     IF EXISTS (
         SELECT 1

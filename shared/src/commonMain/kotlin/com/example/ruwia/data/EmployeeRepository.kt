@@ -586,10 +586,8 @@ class EmployeeRepository {
                 "A sale key is required to record 20L cans or a payment."
             }
         }
-        val invoiceTotal = lines.sumOf { it.sellingPricePerUnit * it.qty }
-        require(paidNow <= invoiceTotal + 0.001) {
-            "Payment received cannot be more than the sale total of ₹$invoiceTotal."
-        }
+        // Note: paidNow may exceed invoiceTotal when the customer is also clearing
+        // a previous outstanding balance. The DB ledger handles the full settlement.
         val employeeId = currentUserId()
         val effectiveDate = saleDate?.takeIf { it.isNotBlank() } ?: today()
         com.example.ruwia.util.requireNotFutureDay("Sale date", effectiveDate)

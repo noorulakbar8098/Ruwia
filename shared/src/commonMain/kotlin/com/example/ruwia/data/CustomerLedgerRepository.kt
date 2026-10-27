@@ -32,9 +32,9 @@ internal object CustomerLedgerRepository {
         require(saleKey.isNotBlank()) { "A sale key is required to record the sale." }
         require(invoiceTotal >= 0.0) { "Sale total cannot be negative." }
         require(paidNow >= 0.0) { "Payment received cannot be negative." }
-        require(paidNow <= invoiceTotal + 0.001) {
-            "Payment received cannot be more than the sale total."
-        }
+        // Note: paidNow may exceed invoiceTotal when the customer is also clearing
+        // a previous outstanding balance. The UI caps entry at totalDue; the DB
+        // RPC handles the full ledger settlement correctly.
 
         return try {
             supabase.postgrest.rpc(

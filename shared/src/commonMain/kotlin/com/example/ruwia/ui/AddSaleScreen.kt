@@ -247,7 +247,11 @@ fun AddSaleScreen(
         }
     }
     val paidNow = paymentReceivedText.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-    val amountDue = (invoiceTotal - paidNow).coerceAtLeast(0.0)
+    // Previous unpaid balance the customer already owes (from the DB row).
+    val customerPreviousBalance = (liveSelectedCustomer?.balance ?: 0.0).coerceAtLeast(0.0)
+    // Total the customer owes = old balance + this invoice.
+    val totalDue = customerPreviousBalance + invoiceTotal
+    val amountDue = (totalDue - paidNow).coerceAtLeast(0.0)
     val emptyCansReceived = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
     val canPreview = canBalancePreview(
         previouslyOutstanding = previouslyOutstanding,
@@ -402,8 +406,8 @@ fun AddSaleScreen(
                             errorDialogText = "This customer is still saving. Wait a moment, then tap Save Sale again."
                             return@SaleBottomBar
                         }
-                        if (paidNow > invoiceTotal + 0.001) {
-                            errorDialogText = "Payment received cannot be more than the sale total of ₹${invoiceTotal.toInt()}."
+                        if (paidNow > totalDue + 0.001) {
+                            errorDialogText = "Payment received (₹${paidNow.toInt()}) cannot exceed the total amount due of ₹${totalDue.toInt()}."
                             return@SaleBottomBar
                         }
                         // The picked shop travels with the save so the outward
@@ -575,10 +579,19 @@ fun AddSaleScreen(
                         value = paymentReceivedText,
                         paid = paidNow,
                         due = amountDue,
+                        totalDue = totalDue,
+                        previousBalance = customerPreviousBalance,
+                        invoiceTotal = invoiceTotal,
                         mode = paymentMode,
                         onValueChange = { newVal ->
                             if (newVal.all { it.isDigit() } || newVal.isEmpty()) {
-                                paymentReceivedText = newVal
+                                // Clamp: never allow typing more than totalDue.
+                                val entered = newVal.toDoubleOrNull() ?: 0.0
+                                if (entered <= totalDue + 0.001) {
+                                    paymentReceivedText = newVal
+                                } else {
+                                    paymentReceivedText = totalDue.toInt().toString()
+                                }
                             }
                         },
                         onModeChange = { paymentMode = it },
@@ -1363,6 +1376,9 @@ private fun PaymentReceivedSection(
     value: String,
     paid: Double,
     due: Double,
+    totalDue: Double,
+    previousBalance: Double,
+    invoiceTotal: Double,
     mode: String,
     onValueChange: (String) -> Unit,
     onModeChange: (String) -> Unit,
@@ -1380,6 +1396,34 @@ private fun PaymentReceivedSection(
             }
         }
         Spacer(Modifier.height(12.dp))
+
+        // ── Total due breakdown ──────────────────────────────────────────
+        // Show previous balance + this sale = total due, so the employee
+        // knows the full amount the customer owes before recording payment.
+        if (previousBalance > 0.01) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFFFF3E0), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text("Previous balance", fontSize = 12.sp, color = RuwiaColor.TextSecondary, modifier = Modifier.weight(1f))
+                    Text("₹${previousBalance.toInt()}", fontSize = 12.sp, color = Color(0xFFC05000), fontWeight = FontWeight.SemiBold)
+                }
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text("This sale", fontSize = 12.sp, color = RuwiaColor.TextSecondary, modifier = Modifier.weight(1f))
+                    Text("₹${invoiceTotal.toInt()}", fontSize = 12.sp, color = RuwiaColor.TextSecondary, fontWeight = FontWeight.SemiBold)
+                }
+                HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.5f))
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text("Total due", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary, modifier = Modifier.weight(1f))
+                    Text("₹${totalDue.toInt()}", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFD9534F))
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
 
         Row(
             modifier = Modifier
@@ -1410,8 +1454,8 @@ private fun PaymentReceivedSection(
 
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PaymentSummaryCell("Paid", "₹${paid.toInt()}", RuwiaColor.TealPrimary, Modifier.weight(1f))
-            PaymentSummaryCell("Due", "₹${due.toInt()}", Color(0xFFD9534F), Modifier.weight(1f))
+            PaymentSummaryCell("Paid Now", "₹${paid.toInt()}", RuwiaColor.TealPrimary, Modifier.weight(1f))
+            PaymentSummaryCell("Total Due", "₹${due.toInt()}", Color(0xFFD9534F), Modifier.weight(1f))
         }
 
         Spacer(Modifier.height(12.dp))
