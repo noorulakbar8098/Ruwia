@@ -3,16 +3,20 @@ package com.example.ruwia.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ruwia.data.AdminRepository
+import com.example.ruwia.data.NotificationRepository
 import com.example.ruwia.data.TestDataSeeder
 import com.example.ruwia.data.awaitAuthentication
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.Job
 import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.CustomerLedger
 import com.example.ruwia.domain.CustomerProductPrice
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.MonthlyExpense
+import com.example.ruwia.domain.NotificationItem
 import com.example.ruwia.domain.Order
+import com.example.ruwia.domain.Payment
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.ShopStockInfo
@@ -30,6 +34,8 @@ import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 /** Tracks the lifecycle of a single employee-creation attempt. */
 sealed class EmployeeCreationState {
@@ -74,6 +80,12 @@ data class AdminState(
     val recentMovements: List<StockMovement> = emptyList(),
     val productCategories: List<ProductCategory> = emptyList(),
     val saleEntries: List<SaleEntry> = emptyList(),
+    val payments: List<Payment> = emptyList(),
+    val ledger: CustomerLedger? = null,
+    val ledgerCustomerId: String? = null,
+    val ledgerLoading: Boolean = false,
+    val paymentSaving: Boolean = false,
+    val paymentMessage: String? = null,
     val currentMonthExpense: MonthlyExpense? = null,
     val lastMonthExpense: MonthlyExpense? = null,
     val monthlyExpenses: Map<String, MonthlyExpense> = emptyMap(),
@@ -91,9 +103,16 @@ data class AdminState(
     val emptyCansBaseline: Int = 0,
     /** Active customer-specific prices per product, keyed by product id. */
     val customerPrices: Map<String, List<CustomerProductPrice>> = emptyMap(),
+    /** In-app notification feed (broadcasts + directs), newest first. */
+    val notifications: List<NotificationItem> = emptyList(),
+    /** Unread badge count for the header bell. */
+    val unreadNotifications: Int = 0,
 )
 
-class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
+class AdminViewModel(
+    private val repo: AdminRepository,
+    private val notifications: NotificationRepository = NotificationRepository(),
+) : ViewModel() {
 
     private val _state = MutableStateFlow(AdminState())
     val state: StateFlow<AdminState> = _state.asStateFlow()
@@ -122,7 +141,8 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                     val stockItems    = repo.getStockSummaryList()
                     val saleEntries   = repo.getSaleEntries()
                     val baseline      = repo.getEmptyCansBaseline()
-                    
+                    val feed          = notifications.getFeed()
+
                     // Prevent replacing valid cached data with empty lists if RLS returned empty lists due to a race
                     if (products.isNotEmpty() || movements.isNotEmpty() || _state.value.productCategories.isEmpty()) {
                         _state.value = _state.value.copy(
@@ -133,6 +153,8 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                             stockItems        = stockItems,
                             saleEntries       = saleEntries,
                             emptyCansBaseline = if (baseline >= 0) baseline else _state.value.emptyCansBaseline,
+                            notifications     = feed,
+                            unreadNotifications = feed.count { !it.isRead },
                         ).deriveStockFromMovements()
                     }
                 }
@@ -176,6 +198,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             val shopNames        = repo.getShopNames()
             val shopName         = shopNames.firstOrNull().orEmpty()
             val baseline         = repo.getEmptyCansBaseline()
+            val feed             = notifications.getFeed()
             AdminState(
                 loading              = false,
                 mrr                  = mrr,
@@ -200,9 +223,19 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 shopNames            = shopNames,
                 shopName             = shopName,
                 emptyCansBaseline    = if (baseline >= 0) baseline else 0,
+                notifications        = feed,
+                unreadNotifications  = feed.count { !it.isRead },
             )
         }.onSuccess { newState ->
-            _state.value = newState.deriveStockFromMovements()
+            val previous = _state.value
+            _state.value = newState.copy(
+                payments = previous.payments,
+                ledger = previous.ledger,
+                ledgerCustomerId = previous.ledgerCustomerId,
+                ledgerLoading = previous.ledgerLoading,
+                paymentSaving = previous.paymentSaving,
+                paymentMessage = previous.paymentMessage,
+            ).deriveStockFromMovements()
         }.onFailure {
             _state.value = _state.value.copy(
                 loading = false,
@@ -244,24 +277,135 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             }
     }
 
-    // ── Empty-cases direct entry ──────────────────────────────────────────────
+    // ── Empty-cans returns ────────────────────────────────────────────────────
 
-    /** Records a manual inward "Empty cans" movement so the live Empty Cases
-     *  figure can be bumped from the home screen without a full screen form. */
-    fun addEmptyCases(qty: Int) = viewModelScope.launch {
+    /** Records a standalone 20L empty-can return against the customer ledger. */
+    fun recordEmptyCanReturn(
+        customerId: String,
+        qty: Int,
+        referenceKey: String,
+        shopName: String,
+    ) = viewModelScope.launch {
         if (qty <= 0) return@launch
-        _state.value = _state.value.copy(loading = false, error = null)
-        val shop = _state.value.shopNames.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Shop 1"
-        runCatching { repo.addEmptyCases(qty, shop) }
-            .onSuccess { loadData() }
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching {
+            repo.recordEmptyCanReturn(
+                customerId   = customerId,
+                qty          = qty,
+                referenceKey = referenceKey,
+                shopName     = shopName.ifBlank {
+                    _state.value.shopNames.firstOrNull().orEmpty().ifBlank { "Shop 1" }
+                },
+            )
+        }.onSuccess { newBalance ->
+            _state.value = _state.value.copy(
+                customers = _state.value.customers.map { customer ->
+                    if (customer.id == customerId) {
+                        customer.copy(cansHeld = newBalance)
+                    } else {
+                        customer
+                    }
+                },
+            )
+            loadData()
+        }.onFailure {
+            it.printStackTrace()
+            _state.value = _state.value.copy(
+                loading = false,
+                error   = it.message ?: "Could not record empty cans",
+            )
+        }
+    }
+
+    // ── Customer payments ─────────────────────────────────────────────────────
+
+    /** Loads the payment feed shown on the receivables screen. */
+    fun loadPayments() = viewModelScope.launch {
+        if (!awaitAuthentication()) return@launch
+        runCatching { repo.getAllPayments() }
+            .onSuccess { _state.value = _state.value.copy(payments = it) }
             .onFailure {
-                it.printStackTrace()
-                _state.value = _state.value.copy(error = it.message ?: "Failed to add empty cases", loading = false)
+                _state.value = _state.value.copy(
+                    error = it.message ?: "Could not load payments",
+                )
             }
     }
 
-    // ── Product categories ────────────────────────────────────────────────────
+    /** Opens one customer's running money statement. */
+    fun openCustomerLedger(customerId: String) = viewModelScope.launch {
+        if (customerId.isBlank()) return@launch
+        _state.value = _state.value.copy(
+            ledgerCustomerId = customerId,
+            ledgerLoading = true,
+            error = null,
+        )
+        runCatching { repo.getCustomerLedger(customerId) }
+            .onSuccess {
+                _state.value = _state.value.copy(ledger = it, ledgerLoading = false)
+            }
+            .onFailure {
+                _state.value = _state.value.copy(
+                    ledgerLoading = false,
+                    error = it.message ?: "Could not load the customer statement",
+                )
+            }
+    }
 
+    fun closeCustomerLedger() {
+        _state.value = _state.value.copy(
+            ledger = null,
+            ledgerCustomerId = null,
+            ledgerLoading = false,
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
+    fun recordCustomerPayment(
+        customerId: String,
+        amountText: String,
+        mode: String,
+        note: String = "",
+    ) = viewModelScope.launch {
+        if (_state.value.paymentSaving) return@launch
+        val amount = amountText.trim().toDoubleOrNull() ?: 0.0
+        if (amount <= 0.0) {
+            _state.value = _state.value.copy(error = "Enter a payment amount greater than zero.")
+            return@launch
+        }
+        _state.value = _state.value.copy(paymentSaving = true, error = null, paymentMessage = null)
+        runCatching {
+            repo.recordCustomerPayment(
+                customerId = customerId,
+                amount = amount,
+                mode = mode,
+                referenceKey = Uuid.random().toString(),
+                note = note.trim().takeIf { it.isNotBlank() },
+            )
+        }.onSuccess { newBalance ->
+            _state.value = _state.value.copy(
+                paymentSaving = false,
+                customers = _state.value.customers.map { customer ->
+                    if (customer.id == customerId) customer.copy(balance = newBalance) else customer
+                },
+                paymentMessage = "Payment of ₹${amount.toInt()} recorded.",
+            )
+            loadPayments()
+            if (_state.value.ledgerCustomerId == customerId) {
+                openCustomerLedger(customerId)
+            }
+        }.onFailure {
+            _state.value = _state.value.copy(
+                paymentSaving = false,
+                error = it.message ?: "Could not record the payment",
+            )
+        }
+    }
+
+    fun clearPaymentMessage() {
+        _state.value = _state.value.copy(paymentMessage = null)
+    }
+
+    // ── Product categories ────────────────────────────────────────────────────
     fun addProductCategory(cat: ProductCategory, openingStock: Int = 0, shopName: String = "") = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         val resolvedShop = shopName.ifBlank { _state.value.shopNames.firstOrNull().orEmpty() }
@@ -282,6 +426,11 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         }
             .onSuccess {
                 loadData()
+                val label = cat.displayName.ifBlank { cat.name }
+                notifyEmployees(
+                    "New product",
+                    if (openingStock > 0) "$label · +$openingStock units @ $resolvedShop" else label,
+                )
             }
             .onFailure {
                 it.printStackTrace()
@@ -406,6 +555,23 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
     }
 
+    fun updateSaleCustomer(
+        sales: List<SaleEntry>,
+        customer: Customer,
+        onComplete: (Boolean) -> Unit = {},
+    ) = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching { repo.updateSaleCustomer(sales, customer) }
+            .onSuccess {
+                onComplete(true)
+                loadData()
+            }
+            .onFailure {
+                _state.value = _state.value.copy(error = it.message, loading = false)
+                onComplete(false)
+            }
+    }
+
     // ── Expenses ──────────────────────────────────────────────────────────────
 
     fun saveMonthlyExpense(expense: MonthlyExpense) = viewModelScope.launch {
@@ -472,7 +638,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         // Canonicalize to the shop's existing history bucket so per-shop tabs
         // keep seeing the row (see canonicalShopName).
         val canonicalShop = canonicalShopName(shopName, _state.value.recentMovements)
-        runCatching { repo.addStockMovement(source, qty, type, canonicalShop, productId, createdAt = createdAt) }
+        runCatching { repo.addStockMovement(source, qty, type, canonicalShop, productId) }
             .onSuccess {
                 // Refresh all data that feeds the stock dashboard so the totals
                 // and per-shop breakdowns are immediately correct after saving.
@@ -489,6 +655,8 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                     productCategories = productCats,
                     loading           = false
                 ).deriveStockFromMovements()
+                val sign = if (type == "inward") "+" else "−"
+                notifyEmployees("Stock updated", "$source · $sign$qty units @ $canonicalShop")
             }
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
     }
@@ -525,6 +693,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         }
         // Single full refresh after ALL inserts — guarantees the UI reads the
         // committed state for every product and both shops.
+        val linesWritten = quantities.filter { it.value > 0 }.size
         runCatching {
             val movements   = repo.getRecentMovements()
             val stockItems  = repo.getStockSummaryList()
@@ -538,6 +707,12 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
                 error             = anyError,
                 loading           = false
             ).deriveStockFromMovements()
+            if (anyError == null && linesWritten > 0) {
+                notifyEmployees(
+                    "Stock added",
+                    "$linesWritten product(s) restocked @ $canonicalShop",
+                )
+            }
         }.onFailure {
             _state.value = _state.value.copy(
                 error   = it.message ?: anyError,
@@ -625,6 +800,51 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
 
     fun clearError() {
         _state.value = _state.value.copy(error = null)
+    }
+
+    // ── In-app notifications ────────────────────────────────────────────────
+
+    /**
+     * Broadcasts a stock event to every employee of the tenant. Fire-and-
+     * forget: a notification failure must never fail the stock write itself.
+     * Refreshes the admin's own feed copy so the bell clears correctly.
+     */
+    fun notifyEmployees(title: String, body: String, kind: String = "stock") {
+        viewModelScope.launch {
+            runCatching { notifications.broadcastToEmployees(title, body, kind) }
+            refreshNotifications()
+        }
+    }
+
+    fun refreshNotifications() = viewModelScope.launch {
+        runCatching {
+            val feed = notifications.getFeed()
+            _state.value = _state.value.copy(
+                notifications = feed,
+                unreadNotifications = feed.count { !it.isRead },
+            )
+        }
+    }
+
+    fun markNotificationRead(id: String) = viewModelScope.launch {
+        runCatching { notifications.markRead(id) }
+        _state.value = _state.value.let { s ->
+            s.copy(
+                notifications = s.notifications.map { if (it.id == id) it.copy(isRead = true) else it },
+                unreadNotifications = s.notifications.count { it.id != id && !it.isRead },
+            )
+        }
+    }
+
+    fun markAllNotificationsRead() = viewModelScope.launch {
+        val ids = _state.value.notifications.filter { !it.isRead }.map { it.id }
+        runCatching { notifications.markAllRead(ids) }
+        _state.value = _state.value.let { s ->
+            s.copy(
+                notifications = s.notifications.map { it.copy(isRead = true) },
+                unreadNotifications = 0,
+            )
+        }
     }
 
     // ── Employees ─────────────────────────────────────────────────────────────
@@ -757,9 +977,14 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
         notes: String = "",
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
+        val skuClean = sku.trim()
+        val brandClean = brandName.trim()
+        // Hoisted: also feeds the employee broadcast on success.
+        val displayName = if (brandClean.isNotBlank()) "$brandClean - $skuClean" else skuClean
+        // Canonical bucket label so later adjustments land in this shop's
+        // history (see canonicalShopName).
+        val canonicalShop = canonicalShopName(shopName.trim(), _state.value.recentMovements)
         runCatching {
-            val skuClean = sku.trim()
-            val brandClean = brandName.trim()
             var product = _state.value.productCategories.find {
                 it.name.equals(skuClean, ignoreCase = true) &&
                 it.brandName.equals(brandClean, ignoreCase = true)
@@ -772,10 +997,6 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             }
 
             // Product does not exist, create it
-            val displayName = if (brandClean.isNotBlank()) "$brandClean - $skuClean" else skuClean
-            // Canonical bucket label so later adjustments land in this shop's
-            // history (see canonicalShopName).
-            val canonicalShop = canonicalShopName(shopName.trim(), _state.value.recentMovements)
             val newProduct = ProductCategory(
                 id = "",
                 name = skuClean,
@@ -816,6 +1037,7 @@ class AdminViewModel(private val repo: AdminRepository) : ViewModel() {
             }
         }.onSuccess {
             loadData()
+            notifyEmployees("New stock added", "$displayName · +$qty units @ $canonicalShop")
         }.onFailure {
             _state.value = _state.value.copy(error = it.message ?: "Failed to save stock purchase", loading = false)
         }

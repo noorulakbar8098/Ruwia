@@ -3,10 +3,12 @@ package com.example.ruwia.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ruwia.data.EmployeeRepository
+import com.example.ruwia.data.NotificationRepository
 import com.example.ruwia.data.awaitAuthentication
 import kotlinx.coroutines.Job
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.DeliveryTask
+import com.example.ruwia.domain.NotificationItem
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
@@ -53,9 +55,16 @@ data class EmployeeState(
     val assignedShop: String = "",
     /** Global baseline subtracted from the live "Empty Cases" figure. */
     val emptyCansBaseline: Int = 0,
+    /** In-app notification feed (admin broadcasts + own directs). */
+    val notifications: List<NotificationItem> = emptyList(),
+    /** Unread badge count for the header bell. */
+    val unreadNotifications: Int = 0,
 )
 
-class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
+class EmployeeViewModel(
+    private val repo: EmployeeRepository,
+    private val notifications: NotificationRepository = NotificationRepository(),
+) : ViewModel() {
 
     private val _state = MutableStateFlow(EmployeeState())
     val state: StateFlow<EmployeeState> = _state.asStateFlow()
@@ -109,6 +118,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                         emptyCansTotal = repo.getEmployeeEmptyCansTotal(currentEmployeeId)
                     }
                     
+                    val feed = notifications.getFeed()
                     // Prevent replacing valid cached data with empty lists if RLS returned empty lists due to a race
                     if (products.isNotEmpty() || shopMovements.isNotEmpty() || _state.value.productCategories.isEmpty()) {
                         _state.value = _state.value.copy(
@@ -123,6 +133,8 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                             dailyEarnings     = dailyEarnings,
                             emptyCansTotal    = emptyCansTotal,
                             emptyCansBaseline = if (emptyCansBaseline >= 0) emptyCansBaseline else _state.value.emptyCansBaseline,
+                            notifications     = feed,
+                            unreadNotifications = feed.count { !it.isRead },
                         ).deriveStockFromMovements()
                     }
                 }
@@ -201,6 +213,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
             val productCategories = repo.getProductCategories()
             val customers        = repo.getCustomers()
             val shopMovements    = repo.getShopMovements("All Shops")
+            val feed             = notifications.getFeed()
             val currentDate      = formattedToday()
             EmployeeState(
                 loading           = false,
@@ -218,6 +231,8 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                 currentDate       = currentDate,
                 assignedShop      = assignedShopName,
                 emptyCansBaseline = if (emptyCansBaseline >= 0) emptyCansBaseline else 0,
+                notifications     = feed,
+                unreadNotifications = feed.count { !it.isRead },
             )
         }.onSuccess { newState ->
             _state.value = newState.deriveStockFromMovements()
@@ -262,7 +277,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         }
     }
 
-    fun addCustomer(customer: Customer) = viewModelScope.launch {
+    fun addCustomer(customer: Customer, onSaved: (Customer) -> Unit = {}) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching { repo.addCustomer(customer) }
             .onSuccess { saved ->
@@ -276,6 +291,7 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                         existing.id == saved.id
                     } + saved
                 _state.value = _state.value.copy(customers = merged, loading = false)
+                onSaved(saved)
             }
             .onFailure {
                 it.printStackTrace()
@@ -285,6 +301,52 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
 
     fun clearError() {
         _state.value = _state.value.copy(error = null)
+    }
+
+    /** Surfaces a client-side validation failure through the existing error UI. */
+    fun reportError(message: String) {
+        _state.value = _state.value.copy(loading = false, error = message)
+    }
+
+    // ── In-app notifications ────────────────────────────────────────────────
+
+    /** Notifies the tenant admin (e.g. after a sale). Never fails the caller. */
+    fun notifyAdmin(title: String, body: String, kind: String = "sale") {
+        viewModelScope.launch {
+            runCatching { notifications.sendToAdmin(title, body, kind) }
+            refreshNotifications()
+        }
+    }
+
+    fun refreshNotifications() = viewModelScope.launch {
+        runCatching {
+            val feed = notifications.getFeed()
+            _state.value = _state.value.copy(
+                notifications = feed,
+                unreadNotifications = feed.count { !it.isRead },
+            )
+        }
+    }
+
+    fun markNotificationRead(id: String) = viewModelScope.launch {
+        runCatching { notifications.markRead(id) }
+        _state.value = _state.value.let { s ->
+            s.copy(
+                notifications = s.notifications.map { if (it.id == id) it.copy(isRead = true) else it },
+                unreadNotifications = s.notifications.count { it.id != id && !it.isRead },
+            )
+        }
+    }
+
+    fun markAllNotificationsRead() = viewModelScope.launch {
+        val ids = _state.value.notifications.filter { !it.isRead }.map { it.id }
+        runCatching { notifications.markAllRead(ids) }
+        _state.value = _state.value.let { s ->
+            s.copy(
+                notifications = s.notifications.map { it.copy(isRead = true) },
+                unreadNotifications = 0,
+            )
+        }
     }
 
     /** Loads the selected sale customer's custom prices (if any). */
@@ -383,20 +445,43 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         }
     }
 
-    // ── Empty-cases direct entry ──────────────────────────────────────────────
+    // ── Empty-cans returns ────────────────────────────────────────────────────
 
-    /** Records a manual inward "Empty cans" movement so the live Empty Cases
-     *  figure can be bumped straight from the home screen. */
-    fun addEmptyCases(qty: Int) = viewModelScope.launch {
+    /** Records a standalone 20L empty-can return against the customer ledger. */
+    fun recordEmptyCanReturn(
+        customerId: String,
+        qty: Int,
+        referenceKey: String,
+        shopName: String,
+    ) = viewModelScope.launch {
         if (qty <= 0) return@launch
-        _state.value = _state.value.copy(loading = false, error = null)
-        val shop = currentShopName.takeIf { it.isNotBlank() } ?: _state.value.assignedShop
-        runCatching { repo.addEmptyCases(qty, shop.ifBlank { "Shop 1" }) }
-            .onSuccess { loadDashboard(currentEmployeeId) }
-            .onFailure {
-                it.printStackTrace()
-                _state.value = _state.value.copy(error = it.message ?: "Failed to add empty cases", loading = false)
-            }
+        _state.value = _state.value.copy(loading = true, error = null)
+        val shop = canonicalShopName(shopName, _state.value.shopMovements)
+        runCatching {
+            repo.recordEmptyCanReturn(
+                customerId   = customerId,
+                qty          = qty,
+                referenceKey = referenceKey,
+                shopName     = shop.ifBlank { "Shop 1" },
+            )
+        }.onSuccess { newBalance ->
+            _state.value = _state.value.copy(
+                customers = _state.value.customers.map { customer ->
+                    if (customer.id == customerId) {
+                        customer.copy(cansHeld = newBalance)
+                    } else {
+                        customer
+                    }
+                },
+            )
+            loadDashboard(currentEmployeeId)
+        }.onFailure {
+            it.printStackTrace()
+            _state.value = _state.value.copy(
+                loading = false,
+                error   = it.message ?: "Could not record empty cans",
+            )
+        }
     }
 
     /**
@@ -417,6 +502,9 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
         emptyCansCollected: Int,
         saleDate: String? = null,
         clientSaleKey: String? = null,
+        paymentReceived: String = "",
+        paymentMode: String = "cash",
+        customerId: String = "",
     ) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         runCatching {
@@ -427,10 +515,34 @@ class EmployeeViewModel(private val repo: EmployeeRepository) : ViewModel() {
                 emptyCansCollected = emptyCansCollected,
                 saleDate           = saleDate,
                 clientSaleKey      = clientSaleKey,
+                paymentReceived    = paymentReceived,
+                paymentMode        = paymentMode,
+                customerId         = customerId,
             )
-        }.onSuccess {
+        }.onSuccess { newBalance ->
+            // Apply the authoritative ledger balance immediately so the
+            // customer card cannot show a stale count while the dashboard
+            // refresh is still in flight (or if one of its queries fails).
+            if (newBalance != null) {
+                val targetId = customerId.takeIf { it.isNotBlank() && !it.startsWith("local_") }
+                _state.value = _state.value.copy(
+                    customers = _state.value.customers.map { customer ->
+                        val matches = if (targetId != null) {
+                            customer.id == targetId
+                        } else {
+                            customer.name.equals(customerName, ignoreCase = true)
+                        }
+                        if (matches) customer.copy(cansHeld = newBalance) else customer
+                    },
+                )
+            }
             // Refresh today's totals, sales and recent entries.
             loadDashboard(currentEmployeeId)
+            val totalQty = lines.sumOf { it.qty }
+            notifyAdmin(
+                "New sale",
+                "$customerName · $totalQty case(s) @ $shopName",
+            )
         }.onFailure {
             _state.value = _state.value.copy(loading = false, error = it.message ?: "Could not save sale")
         }

@@ -167,6 +167,8 @@ class AuthViewModel(
                 displayName = profile?.fullName ?: "",
                 email       = repo.currentUserEmail(),
             )
+            // A user now exists: register this device for outside-the-app push.
+            com.example.ruwia.data.refreshPushToken()
         }.onFailure {
             _state.value = AuthState(error = it.message ?: "Login failed")
         }
@@ -190,6 +192,7 @@ class AuthViewModel(
                     displayName = profile?.fullName ?: "",
                     email       = repo.currentUserEmail(),
                 )
+                com.example.ruwia.data.refreshPushToken()
             }.onFailure {
                 _state.value = AuthState(error = it.message ?: "Signup failed")
             }

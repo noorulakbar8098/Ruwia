@@ -65,6 +65,7 @@ fun CustomerManagementScreen(
     saleEntries: List<SaleEntry> = emptyList(),
     movements: List<StockMovement> = emptyList(),
     customerPrices: Map<String, List<CustomerProductPrice>> = emptyMap(),
+    onOpenLedger: (String) -> Unit = {},
 ) {
     var showAddSheet by remember { mutableStateOf(false) }
     var editingCustomer by remember { mutableStateOf<Customer?>(null) }
@@ -91,6 +92,7 @@ fun CustomerManagementScreen(
             hasCustomPricing = statsOf(opened).hasCustomPricing,
             onBack = { openedCustomer = null },
             onEdit = { editingCustomer = opened; openedCustomer = null },
+            onOpenLedger = { opened.id?.let(onOpenLedger) },
         )
         return
     }
@@ -764,6 +766,7 @@ private fun CustomerDetailsScreen(
     hasCustomPricing: Boolean,
     onBack: () -> Unit,
     onEdit: () -> Unit,
+    onOpenLedger: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
     val ordered = remember(sales) { sales.sortedByDescending { it.date } }
@@ -933,6 +936,23 @@ private fun CustomerDetailsScreen(
                     }
                 }
                 Spacer(Modifier.height(NTDp.md))
+            }
+
+            item {
+                Button(
+                    onClick = onOpenLedger,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = NTDp.screenPad)
+                        .height(46.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
+                ) {
+                    Icon(Icons.Rounded.AccountBalanceWallet, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Payment ledger & dues", fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(10.dp))
             }
 
             // 4 stat tiles

@@ -5,6 +5,8 @@
 xcuserdata
 !src/**/build/
 local.properties
+# Firebase Android config (per-machine; download from Firebase console)
+google-services.json
 .idea
 .DS_Store
 captures

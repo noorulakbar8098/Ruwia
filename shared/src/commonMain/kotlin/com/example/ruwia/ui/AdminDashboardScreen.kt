@@ -31,6 +31,7 @@ import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.Order
+import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.presentation.AdminViewModel
 import com.example.ruwia.presentation.DashboardRange
@@ -117,11 +118,29 @@ private fun AdminDashboardContentSwitcher(
     var showAddEmployee   by remember { mutableStateOf(false) }
     var showPricing       by remember { mutableStateOf(false) }
     var showCustomers     by remember { mutableStateOf(false) }
+    var showReceivables   by remember { mutableStateOf(false) }
     var productToRestock by remember { mutableStateOf<ProductCategory?>(null) }
     var editModeStock by remember { mutableStateOf(0) }
 
     var productDetailName by remember { mutableStateOf<String?>(null) }
     var showStockHistory by remember { mutableStateOf(false) }
+    var showNotifications by remember { mutableStateOf(false) }
+    var showReceiveEmptyCansDialog by remember { mutableStateOf(false) }
+    var isSubmittingReturn by remember { mutableStateOf(false) }
+    var saleToEdit by remember { mutableStateOf<SaleEntry?>(null) }
+    var saleEditLines by remember { mutableStateOf<List<SaleEntry>>(emptyList()) }
+    var isSavingSaleEdit by remember { mutableStateOf(false) }
+
+    // Close the receive dialog only after the backend confirms the return.
+    LaunchedEffect(state.loading, state.error) {
+        if (isSubmittingReturn && !state.loading) {
+            if (state.error == null) {
+                showReceiveEmptyCansDialog = false
+                snackbarHostState.showSnackbar("Empty cans recorded")
+            }
+            isSubmittingReturn = false
+        }
+    }
 
     // Pull-to-refresh indicator: set on swipe, cleared when the reload
     // finishes (or fails) so the spinner never sticks.
@@ -130,7 +149,70 @@ private fun AdminDashboardContentSwitcher(
         if (!state.loading) isRefreshing = false
     }
 
+    fun beginSaleEdit(sale: SaleEntry) {
+        val key = sale.clientKey?.takeIf { it.isNotBlank() }
+        saleEditLines = if (key != null) {
+            state.saleEntries.filter { it.clientKey == key }
+        } else {
+            listOf(sale)
+        }
+        saleToEdit = sale
+    }
+
     // ── Full-screen overlays ──────────────────────────────────
+    saleToEdit?.let { sale ->
+        SystemBackHandler {
+            if (!isSavingSaleEdit) {
+                saleToEdit = null
+                saleEditLines = emptyList()
+            }
+        }
+        val editCustomer = state.customers.firstOrNull {
+            sale.customerId != null && it.id == sale.customerId
+        } ?: state.customers.firstOrNull {
+            it.name.equals(sale.customerName, ignoreCase = true)
+        }
+        AddSaleScreen(
+            products          = state.productCategories,
+            customers         = state.customers,
+            stockMovements    = state.recentMovements,
+            selectedCustomer  = editCustomer,
+            getEffectivePrice = { _, productId ->
+                state.productCategories.find { it.id == productId }?.defaultSellPrice ?: 0.0
+            },
+            errorMessage      = state.error,
+            onClearError      = vm::clearError,
+            onBack            = {
+                if (!isSavingSaleEdit) {
+                    saleToEdit = null
+                    saleEditLines = emptyList()
+                }
+            },
+            isSaving          = isSavingSaleEdit,
+            shopName          = sale.shopId,
+            shops             = state.shopNames,
+            editingSale       = sale,
+            editingSaleLines  = saleEditLines,
+            onSaveEdit        = { customerName, customerId ->
+                val customer = state.customers.firstOrNull { it.id == customerId }
+                    ?: state.customers.firstOrNull {
+                        it.name.equals(customerName, ignoreCase = true)
+                    }
+                if (customer != null) {
+                    isSavingSaleEdit = true
+                    vm.updateSaleCustomer(saleEditLines.ifEmpty { listOf(sale) }, customer) { saved ->
+                        isSavingSaleEdit = false
+                        if (saved) {
+                            saleToEdit = null
+                            saleEditLines = emptyList()
+                        }
+                    }
+                }
+            },
+        )
+        return
+    }
+
     productDetailName?.let { pName ->
         SystemBackHandler { productDetailName = null }
         ProductDetailScreen(
@@ -144,13 +226,44 @@ private fun AdminDashboardContentSwitcher(
     if (showStockHistory) {
         SystemBackHandler { showStockHistory = false }
         com.example.ruwia.ui.StockHistoryScreen(
-            state  = state,
-            onBack = { showStockHistory = false },
+            state       = state,
+            onBack      = { showStockHistory = false },
+            onEditSale  = { sale ->
+                showStockHistory = false
+                beginSaleEdit(sale)
+            },
+        )
+        return
+    }
+
+    if (showNotifications) {
+        com.example.ruwia.ui.NotificationsScreen(
+            notifications = state.notifications,
+            unreadCount = state.unreadNotifications,
+            onBack = { showNotifications = false },
+            onMarkRead = vm::markNotificationRead,
+            onMarkAllRead = vm::markAllNotificationsRead,
         )
         return
     }
 
     // ── Deepest level ─────────────────────────────────────────
+    if (showReceivables) {
+        ReceivablesScreen(
+            state = state,
+            onBack = {
+                showReceivables = false
+                vm.closeCustomerLedger()
+            },
+            onOpenCustomer = vm::openCustomerLedger,
+            onCloseLedger = vm::closeCustomerLedger,
+            onLoadPayments = vm::loadPayments,
+            onRecordPayment = vm::recordCustomerPayment,
+            onClearPaymentMessage = vm::clearPaymentMessage,
+        )
+        return
+    }
+
     if (showCustomers) {
         SystemBackHandler { showCustomers = false }
         com.example.ruwia.ui.admin.CustomerManagementScreen(
@@ -164,6 +277,11 @@ private fun AdminDashboardContentSwitcher(
             saleEntries      = state.saleEntries,
             movements        = state.recentMovements,
             customerPrices   = state.customerPrices,
+            onOpenLedger     = { customerId ->
+                showCustomers = false
+                showReceivables = true
+                vm.openCustomerLedger(customerId)
+            },
         )
         return
     }
@@ -280,6 +398,25 @@ private fun AdminDashboardContentSwitcher(
 
 
 
+    if (showReceiveEmptyCansDialog) {
+        ReceiveEmptyCansDialog(
+            customers   = state.customers,
+            shopOptions = state.shopNames,
+            initialShop = state.shopName.ifBlank { state.shopNames.firstOrNull().orEmpty() },
+            isSaving    = isSubmittingReturn,
+            onDismiss   = { if (!isSubmittingReturn) showReceiveEmptyCansDialog = false },
+            onConfirm   = { customerId, qty, referenceKey, shopName ->
+                isSubmittingReturn = true
+                vm.recordEmptyCanReturn(
+                    customerId   = customerId,
+                    qty          = qty,
+                    referenceKey = referenceKey,
+                    shopName     = shopName,
+                )
+            },
+        )
+    }
+
     Scaffold(
         containerColor = NTColors.Background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -317,6 +454,7 @@ private fun AdminDashboardContentSwitcher(
                      onOpenAnalytics = { selectedTab = 3 },
                      onOpenCustomers = { showCustomers = true },
                      onOpenInventory = { selectedTab = 1 },
+                     onOpenNotifications = { showNotifications = true },
                  )
             1 -> InventoryScreen(
                      state          = state,
@@ -341,6 +479,7 @@ private fun AdminDashboardContentSwitcher(
                      onSaveCustomerPrice = vm::saveCustomerProductPrice,
                      onLoadCustomerPrices = vm::loadCustomerPrices,
                      onDeleteCustomerPrice = vm::deleteCustomerProductPrice,
+                     onEditSale = ::beginSaleEdit,
                      contentPadding = contentPadding,
                  )
             2 -> TransactionsScreen(
@@ -368,9 +507,10 @@ private fun AdminDashboardContentSwitcher(
                      onNavigateToEmployees  = { showEmployees = true },
                      onNavigateToPricing    = { showPricing = true },
                      onNavigateToCustomers  = { showCustomers = true },
+                     onOpenReceivables      = { showReceivables = true },
                      onLogout               = onLogout,
                      onResetEmptyCases      = { vm.resetEmptyCases() },
-                     onAddEmptyCases        = vm::addEmptyCases,
+                     onOpenReceiveEmptyCans = { showReceiveEmptyCansDialog = true },
                      onShopNameChange       = { index, name -> vm.updateShopName(index, name) },
                      contentPadding         = contentPadding
                  )
@@ -392,6 +532,7 @@ private fun AdminHomeTab(
     onOpenAnalytics: () -> Unit = {},
     onOpenCustomers: () -> Unit = {},
     onOpenInventory: () -> Unit = {},
+    onOpenNotifications: () -> Unit = {},
 ) {
     when {
         state.loading  -> NTDashboardSkeleton(contentPadding)
@@ -409,6 +550,7 @@ private fun AdminHomeTab(
             onOpenAnalytics = onOpenAnalytics,
             onOpenCustomers = onOpenCustomers,
             onOpenInventory = onOpenInventory,
+            onOpenNotifications = onOpenNotifications,
         )
     }
 }
@@ -423,6 +565,7 @@ private fun AdminDashboardContent(
     onOpenAnalytics: () -> Unit = {},
     onOpenCustomers: () -> Unit = {},
     onOpenInventory: () -> Unit = {},
+    onOpenNotifications: () -> Unit = {},
 ) {
     // Revenue + customer pickers drive their own charts.
     // Overview period dropdown defaults to Month.
@@ -530,10 +673,10 @@ private fun AdminDashboardContent(
             NTDashboardHeader(
                 shopName            = displayShopName,
                 adminName           = adminName.ifBlank { "Admin" },
-                notificationCount   = pendingOrders,
+                notificationCount   = pendingOrders + state.unreadNotifications,
                 onAvatarClick       = onOpenSettings,
                 onSearchClick       = {},
-                onNotificationClick = {}
+                onNotificationClick = onOpenNotifications
             )
         }
 

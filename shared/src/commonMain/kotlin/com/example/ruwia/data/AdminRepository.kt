@@ -2,12 +2,17 @@ package com.example.ruwia.data
 
 import com.example.ruwia.domain.AppSetting
 import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.CustomerLedger
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.Order
+import com.example.ruwia.domain.Payment
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.Profile
 import com.example.ruwia.domain.SaleEntry
+import com.example.ruwia.domain.summarizeCustomerLedger
+import com.example.ruwia.domain.orderedShopSlots
+import com.example.ruwia.domain.resolveShopNames
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockItem
 import com.example.ruwia.domain.StockMovement
@@ -419,23 +424,32 @@ class AdminRepository {
     suspend fun addSaleEntry(entry: SaleEntry) {
         com.example.ruwia.util.requireNotFutureDay("Sale date", entry.date)
         val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: return
-        supabase.from("sale_entries").insert(
-            buildJsonObject {
-                put("date", entry.date)
-                put("customer_name", entry.customerName)
-                put("product_id", entry.productId)
-                put("product_name", entry.productName)
-                put("qty", entry.qty)
-                put("purchase_price_per_unit", entry.purchasePricePerUnit)
-                put("selling_price_per_unit", entry.sellingPricePerUnit)
-                put("sales_margin_per_unit", entry.salesMarginPerUnit)
-                put("total_selling", entry.totalSelling)
-                put("total_margin", entry.totalMargin)
-                put("shop_id", entry.shopId)
-                if (entry.employeeId != null) put("employee_id", entry.employeeId)
-                put("admin_id", currentAdminId)
+        fun saleEntryPayload(includeCustomerId: Boolean) = buildJsonObject {
+            put("date", entry.date)
+            put("customer_name", entry.customerName)
+            if (includeCustomerId && !entry.customerId.isNullOrBlank()) put("customer_id", entry.customerId)
+            put("product_id", entry.productId)
+            put("product_name", entry.productName)
+            put("qty", entry.qty)
+            put("purchase_price_per_unit", entry.purchasePricePerUnit)
+            put("selling_price_per_unit", entry.sellingPricePerUnit)
+            put("sales_margin_per_unit", entry.salesMarginPerUnit)
+            put("total_selling", entry.totalSelling)
+            put("total_margin", entry.totalMargin)
+            put("shop_id", entry.shopId)
+            if (entry.employeeId != null) put("employee_id", entry.employeeId)
+            put("payment_received", entry.paymentReceived)
+            put("admin_id", currentAdminId)
+        }
+        try {
+            supabase.from("sale_entries").insert(saleEntryPayload(true))
+        } catch (e: Exception) {
+            if (!entry.customerId.isNullOrBlank() && isUnknownColumnError(e, "customer_id")) {
+                supabase.from("sale_entries").insert(saleEntryPayload(false))
+            } else {
+                throw e
             }
-        )
+        }
         // Inventory leg: outward movement + atomic stock decrement. Without
         // this the sale is visible in reports but stock never moves.
         if (entry.productId.isNotBlank() && entry.qty > 0) {
@@ -447,6 +461,55 @@ class AdminRepository {
                 productId = entry.productId,
                 productName = entry.productName,
             )
+        }
+    }
+
+    /**
+     * Reassigns the customer on an existing sale. Only the denormalized
+     * customer fields are changed; product, quantity, shop, date and all
+     * financial values stay exactly as recorded. Inventory is untouched.
+     */
+    suspend fun updateSaleCustomer(sales: List<SaleEntry>, customer: Customer) {
+        require(sales.isNotEmpty()) { "No sale selected." }
+        require(!customer.id.isNullOrBlank()) { "Select a saved customer." }
+        val adminId = supabase.auth.currentUserOrNull()?.id ?: return
+        val customerId = customer.id
+        fun salePayload(includeCustomerId: Boolean) = buildJsonObject {
+            put("customer_name", customer.name)
+            if (includeCustomerId) put("customer_id", customerId)
+        }
+        sales.forEach { sale ->
+            val saleId = sale.id?.takeIf { it.isNotBlank() } ?: return@forEach
+            try {
+                supabase.from("sale_entries").update(salePayload(true)) {
+                    filter {
+                        eq("id", saleId)
+                        eq("admin_id", adminId)
+                    }
+                }
+            } catch (e: Exception) {
+                if (isUnknownColumnError(e, "customer_id")) {
+                    supabase.from("sale_entries").update(salePayload(false)) {
+                        filter {
+                            eq("id", saleId)
+                            eq("admin_id", adminId)
+                        }
+                    }
+                } else {
+                    throw e
+                }
+            }
+
+            val key = sale.clientKey?.takeIf { it.isNotBlank() } ?: return@forEach
+            supabase.from("stock_movements").update(
+                buildJsonObject { put("source", "Sale · ${customer.name}") }
+            ) {
+                filter {
+                    eq("admin_id", adminId)
+                    eq("client_key", key)
+                    eq("product_id", sale.productId)
+                }
+            }
         }
     }
 
@@ -593,6 +656,47 @@ class AdminRepository {
             }.decodeList()
         } catch (e: Exception) { emptyList() }
     }
+
+    /** Every recorded payment for this business, newest first. */
+    suspend fun getAllPayments(): List<Payment> {
+        return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
+            supabase.from("payments")
+                .select {
+                    filter { eq("admin_id", adminId) }
+                    order("created_at", SortOrder.DESCENDING)
+                    limit(20000)
+                }
+                .decodeList()
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** Full money statement (sale debits + payment credits) for one customer. */
+    suspend fun getCustomerLedger(customerId: String): CustomerLedger {
+        if (customerId.isBlank()) return CustomerLedger()
+        return summarizeCustomerLedger(CustomerLedgerRepository.getLedger(customerId))
+    }
+
+    /**
+     * Records a standalone payment against a customer's outstanding balance.
+     * The database function locks the customer row, updates `customers.balance`
+     * and appends the ledger entry atomically.
+     */
+    suspend fun recordCustomerPayment(
+        customerId: String,
+        amount: Double,
+        mode: String,
+        referenceKey: String,
+        saleClientKey: String? = null,
+        note: String? = null,
+    ): Double = CustomerLedgerRepository.applyPayment(
+        customerId = customerId,
+        amount = amount,
+        paymentMode = mode,
+        referenceKey = referenceKey,
+        saleClientKey = saleClientKey,
+        note = note,
+    )
 
     suspend fun addCustomer(customer: Customer): Customer {
         val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: ""
@@ -915,12 +1019,7 @@ class AdminRepository {
                 filter { eq("admin_id", adminId) }
             }
                 .decodeList<ShopStockInfo>()
-                // Deduplicate by name (case-insensitive) — keeps the first occurrence.
-                // Guards against accidental duplicate rows already in the DB.
-                .distinctBy { it.name.trim().lowercase() }
-                // This business always has exactly two shops. Guard against
-                // legacy/duplicate rows so no screen ever shows a third shop.
-                .take(2)
+                .let(::orderedShopSlots)
         } catch (e: Exception) { emptyList() }
     }
 
@@ -1121,18 +1220,26 @@ class AdminRepository {
     }
 
     /**
-     * Records a manual inward "Empty cans" movement (product-less) so the live
-     * Empty Cases figure can be bumped directly from the home screen.
+     * Records a standalone empty-can return against the shared customer-wise
+     * 20L ledger. The RPC also writes the shop's inward movement atomically,
+     * and retrying with the same [referenceKey] is a no-op.
      */
-    suspend fun addEmptyCases(qty: Int, shopName: String) {
-        if (qty <= 0) return
-        addStockMovement(
-            source = "Empty cans · Direct Entry",
-            qty = qty,
-            type = "inward",
+    suspend fun recordEmptyCanReturn(
+        customerId: String,
+        qty: Int,
+        referenceKey: String,
+        shopName: String,
+    ): Int {
+        require(qty > 0) { "Enter at least one empty can." }
+        return CanLedgerRepository.apply(
+            customerId = customerId,
+            issued = 0,
+            returned = qty,
+            referenceKey = referenceKey,
+            movementType = "return",
+            employeeId = supabase.auth.currentUserOrNull()?.id,
             shopName = shopName,
-            productId = null,
-            createdAt = com.example.ruwia.util.currentDateTimeIso(),
+            recordInwardStock = true,
         )
     }
 
@@ -1361,19 +1468,13 @@ class AdminRepository {
      * so callers always receive exactly two entries.
      */
     suspend fun getShopNames(): List<String> {
-        val defaults = listOf("Shop 1", "Shop 2")
+        val defaults = resolveShopNames(emptyList())
         return try {
             val adminId = supabase.auth.currentUserOrNull()?.id ?: return defaults
             val rows = supabase.from("shop_stocks")
                 .select { filter { eq("admin_id", adminId) } }
                 .decodeList<ShopStockInfo>()
-            if (rows.isEmpty()) return defaults
-            buildList {
-                repeat(2) { i ->
-                    val name = rows.getOrNull(i)?.name?.trim()
-                    add(if (name.isNullOrBlank()) defaults[i] else name)
-                }
-            }
+            resolveShopNames(rows)
         } catch (e: Exception) { defaults }
     }
 
@@ -1392,7 +1493,8 @@ class AdminRepository {
             val rows = supabase.from("shop_stocks")
                 .select { filter { eq("admin_id", adminId) } }
                 .decodeList<ShopStockInfo>()
-            val target = rows.getOrNull(index)
+            val ordered = orderedShopSlots(rows)
+            val target = ordered.getOrNull(index)
             if (target != null) {
                 val oldName = target.name
                 // A rename also cleans up the literal slot label stored in the
@@ -1429,7 +1531,7 @@ class AdminRepository {
                         buildJsonObject { put("shop_id", clean) }
                     ) { filter { eq("shop_id", oldName) } }
                 }
-            } else {
+            } else if (rows.size < 2) {
                 supabase.from("shop_stocks").insert(
                     buildJsonObject {
                         put("name", clean)

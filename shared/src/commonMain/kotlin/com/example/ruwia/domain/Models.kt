@@ -2,6 +2,7 @@ package com.example.ruwia.domain
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 
 enum class UserRole { admin, user, employee }
@@ -59,11 +60,56 @@ data class Outward(
 @Serializable
 data class Payment(
     val id: String? = null,
-    @SerialName("customer_id") val customerId: String,
-    val amount: Double,
+    @SerialName("customer_id") val customerId: String? = null,
+    val amount: Double = 0.0,
     val mode: String = "cash",
+    @SerialName("sale_client_key") val saleClientKey: String? = null,
+    @SerialName("reference_key") val referenceKey: String? = null,
+    val note: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
 )
+
+/**
+ * One line in a customer's money statement. A sale is a debit (the customer
+ * owes more); a payment or credit note is a credit. [balanceAfter] is the
+ * running outstanding amount immediately after this entry.
+ */
+@Serializable
+data class CustomerLedgerEntry(
+    val id: String? = null,
+    @SerialName("customer_id") val customerId: String,
+    @SerialName("customer_name") val customerName: String = "",
+    @SerialName("entry_type") val entryType: String,
+    @SerialName("sale_client_key") val saleClientKey: String? = null,
+    @SerialName("payment_id") val paymentId: String? = null,
+    val debit: Double = 0.0,
+    val credit: Double = 0.0,
+    @SerialName("balance_after") val balanceAfter: Double = 0.0,
+    @SerialName("reference_key") val referenceKey: String = "",
+    val note: String? = null,
+    val mode: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+)
+
+/** Aggregated money view for one customer. */
+data class CustomerLedger(
+    val entries: List<CustomerLedgerEntry> = emptyList(),
+    val billed: Double = 0.0,
+    val collected: Double = 0.0,
+    val outstanding: Double = 0.0,
+)
+
+fun summarizeCustomerLedger(entries: List<CustomerLedgerEntry>): CustomerLedger {
+    val ordered = entries.sortedBy { it.createdAt.orEmpty() }
+    val billed = ordered.sumOf { it.debit }
+    val collected = ordered.sumOf { it.credit }
+    return CustomerLedger(
+        entries = ordered,
+        billed = billed,
+        collected = collected,
+        outstanding = (billed - collected).coerceAtLeast(0.0),
+    )
+}
 
 @Serializable
 data class StockSummary(
@@ -180,6 +226,7 @@ data class SaleEntry(
     val id: String? = null,
     val date: String,
     @SerialName("customer_name") val customerName: String,
+    @SerialName("customer_id") val customerId: String? = null,
     @SerialName("product_id") val productId: String,
     @SerialName("product_name") val productName: String,
     val qty: Int,
@@ -197,6 +244,7 @@ data class SaleEntry(
      * are skipped instead of deducting stock twice.
      */
     @SerialName("client_key") val clientKey: String? = null,
+    @SerialName("payment_received") val paymentReceived: String? = null,
 )
 
 @Serializable
@@ -270,6 +318,30 @@ fun canonicalShopName(target: String, movements: List<StockMovement>): String {
 }
 
 /**
+ * Finds the sale record that produced a sale movement. The idempotency key is
+ * the strongest link; legacy rows fall back to customer/product/date.
+ */
+fun findSaleForMovement(
+    movement: StockMovement,
+    sales: List<SaleEntry>,
+): SaleEntry? {
+    if (!movement.source.startsWith("Sale", ignoreCase = true)) return null
+    val key = movement.clientKey?.takeIf { it.isNotBlank() }
+    if (key != null) {
+        sales.firstOrNull { it.clientKey == key && it.productId == movement.productId }?.let { return it }
+        sales.firstOrNull { it.clientKey == key }?.let { return it }
+    }
+    val customer = movement.source.substringAfter("·", "").trim()
+    val day = movement.createdAt?.take(10)
+    return sales.firstOrNull { sale ->
+        sale.productId == movement.productId &&
+            (customer.isBlank() || sale.customerName.equals(customer, ignoreCase = true)) &&
+            (day == null || sale.date == day) &&
+            (movement.shopName.isBlank() || sale.shopId.equals(movement.shopName, ignoreCase = true))
+    }
+}
+
+/**
  * Display name for a movement row that survives product soft-delete.
  *
  * Resolution order: write-time snapshot → active product lookup → the
@@ -299,6 +371,28 @@ data class AppSetting(
     val id: String? = null,
     @SerialName("settings_key") val key: String = "",
     @SerialName("settings_value") val value: String? = null,
+)
+
+/**
+ * In-app notification row (see supabase_migration_notifications.sql).
+ *
+ * Broadcast = [toUserId] null + [toRole] set ('employee' → all employees of
+ * the admin, 'admin' → the admin). [isRead] is client-side only, resolved
+ * from the `notification_reads` table.
+ */
+@Serializable
+data class NotificationItem(
+    val id: String = "",
+    @SerialName("admin_id") val adminId: String? = null,
+    @SerialName("from_user_id") val fromUserId: String? = null,
+    @SerialName("to_user_id") val toUserId: String? = null,
+    @SerialName("to_role") val toRole: String? = null,
+    val title: String = "",
+    val body: String = "",
+    val kind: String = "general",
+    @SerialName("related_id") val relatedId: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @Transient val isRead: Boolean = false,
 )
 
 /** True if a movement source string represents returned empty cans. */

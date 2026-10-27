@@ -9,6 +9,7 @@ import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.netStockPerProductInShop
+import com.example.ruwia.domain.orderedShopSlots
 import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.domain.Supplier
 import io.github.jan.supabase.auth.auth
@@ -389,13 +390,7 @@ class EmployeeRepository {
                 if (adminId != null) filter { eq("admin_id", adminId) }
             }
                 .decodeList<ShopStockInfo>()
-                // Defensive de-duplication — historical inserts before the
-                // unique-name constraint can leave duplicate rows that would
-                // otherwise show up twice in the picker.
-                .distinctBy { it.name.trim().lowercase() }
-                // This business always has exactly two shops. Guard against
-                // legacy/duplicate rows so no screen ever shows a third shop.
-                .take(2)
+                .let(::orderedShopSlots)
         } catch (e: Exception) { emptyList() }
     }
 
@@ -542,31 +537,6 @@ class EmployeeRepository {
     // ── Record outward sale (one row per product line item) ──────────────────
 
     /**
-     * Records a manual inward "Empty cans" movement (product-less) so the live
-     * Empty Cases figure can be bumped directly from the home screen.
-     */
-    suspend fun addEmptyCases(qty: Int, shopName: String) {
-        if (qty <= 0) return
-        addStockMovement(
-            source = "Empty cans · Direct Entry",
-            qty = qty,
-            type = "inward",
-            shopName = shopName,
-            productId = null,
-            createdAt = com.example.ruwia.util.currentDateTimeIso(),
-        )
-    }
-
-    /**
-     * Persist an outward sale for the current employee. Each [SaleLine] becomes
-     * a row in `sale_entries` and an `outward` stock movement so the admin's
-     * stock dashboard reflects the sale immediately.
-     *
-     * If [emptyCansCollected] is non-zero, an extra `inward` stock movement is
-     * recorded with `source = "Empty cans · {customer}"` so the admin can see
-     * which customers returned how many empties.
-     */
-    /**
      * Persist an outward sale for the current employee. Each [SaleLine] becomes
      * a row in `sale_entries` plus outward stock movement(s) so the admin's
      * stock dashboard reflects the sale immediately. A line is deducted from
@@ -594,8 +564,32 @@ class EmployeeRepository {
         emptyCansCollected: Int,
         saleDate: String? = null,
         clientSaleKey: String? = null,
-    ) {
+        paymentReceived: String = "",
+        paymentMode: String = "cash",
+        customerId: String = "",
+    ): Int? {
         require(lines.isNotEmpty()) { "Sale has no line items." }
+        val issued20Litre = lines.filter { it.is20Litre }.sumOf { it.qty }
+        val paidNow = paymentReceived.trim()
+            .takeIf { it.isNotBlank() }
+            ?.toDoubleOrNull()
+            ?: 0.0
+        require(paidNow >= 0.0) { "Payment received cannot be negative." }
+        // Validate before any write so a missing customer can never leave a
+        // half-recorded sale behind. Non-20L sales keep the legacy behaviour
+        // (no customer id required) unless a payment is being recorded.
+        if (issued20Litre > 0 || emptyCansCollected > 0 || paidNow > 0.0) {
+            require(customerId.isNotBlank()) {
+                "Select a saved customer before recording 20L cans or a payment."
+            }
+            require(!clientSaleKey.isNullOrBlank()) {
+                "A sale key is required to record 20L cans or a payment."
+            }
+        }
+        val invoiceTotal = lines.sumOf { it.sellingPricePerUnit * it.qty }
+        require(paidNow <= invoiceTotal + 0.001) {
+            "Payment received cannot be more than the sale total of ₹$invoiceTotal."
+        }
         val employeeId = currentUserId()
         val effectiveDate = saleDate?.takeIf { it.isNotBlank() } ?: today()
         com.example.ruwia.util.requireNotFutureDay("Sale date", effectiveDate)
@@ -646,8 +640,25 @@ class EmployeeRepository {
                     employeeId = employeeId,
                     tenantAdminId = tenantAdminId,
                 )
+                applySaleFinancials(
+                    customerId = customerId,
+                    saleKey = keyForLookup,
+                    lines = lines,
+                    paidNow = paidNow,
+                    paymentMode = paymentMode,
+                    employeeId = employeeId,
+                    shopName = shopName,
+                )
+                return applySaleCanLedger(
+                    customerId = customerId,
+                    issued = issued20Litre,
+                    returned = emptyCansCollected,
+                    saleKey = keyForLookup,
+                    employeeId = employeeId,
+                    shopName = shopName,
+                )
             }
-            return
+            return null
         }
 
         // 1. Perform atomic stock update for all lines first to ensure atomic check & deduction.
@@ -700,24 +711,47 @@ class EmployeeRepository {
         // Split legs share one client_key, so verification still works.
         val ledgerForAllocation = fetchLedgerForAllocation(tenantAdminId)
         pendingLines.forEach { line ->
-            supabase.from("sale_entries").insert(
-                buildJsonObject {
-                    put("date", effectiveDate)
-                    put("customer_name", customerName)
-                    put("product_id", line.productId)
-                    put("product_name", line.productName)
-                    put("qty", line.qty)
-                    put("purchase_price_per_unit", line.purchasePricePerUnit)
-                    put("selling_price_per_unit", line.sellingPricePerUnit)
-                    put("sales_margin_per_unit", line.sellingPricePerUnit - line.purchasePricePerUnit)
-                    put("total_selling", line.sellingPricePerUnit * line.qty)
-                    put("total_margin", (line.sellingPricePerUnit - line.purchasePricePerUnit) * line.qty)
-                    put("shop_id", shopName)
-                    if (employeeId != null) put("employee_id", employeeId)
-                    if (!tenantAdminId.isNullOrBlank()) put("admin_id", tenantAdminId)
-                    if (useClientKey && saleKey != null) put("client_key", saleKey)
+            fun saleEntryPayload(includeCustomerId: Boolean) = buildJsonObject {
+                put("date", effectiveDate)
+                put("customer_name", customerName)
+                if (includeCustomerId && customerId.isNotBlank()) put("customer_id", customerId)
+                put("product_id", line.productId)
+                put("product_name", line.productName)
+                put("qty", line.qty)
+                put("purchase_price_per_unit", line.purchasePricePerUnit)
+                put("selling_price_per_unit", line.sellingPricePerUnit)
+                put("sales_margin_per_unit", line.sellingPricePerUnit - line.purchasePricePerUnit)
+                put("total_selling", line.sellingPricePerUnit * line.qty)
+                put("total_margin", (line.sellingPricePerUnit - line.purchasePricePerUnit) * line.qty)
+                put("shop_id", shopName)
+                if (employeeId != null) put("employee_id", employeeId)
+                if (!tenantAdminId.isNullOrBlank()) put("admin_id", tenantAdminId)
+                put("payment_received", paymentReceived)
+                if (useClientKey && saleKey != null) put("client_key", saleKey)
+            }
+            try {
+                try {
+                    supabase.from("sale_entries").insert(saleEntryPayload(true))
+                } catch (e: Exception) {
+                    // Pre-migration databases do not have sale_entries.customer_id.
+                    // The sale itself must still land (stock has already moved);
+                    // the ledger backfill can link it by customer name later.
+                    if (customerId.isNotBlank() && isUnknownColumnError(e, "customer_id")) {
+                        supabase.from("sale_entries").insert(saleEntryPayload(false))
+                    } else {
+                        throw e
+                    }
                 }
-            )
+            } catch (e: Exception) {
+                if (isUnknownColumnError(e, "payment_received")) {
+                    throw IllegalStateException(
+                        "Database is missing the sale_entries.payment_received column. " +
+                            "Run supabase_migration_can_ledger.sql in the Supabase SQL Editor, then retry.",
+                        e,
+                    )
+                }
+                throw e
+            }
 
             allocateOutwardMovements(
                 customerName = customerName,
@@ -758,7 +792,7 @@ class EmployeeRepository {
         // loudly instead of reporting success with frozen stock.
         // (Skipped on pre-migration databases without the client_key column.)
         if (useClientKey && saleKey != null) {
-            val landed = try {
+            val landed: Set<String?>? = try {
                 supabase.from("stock_movements")
                     .select { filter { eq("client_key", saleKey) } }
                     .decodeList<StockMovement>()
@@ -766,16 +800,115 @@ class EmployeeRepository {
                     .map { it.productId }
                     .toSet()
             } catch (e: Exception) {
-                null
+                // Pre-migration database without stock_movements.client_key:
+                // the key cannot be queried, so skip verification rather than
+                // failing a sale that was already written.
+                if (isUnknownColumnError(e, "client_key")) null else throw e
             }
-            val missing = pendingLines.map { it.productId }.filter { it !in (landed ?: emptySet()) }
-            if (landed == null || missing.isNotEmpty()) {
-                throw IllegalStateException(
-                    "Sale was recorded but inventory update could not be verified for ${missing.size} line(s). " +
-                        "Please check stock before retrying — retrying is safe and will not deduct twice."
-                )
+            if (landed != null) {
+                val missing = pendingLines.map { it.productId }.filter { it !in landed }
+                if (missing.isNotEmpty()) {
+                    throw IllegalStateException(
+                        "Sale was recorded but inventory update could not be verified for ${missing.size} line(s). " +
+                            "Please check stock before retrying — retrying is safe and will not deduct twice."
+                    )
+                }
             }
         }
+
+        // 5. Apply the customer-wise 20L ledger last, after the sale rows and
+        // inventory movements have landed. A failure here is safe to retry:
+        // the resume path above re-applies it with the same idempotency key.
+        return if (saleKey != null) {
+            applySaleFinancials(
+                customerId = customerId,
+                saleKey = saleKey,
+                lines = lines,
+                paidNow = paidNow,
+                paymentMode = paymentMode,
+                employeeId = employeeId,
+                shopName = shopName,
+            )
+            applySaleCanLedger(
+                customerId = customerId,
+                issued = issued20Litre,
+                returned = emptyCansCollected,
+                saleKey = saleKey,
+                employeeId = employeeId,
+                shopName = shopName,
+            )
+        } else {
+            null
+        }
+    }
+
+    private suspend fun applySaleFinancials(
+        customerId: String,
+        saleKey: String,
+        lines: List<SaleLine>,
+        paidNow: Double,
+        paymentMode: String,
+        employeeId: String?,
+        shopName: String,
+    ): Double? {
+        if (customerId.isBlank()) return null
+        val invoiceTotal = lines.sumOf { it.sellingPricePerUnit * it.qty }
+        if (invoiceTotal <= 0.0 && paidNow <= 0.0) return null
+        return CustomerLedgerRepository.applySale(
+            customerId = customerId,
+            saleKey = saleKey,
+            invoiceTotal = invoiceTotal,
+            paidNow = paidNow,
+            paymentMode = paymentMode,
+            employeeId = employeeId,
+            shopName = shopName,
+        )
+    }
+
+    private suspend fun applySaleCanLedger(
+        customerId: String,
+        issued: Int,
+        returned: Int,
+        saleKey: String,
+        employeeId: String?,
+        shopName: String,
+    ): Int? {
+        if (issued == 0 && returned == 0) return null
+        return CanLedgerRepository.apply(
+            customerId = customerId,
+            issued = issued,
+            returned = returned,
+            referenceKey = "sale:$saleKey",
+            movementType = "sale",
+            employeeId = employeeId,
+            shopName = shopName,
+            recordInwardStock = false,
+        )
+    }
+
+    /**
+     * Records a standalone empty-can return against the same customer ledger
+     * used by sale-time returns. The RPC also writes the shop's inward
+     * movement in the same transaction. Retrying with the same [referenceKey]
+     * is a no-op, so double taps can never corrupt the balance.
+     */
+    suspend fun recordEmptyCanReturn(
+        customerId: String,
+        qty: Int,
+        referenceKey: String,
+        shopName: String,
+    ): Int {
+        require(qty > 0) { "Enter at least one empty can." }
+        return CanLedgerRepository.apply(
+            customerId = customerId,
+            issued = 0,
+            returned = qty,
+            referenceKey = referenceKey,
+            movementType = "return",
+            employeeId = currentUserId(),
+            shopName = shopName,
+            recordInwardStock = true,
+        )
     }
 
     /**
@@ -875,25 +1008,38 @@ class EmployeeRepository {
         tenantAdminId: String?,
         saleKey: String?,
     ) {
-        fun saleMovementPayload(stripNewColumns: Boolean) = buildJsonObject {
+        fun saleMovementPayload(
+            includeProductName: Boolean,
+            includeClientKey: Boolean,
+        ) = buildJsonObject {
             put("source", "Sale · $customerName")
             put("qty", line.qty)
             put("type", "outward")
             put("shop_name", shopName)
             put("product_id", line.productId)
-            if (!stripNewColumns) {
-                put("product_name", line.productName)
-                if (saleKey != null) put("client_key", saleKey)
-            }
+            if (includeProductName) put("product_name", line.productName)
+            if (includeClientKey && saleKey != null) put("client_key", saleKey)
             if (employeeId != null) put("employee_id", employeeId)
             if (!tenantAdminId.isNullOrBlank()) put("admin_id", tenantAdminId)
         }
         try {
-            supabase.from("stock_movements").insert(saleMovementPayload(false))
+            supabase.from("stock_movements").insert(
+                saleMovementPayload(includeProductName = true, includeClientKey = true),
+            )
         } catch (e: Exception) {
-            if (isUnknownColumnError(e, "product_name") || isUnknownColumnError(e, "client_key")) {
-                supabase.from("stock_movements").insert(saleMovementPayload(true))
-            } else throw e
+            // Drop only the column the database actually lacks. Stripping
+            // client_key when merely product_name is missing would write the
+            // movement without its idempotency key, and the post-sale
+            // verification would then report a false mismatch.
+            val missingProductName = isUnknownColumnError(e, "product_name")
+            val missingClientKey = isUnknownColumnError(e, "client_key")
+            if (!missingProductName && !missingClientKey) throw e
+            supabase.from("stock_movements").insert(
+                saleMovementPayload(
+                    includeProductName = !missingProductName,
+                    includeClientKey = !missingClientKey,
+                ),
+            )
         }
     }
 
@@ -974,6 +1120,7 @@ class EmployeeRepository {
         val qty: Int,
         val sellingPricePerUnit: Double,
         val purchasePricePerUnit: Double = 0.0,
+        val is20Litre: Boolean = false,
     )
 
     suspend fun addProductCategory(cat: ProductCategory): ProductCategory {

@@ -53,6 +53,10 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.androidx.activity.compose) // needed for BackHandler
             implementation(libs.koin.android)
+            // FCM token fetch for outside-the-app push (guarded at runtime:
+            // no-ops without google-services.json). BOM is declared in the
+            // top-level dependencies block below.
+            implementation(libs.firebase.messaging)
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -64,7 +68,6 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
-            implementation(project.dependencies.platform(libs.supabase.bom))
             implementation(libs.supabase.postgrest)
             implementation(libs.supabase.auth)
             implementation(libs.supabase.realtime)
@@ -91,4 +94,8 @@ kotlin {
 
 dependencies {
     androidRuntimeClasspath(libs.compose.uiTooling)
+    // BOMs live here (top-level DependencyHandler): platform() is banned
+    // inside KMP source-set blocks since Kotlin 2.3 (KT-58759).
+    add("commonMainImplementation", platform(libs.supabase.bom))
+    add("androidMainImplementation", platform(libs.firebase.bom))
 }

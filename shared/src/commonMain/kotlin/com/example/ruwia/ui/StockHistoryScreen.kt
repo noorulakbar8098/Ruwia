@@ -35,7 +35,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.SystemBackHandler
+import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.findSaleForMovement
 import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.resolveMovementProductName
 import com.example.ruwia.presentation.AdminState
@@ -164,6 +166,7 @@ private fun epochMillisToDateStr(millis: Long): String {
 fun StockHistoryScreen(
     state: AdminState,
     onBack: () -> Unit,
+    onEditSale: (SaleEntry) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val movements = state.recentMovements
@@ -288,6 +291,7 @@ fun StockHistoryScreen(
                         onClick = { expandedId = if (isExpanded) null else m.id },
                     )
                     if (isExpanded) {
+                        val sale = findSaleForMovement(m, state.saleEntries)
                         ActivityDetailSheet(
                             movement = m,
                             employees = employees,
@@ -295,6 +299,7 @@ fun StockHistoryScreen(
                             border = NTColors.Border,
                             textPrimary = NTColors.TextPrimary,
                             textMuted = NTColors.TextTertiary,
+                            onEditSale = sale?.let { { onEditSale(it) } },
                         )
                         Spacer(Modifier.height(8.dp))
                     }

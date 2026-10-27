@@ -34,12 +34,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.ruwia.domain.CanBalancePreview
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.ProductCategory
+import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.StockMovement
+import com.example.ruwia.domain.canBalancePreview
 import com.example.ruwia.domain.effectiveStockMap
+import com.example.ruwia.domain.is20LitreCan
 import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.theme.RuwiaColor
+import com.example.ruwia.util.dbToDisplayDate
+import com.example.ruwia.util.isoToDisplayTime
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 import kotlinx.datetime.TimeZone
@@ -80,21 +86,30 @@ fun AddSaleScreen(
     /** True while a save is in flight — the Save button locks to prevent
      *  double-tap duplicate sales. */
     isSaving: Boolean = false,
-    /** Called when the employee taps "Save sale". The third arg is the number
-     *  of empty cans the employee collected from this customer at delivery.
-     *  The fourth arg is the selected sale date in display format (e.g. "29/09/2026").
-     *  The fifth arg is the selected sale time in display format (e.g. "2:30 PM").
-     *  The sixth arg is this draft's idempotency key: stable for the screen's
-     *  lifetime, so retried/double-tapped saves with the same key can never
-     *  deduct stock twice. The seventh arg is the shop the employee picked in
-     *  the shop selector — the movement lands in that shop's bucket. */
-    onSave: (customerName: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String, saleTime: String, saleKey: String, saleShop: String) -> Unit = { _, _, _, _, _, _, _ -> },
+    /** Called when the employee taps "Save sale". The second arg is the
+     *  selected customer's database id (required for the 20L can ledger).
+     *  The fourth arg is the number of empty 20L cans the employee collected
+     *  from this customer at delivery. The fifth arg is the selected sale date
+     *  in display format (e.g. "29/09/2026"). The sixth arg is the selected
+     *  sale time in display format (e.g. "2:30 PM"). The seventh arg is this
+     *  draft's idempotency key: stable for the screen's lifetime, so retried/
+     *  double-tapped saves with the same key can never deduct stock twice.
+     *  The eighth arg is the shop the employee picked in the shop selector —
+     *  the movement lands in that shop's bucket. */
+    onSave: (customerName: String, customerId: String, items: List<OutwardLineItem>, emptyCans: Int, saleDate: String, saleTime: String, saleKey: String, saleShop: String, paymentReceived: String, paymentMode: String) -> Unit = { _, _, _, _, _, _, _, _, _, _ -> },
     /** The employee's assigned shop (default selection). */
     shopName: String = "",
     /** All shops of the business, from the backend — drives the shop
      *  selector, so renames flow through automatically. */
     shops: List<String> = emptyList(),
+    /** Admin-only edit mode. Product, quantity, shop, date and payment stay
+     *  locked; only the customer may change. */
+    editingSale: SaleEntry? = null,
+    /** All line rows belonging to the sale being edited (same client key). */
+    editingSaleLines: List<SaleEntry> = emptyList(),
+    onSaveEdit: (customerName: String, customerId: String) -> Unit = { _, _ -> },
 ) {
+    val isEditing = editingSale != null
     val snackbarHostState = remember { SnackbarHostState() }
     /** Idempotency key for this sale draft (see onSave). */
     val saleKey = remember { Uuid.random().toString() }
@@ -122,33 +137,123 @@ fun AddSaleScreen(
     }
 
     val defaultProductIdx = if (products.isNotEmpty()) products.indices.last else 0
-    var lineItems by remember(products) {
+    val editingLines = remember(editingSale?.id, editingSaleLines, products) {
+        editingSaleLines.ifEmpty { listOfNotNull(editingSale) }.mapNotNull { sale ->
+            val idx = products.indexOfFirst { it.id == sale.productId }
+                .takeIf { it >= 0 }
+                ?: products.indexOfFirst { it.displayName == sale.productName }
+                    .takeIf { it >= 0 }
+                ?: return@mapNotNull null
+            val price = sale.sellingPricePerUnit.takeIf { it > 0 }
+                ?: products[idx].defaultSellPrice
+            OutwardLineItem(
+                productIdx = idx,
+                qty = sale.qty.coerceAtLeast(1),
+                sellPriceText = price.takeIf { it > 0 }?.toInt()?.toString().orEmpty(),
+            )
+        }
+    }
+    var lineItems by remember(products, editingLines) {
         // Only seed an initial line item if at least one product exists.
         // Otherwise the line-item renderer would crash trying to look up a
         // product in an empty list.
         mutableStateOf(
-            if (products.isNotEmpty()) {
-                val p = products.last()
-                listOf(
-                    OutwardLineItem(
-                        defaultProductIdx, 1,
-                        p.defaultSellPrice.let {
-                            if (it > 0) it.toInt().toString() else ""
-                        }
+            when {
+                isEditing -> editingLines
+                products.isNotEmpty() -> {
+                    val p = products.last()
+                    listOf(
+                        OutwardLineItem(
+                            defaultProductIdx, 1,
+                            p.defaultSellPrice.let {
+                                if (it > 0) it.toInt().toString() else ""
+                            }
+                        )
                     )
-                )
-            } else emptyList()
+                }
+                else -> emptyList()
+            }
         )
     }
-    var selectedCustomer   by remember { mutableStateOf(selectedCustomer) }
+    val customerProp = selectedCustomer
+    val editingCustomer = remember(editingSale?.id, editingSale?.customerId, editingSale?.customerName, customers) {
+        editingSale?.let { sale ->
+            customers.firstOrNull { sale.customerId != null && it.id == sale.customerId }
+                ?: customers.firstOrNull { it.name.equals(sale.customerName, ignoreCase = true) }
+        }
+    }
+    var selectedCustomer   by remember(editingSale?.id) {
+        mutableStateOf(editingCustomer ?: selectedCustomer)
+    }
     var showCustomerPicker by remember { mutableStateOf(false) }
     var editingLineIdx     by remember { mutableStateOf<Int?>(null) }
     var showProductPicker  by remember { mutableStateOf(false) }
     var productSearchQuery by remember { mutableStateOf("") }
-    /** Number of empty cans the employee collected from the customer at the
-     *  same time as delivering the new ones. Persists as an `inward` stock
-     *  movement so the admin can see returned empties immediately. */
+    /** Number of empty 20L cans the employee received from the customer at
+     *  delivery. Feeds both the shop's inward movement and the customer's
+     *  20L can ledger. */
     var emptyCansText      by remember { mutableStateOf("") }
+    var paymentReceivedText by remember { mutableStateOf("") }
+    var paymentMode        by remember { mutableStateOf("cash") }
+
+    // The picker optimistically selects a freshly created customer with a
+    // local id. Replace it with the real DB row as soon as it arrives so the
+    // can ledger always has a stable customer id to write against.
+    LaunchedEffect(customerProp?.id) {
+        val incoming = customerProp ?: return@LaunchedEffect
+        val current  = selectedCustomer
+        val incomingIsReal = incoming.id != null && !incoming.id.startsWith("local_")
+        val currentIsLocal = current?.id == null || current.id.startsWith("local_")
+        if (incomingIsReal && currentIsLocal &&
+            current?.name?.equals(incoming.name, ignoreCase = true) == true
+        ) {
+            selectedCustomer = incoming
+        }
+    }
+
+    LaunchedEffect(editingCustomer?.id) {
+        if (isEditing && editingCustomer != null) selectedCustomer = editingCustomer
+    }
+
+    // A return belongs to one customer; never carry the typed count across a
+    // customer switch.
+    LaunchedEffect(selectedCustomer?.id) {
+        emptyCansText = ""
+        paymentReceivedText = ""
+        paymentMode = "cash"
+    }
+
+    val liveSelectedCustomer = remember(selectedCustomer?.id, selectedCustomer?.name, customers) {
+        val selected = selectedCustomer ?: return@remember null
+        customers.firstOrNull { it.id != null && it.id == selected.id }
+            ?: customers.firstOrNull { it.name.equals(selected.name, ignoreCase = true) }
+            ?: selected
+    }
+    val previouslyOutstanding = liveSelectedCustomer?.cansHeld ?: 0
+    val issued20LCans = remember(lineItems, products) {
+        lineItems.sumOf { item ->
+            val product = products.getOrNull(item.productIdx)
+            if (product?.is20LitreCan() == true) item.qty else 0
+        }
+    }
+    val invoiceTotal = remember(lineItems, products, selectedCustomer?.id, customPrices) {
+        lineItems.sumOf { item ->
+            val product = products.getOrNull(item.productIdx) ?: return@sumOf 0.0
+            val custom = selectedCustomer?.id?.takeIf { it.isNotBlank() }?.let { cid ->
+                customPrices[product.id]?.takeIf { it > 0 } ?: getEffectivePrice(cid, product.id)
+            } ?: 0.0
+            val fallback = if (custom > 0) custom else product.defaultSellPrice
+            (item.sellPriceText.toDoubleOrNull() ?: fallback) * item.qty
+        }
+    }
+    val paidNow = paymentReceivedText.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+    val amountDue = (invoiceTotal - paidNow).coerceAtLeast(0.0)
+    val emptyCansReceived = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
+    val canPreview = canBalancePreview(
+        previouslyOutstanding = previouslyOutstanding,
+        newCansIssued = issued20LCans,
+        emptyCansReceived = emptyCansReceived,
+    )
 
     /** Effective per-unit price text for a product and the selected customer:
      *  the customer's custom price when one exists, else the product default. */
@@ -186,18 +291,29 @@ fun AddSaleScreen(
     } catch (_: Exception) { "" }
 
     val totalQty   = lineItems.sumOf { it.qty }
-    val isSaveEnabled = !isSaving && selectedCustomer != null && lineItems.isNotEmpty() && lineItems.all { it.qty > 0 }
+    val isSaveEnabled = !isSaving && selectedCustomer != null && lineItems.isNotEmpty() &&
+        (isEditing || lineItems.all { it.qty > 0 })
+    val displayDate = editingSale?.date?.takeIf { it.isNotBlank() }
+        ?.let(::dbToDisplayDate) ?: nowSaleDate()
+    val displayTime = editingSale?.createdAt?.takeIf { it.isNotBlank() }
+        ?.let(::isoToDisplayTime)?.takeIf { it.isNotBlank() } ?: nowSaleTime()
 
     // ── Shop selector ─────────────────────────────────────────────────────
     // The sale deducts the picked shop's bucket, so the employee chooses
     // Shop 1 / Shop 2 here instead of a static assignment. Options come from
     // the backend, so admin renames flow through; matching is key-based
     // (see shopMatchKey), so a rename never orphans the selection.
-    val shopOptions = remember(shopName, shops) {
-        (listOf(shopName) + shops)
+    val shopOptions = remember(shopName, shops, editingSale?.shopId) {
+        val source = if (isEditing) {
+            listOf(editingSale?.shopId.orEmpty().ifBlank { shopName })
+        } else {
+            listOf(shopName) + shops
+        }
+        source
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .distinctBy { shopMatchKey(it) }
+            .take(2)
             .takeIf { it.isNotEmpty() } ?: listOf("Shop 1")
     }
     // Keyless remember: background refreshes rebuild the options list every
@@ -205,7 +321,11 @@ fun AddSaleScreen(
     // default (selection looks stuck). The effect below only assigns when
     // there is no valid selection yet (first load / renamed away).
     var selectedShop by remember { mutableStateOf("") }
-    LaunchedEffect(shopName, shopOptions) {
+    LaunchedEffect(shopName, shopOptions, editingSale?.id) {
+        if (isEditing) {
+            selectedShop = shopOptions.firstOrNull().orEmpty()
+            return@LaunchedEffect
+        }
         val currentValid = selectedShop.isNotBlank() &&
             shopOptions.any { shopMatchKey(it) == shopMatchKey(selectedShop) }
         if (!currentValid) {
@@ -234,7 +354,18 @@ fun AddSaleScreen(
                     lineCount = lineItems.size,
                     totalQty = totalQty,
                     onCancel = onBack,
+                    saveLabel = if (isEditing) "Save Changes" else "Save Sale",
                     onSave   = {
+                        if (isEditing) {
+                            val customer = selectedCustomer ?: return@SaleBottomBar
+                            val customerId = liveSelectedCustomer?.id.orEmpty()
+                            if (customerId.isBlank() || customerId.startsWith("local_")) {
+                                errorDialogText = "Select a saved customer before saving this sale."
+                                return@SaleBottomBar
+                            }
+                            onSaveEdit(customer.name, customerId)
+                            return@SaleBottomBar
+                        }
                         val empties = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
                         // ── Stock validation ───────────────────────────────────
                         // Check each line item against available stock. Block the
@@ -251,6 +382,30 @@ fun AddSaleScreen(
                             errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cases\nAvailable: $availRaw Cases\n\nPlease reduce the quantity and try again."
                             return@SaleBottomBar
                         }
+                        // ── 20L can validation ─────────────────────────────
+                        // A return may never exceed the customer's outstanding
+                        // balance before this sale; new cans issued in this
+                        // entry do not increase the return limit.
+                        if (!canPreview.isWithinLimit) {
+                            errorDialogText = buildString {
+                                append("Cannot receive $emptyCansReceived empty 20L cans.\n\n")
+                                append("Previously outstanding: $previouslyOutstanding\n")
+                                append("New 20L cans in this sale: $issued20LCans\n")
+                                append("Maximum you can receive: ${canPreview.maxReturnable}")
+                            }
+                            return@SaleBottomBar
+                        }
+                        val customerId = liveSelectedCustomer?.id.orEmpty()
+                        if ((issued20LCans > 0 || empties > 0 || paidNow > 0.0) &&
+                            (customerId.isBlank() || customerId.startsWith("local_"))
+                        ) {
+                            errorDialogText = "This customer is still saving. Wait a moment, then tap Save Sale again."
+                            return@SaleBottomBar
+                        }
+                        if (paidNow > invoiceTotal + 0.001) {
+                            errorDialogText = "Payment received cannot be more than the sale total of ₹${invoiceTotal.toInt()}."
+                            return@SaleBottomBar
+                        }
                         // The picked shop travels with the save so the outward
                         // movement lands in that shop's bucket (never blank —
                         // a blank shop_name would orphan the row from every
@@ -258,7 +413,18 @@ fun AddSaleScreen(
                         val saleShop = selectedShop.ifBlank {
                             shopOptions.firstOrNull().orEmpty()
                         }
-                        onSave(selectedCustomer!!.name, lineItems, empties, nowSaleDate(), nowSaleTime(), saleKey, saleShop)
+                        onSave(
+                            selectedCustomer!!.name,
+                            customerId,
+                            lineItems,
+                            empties,
+                            nowSaleDate(),
+                            nowSaleTime(),
+                            saleKey,
+                            saleShop,
+                            paymentReceivedText,
+                            paymentMode,
+                        )
                     },
                 )
             },
@@ -295,7 +461,10 @@ fun AddSaleScreen(
                                         if (isSelected) RuwiaColor.TealPrimary else RuwiaColor.Divider,
                                         RoundedCornerShape(12.dp),
                                     )
-                                    .clickable(onClickLabel = "Sell from $option") {
+                                    .clickable(
+                                        enabled = !isEditing,
+                                        onClickLabel = "Sell from $option",
+                                    ) {
                                         selectedShop = option
                                     }
                                     .padding(vertical = 12.dp),
@@ -328,6 +497,7 @@ fun AddSaleScreen(
                     products      = products,
                     lineItems     = lineItems,
                     availableUnitsMap = availableUnitsMap,
+                    readOnly      = isEditing,
                     onChangeProduct = { lineIdx ->
                         editingLineIdx = lineIdx
                         showProductPicker  = true
@@ -359,38 +529,62 @@ fun AddSaleScreen(
                     Row(modifier = Modifier.fillMaxWidth()) {
                         SaleTimestampView(
                             icon    = Icons.Rounded.DateRange,
-                            label   = nowSaleDate(),
+                            label   = displayDate,
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(Modifier.width(10.dp))
                         SaleTimestampView(
                             icon    = Icons.Rounded.Schedule,
-                            label   = nowSaleTime(),
+                            label   = displayTime,
                             modifier = Modifier.weight(1f),
                         )
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Auto-recorded at entry time · not editable",
+                        if (isEditing) "Original entry time · not editable"
+                        else "Auto-recorded at entry time · not editable",
                         fontSize = 11.sp,
                         color = RuwiaColor.TextMuted,
                     )
                 }
                 Spacer(Modifier.height(20.dp))
 
-                // ── Section 4: Empty Cases collected ────────────
-                // Captures how many empty Cases the employee picked up from the
-                // customer at delivery time. Saved as an inward stock movement
-                // so the admin's stock dashboard reflects the returned empties.
-                EmptyCansSection(
-                    value = emptyCansText,
-                    onValueChange = { newVal ->
-                        if (newVal.all { it.isDigit() }) emptyCansText = newVal
-                    },
-                )
-                Spacer(Modifier.height(20.dp))
+                // ── Section 4: Customer 20L can ledger ──────────
+                // Shows the customer's live outstanding balance, the 20L cans
+                // issued in this sale, and the empties received. The returned
+                // count is applied only after a successful save.
+                if (!isEditing) {
+                    CanTrackingSection(
+                        customerName  = liveSelectedCustomer?.name ?: selectedCustomer?.name.orEmpty(),
+                        preview       = canPreview,
+                        value         = emptyCansText,
+                        onValueChange = { newVal ->
+                            if (newVal.length <= 5 && newVal.all { it.isDigit() }) {
+                                emptyCansText = newVal
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(20.dp))
+                }
 
-
+                // ── Section 5: Payment received ───────────────────
+                // Captures the amount of payment received from the customer
+                // at sale time.
+                if (!isEditing) {
+                    PaymentReceivedSection(
+                        value = paymentReceivedText,
+                        paid = paidNow,
+                        due = amountDue,
+                        mode = paymentMode,
+                        onValueChange = { newVal ->
+                            if (newVal.all { it.isDigit() } || newVal.isEmpty()) {
+                                paymentReceivedText = newVal
+                            }
+                        },
+                        onModeChange = { paymentMode = it },
+                    )
+                    Spacer(Modifier.height(20.dp))
+                }
             }
         }
 
@@ -627,6 +821,7 @@ private fun MultiProductSection(
     products: List<ProductCategory>,
     lineItems: List<OutwardLineItem>,
     availableUnitsMap: Map<String, Int> = emptyMap(),
+    readOnly: Boolean = false,
     onChangeProduct: (lineIdx: Int) -> Unit,
     onQtyChange: (lineIdx: Int, qty: Int) -> Unit,
     onRemove: (lineIdx: Int) -> Unit,
@@ -705,26 +900,29 @@ private fun MultiProductSection(
                 product      = product,
                 qty          = item.qty,
                 availableUnits = availableUnitsRaw,
-                showRemove   = lineItems.size > 1,
+                showRemove   = lineItems.size > 1 && !readOnly,
+                readOnly     = readOnly,
                 onProductTap = { onChangeProduct(idx) },
                 onQtyChange  = { onQtyChange(idx, it) },
                 onRemove     = { onRemove(idx) },
             )
         }
 
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.5.dp, RuwiaColor.TealLight, RoundedCornerShape(12.dp))
-                .clickable(onClick = onAdd)
-                .padding(vertical = 12.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment     = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Rounded.Add, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Add another product", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TealPrimary)
+        if (!readOnly) {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.5.dp, RuwiaColor.TealLight, RoundedCornerShape(12.dp))
+                    .clickable(onClick = onAdd)
+                    .padding(vertical = 12.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment     = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Add, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Add another product", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TealPrimary)
+            }
         }
     }
 }
@@ -736,11 +934,12 @@ private fun SaleLineCard(
     qty: Int,
     availableUnits: Int,
     showRemove: Boolean,
+    readOnly: Boolean = false,
     onProductTap: () -> Unit,
     onQtyChange: (Int) -> Unit,
     onRemove: () -> Unit,
 ) {
-    val isOverStock = qty > availableUnits
+    val isOverStock = !readOnly && qty > availableUnits
     val cardBorder  = if (isOverStock) Color(0xFFEF4444) else RuwiaColor.Divider
     val cardBg      = if (isOverStock) Color(0xFF3B1616) else RuwiaColor.Background
     Column(
@@ -766,7 +965,7 @@ private fun SaleLineCard(
                     .weight(1f)
                     .background(RuwiaColor.Surface, RoundedCornerShape(8.dp))
                     .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(8.dp))
-                    .clickable(onClick = onProductTap)
+                    .clickable(enabled = !readOnly, onClick = onProductTap)
                     .padding(horizontal = 10.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -777,7 +976,9 @@ private fun SaleLineCard(
                     fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary,
                     modifier = Modifier.weight(1f),
                 )
-                Icon(Icons.Rounded.SwapHoriz, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(14.dp))
+                if (!readOnly) {
+                    Icon(Icons.Rounded.SwapHoriz, null, tint = RuwiaColor.TextMuted, modifier = Modifier.size(14.dp))
+                }
             }
             if (showRemove) {
                 Spacer(Modifier.width(8.dp))
@@ -808,7 +1009,7 @@ private fun SaleLineCard(
                     .padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SaleStepBtn(Icons.Rounded.Remove, qty > 1) { onQtyChange(qty - 1) }
+                SaleStepBtn(Icons.Rounded.Remove, !readOnly && qty > 1) { onQtyChange(qty - 1) }
                 Box(modifier = Modifier.width(40.dp), contentAlignment = Alignment.Center) {
                     AnimatedContent(
                         targetState = qty,
@@ -835,11 +1036,12 @@ private fun SaleLineCard(
                         )
                     }
                 }
-                SaleStepBtn(Icons.Rounded.Add, qty < availableUnits) { onQtyChange(qty + 1) }
+                SaleStepBtn(Icons.Rounded.Add, !readOnly && qty < availableUnits) { onQtyChange(qty + 1) }
             }
         }
 
-        val availLabel = "$availableUnits Cases available"
+        val availLabel = if (readOnly) "Quantity is locked while editing"
+        else "$availableUnits Cases available"
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier
@@ -901,6 +1103,7 @@ private fun SaleBottomBar(
     isSaving: Boolean = false,
     lineCount: Int,
     totalQty: Int,
+    saveLabel: String = "Save Sale",
     onCancel: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -987,7 +1190,7 @@ private fun SaleBottomBar(
                     )
                 ) {
                     Text(
-                        if (isSaving) "Saving…" else "Save Sale",
+                        if (isSaving) "Saving…" else saveLabel,
                         fontSize = 14.sp, fontWeight = FontWeight.Bold
                     )
                 }
@@ -1031,15 +1234,138 @@ private fun SaleStepBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, e
     ) { Icon(icon, null, tint = if (enabled) RuwiaColor.TextSecondary else RuwiaColor.TextMuted, modifier = Modifier.size(16.dp)) }
 }
 
-// ── Empty Cases section ────────────────────────────────────────────────────────
-//   Asks the employee how many empty Cases they picked up from this customer at
-//   delivery time. Stored as an `inward` stock movement so the admin's stock
-//   dashboard reflects returned empties immediately.
+// ── Customer 20L can ledger section ───────────────────────────────────────────
+//   Shows the customer's live outstanding 20L cans, the cans issued in this
+//   sale, and the empties received. The returned count is only applied to the
+//   customer balance after the sale saves successfully.
 
 @Composable
-private fun EmptyCansSection(
+private fun CanTrackingSection(
+    customerName: String,
+    preview: CanBalancePreview,
     value: String,
     onValueChange: (String) -> Unit,
+) {
+    val canEdit = preview.maxReturnable > 0
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(RuwiaColor.Surface, RoundedCornerShape(16.dp))
+            .padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(RuwiaColor.TealExtraLight, RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Inventory2, null, tint = RuwiaColor.TealPrimary, modifier = Modifier.size(20.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("20L Can Summary", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
+                Text(customerName, fontSize = 11.sp, color = RuwiaColor.TextMuted)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+
+        CanSummaryRow("Previously outstanding", "${preview.previouslyOutstanding} cans")
+        Spacer(Modifier.height(6.dp))
+        CanSummaryRow("New 20L cans issued", "${preview.newCansIssued} cans")
+        Spacer(Modifier.height(14.dp))
+
+        Text("Empty 20L Cans Received", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(RuwiaColor.LightGray, RoundedCornerShape(12.dp))
+                .border(1.dp, RuwiaColor.Divider, RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Rounded.Recycling,
+                null,
+                tint = if (canEdit) RuwiaColor.TextPrimary else RuwiaColor.TextMuted,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(modifier = Modifier.weight(1f)) {
+                if (value.isEmpty()) {
+                    Text("0", fontSize = 16.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Bold)
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    enabled = canEdit,
+                    textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RuwiaColor.TextPrimary),
+                    cursorBrush = SolidColor(RuwiaColor.TealPrimary),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Text("Cans", fontSize = 11.sp, color = RuwiaColor.TextSecondary)
+        }
+
+        if (!preview.isWithinLimit) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Only ${preview.maxReturnable} can(s) can be returned for this customer.",
+                fontSize = 11.sp,
+                color = Color(0xFFC0392B),
+                fontWeight = FontWeight.SemiBold,
+            )
+        } else if (!canEdit) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "No outstanding 20L cans to return.",
+                fontSize = 11.sp,
+                color = RuwiaColor.TextMuted,
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
+        HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.7f))
+        Spacer(Modifier.height(12.dp))
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Outstanding after this transaction",
+                fontSize = 12.sp,
+                color = RuwiaColor.TextSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "${preview.outstandingAfter} cans",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Black,
+                color = RuwiaColor.TealDark,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CanSummaryRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 12.sp, color = RuwiaColor.TextSecondary, modifier = Modifier.weight(1f))
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary)
+    }
+}
+// ── Payment Received section ────────────────────────────────────────
+//   Asks the employee how much payment they received from the customer at
+//   sale time. Stored in the sale_entries.payment_received column.
+
+@Composable
+private fun PaymentReceivedSection(
+    value: String,
+    paid: Double,
+    due: Double,
+    mode: String,
+    onValueChange: (String) -> Unit,
+    onModeChange: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -1049,8 +1375,8 @@ private fun EmptyCansSection(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Empty Cases collected", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
-                Text("Returned by this customer at delivery", fontSize = 11.sp, color = RuwiaColor.TextMuted)
+                Text("Payment Received", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextPrimary)
+                Text("Amount received from customer at sale time", fontSize = 11.sp, color = RuwiaColor.TextMuted)
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -1063,7 +1389,7 @@ private fun EmptyCansSection(
                 .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Rounded.Recycling, null, tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
+            Icon(Icons.Rounded.Money, null, tint = RuwiaColor.TextPrimary, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
             Box(modifier = Modifier.weight(1f)) {
                 if (value.isEmpty()) {
@@ -1079,7 +1405,52 @@ private fun EmptyCansSection(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Text("Cases", fontSize = 11.sp, color = RuwiaColor.TextSecondary)
+            Text("Amount", fontSize = 11.sp, color = RuwiaColor.TextSecondary)
         }
+
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PaymentSummaryCell("Paid", "₹${paid.toInt()}", RuwiaColor.TealPrimary, Modifier.weight(1f))
+            PaymentSummaryCell("Due", "₹${due.toInt()}", Color(0xFFD9534F), Modifier.weight(1f))
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("cash" to "Cash", "upi" to "UPI", "card" to "Card").forEach { (key, label) ->
+                val selected = mode == key
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(if (selected) RuwiaColor.TealPrimary else RuwiaColor.LightGray)
+                        .clickable { onModeChange(key) }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        label,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (selected) Color.White else RuwiaColor.TextSecondary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaymentSummaryCell(
+    label: String,
+    value: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .background(RuwiaColor.LightGray, RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Text(label, fontSize = 10.sp, color = RuwiaColor.TextMuted, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(2.dp))
+        Text(value, fontSize = 14.sp, color = color, fontWeight = FontWeight.Bold)
     }
 }

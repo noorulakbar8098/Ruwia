@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS customers (id UUID DEFAULT uuid_generate_v4() PRIMARY
 CREATE TABLE IF NOT EXISTS orders (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, customer_id UUID, qty INT, status TEXT, employee_id UUID, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS employees (id UUID PRIMARY KEY, name TEXT, phone TEXT, status TEXT, role TEXT, shop_name TEXT, completed_deliveries INT, total_deliveries INT, monthly_salary DECIMAL, rating DECIMAL, today_stat INT, stat_label TEXT, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS stock_movements (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, source TEXT, qty INT, type TEXT, shop_name TEXT, employee_id UUID, product_id UUID, created_at TIMESTAMPTZ);
-CREATE TABLE IF NOT EXISTS sale_entries (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, date TEXT, customer_name TEXT, product_id TEXT, product_name TEXT, qty INT, purchase_price_per_unit DECIMAL, selling_price_per_unit DECIMAL, sales_margin_per_unit DECIMAL, total_selling DECIMAL, total_margin DECIMAL, shop_id TEXT, employee_id UUID, created_at TIMESTAMPTZ);
+CREATE TABLE IF NOT EXISTS sale_entries (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, date TEXT, customer_name TEXT, product_id TEXT, product_name TEXT, qty INT, purchase_price_per_unit DECIMAL, selling_price_per_unit DECIMAL, sales_margin_per_unit DECIMAL, total_selling DECIMAL, total_margin DECIMAL, shop_id TEXT, employee_id UUID, payment_received TEXT, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS monthly_expenses (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, month TEXT, shop_id TEXT, shop_rent DECIMAL, admin_salary DECIMAL, delivery_staff DECIMAL, miscellaneous DECIMAL, bike_expense DECIMAL, custom_expenses TEXT, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS outward (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, order_id UUID, customer_id UUID, qty_delivered INT, qty_empty_returned INT, rate DECIMAL, employee_id UUID, created_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS payments (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY, customer_id UUID, amount DECIMAL, mode TEXT, created_at TIMESTAMPTZ);
@@ -197,6 +197,7 @@ SELECT migrate_to_tenant_table('customer_product_prices');
 ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS product_name TEXT;
 ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS client_key TEXT;
 ALTER TABLE sale_entries ADD COLUMN IF NOT EXISTS client_key TEXT;
+ALTER TABLE sale_entries ADD COLUMN IF NOT EXISTS payment_received TEXT;
 
 -- Special case: Profiles RLS
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;

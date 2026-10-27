@@ -41,10 +41,12 @@ import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.CustomerProductPrice
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.ProductCategory
+import com.example.ruwia.domain.SaleEntry
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.canonicalShopName
 import com.example.ruwia.domain.effectiveStockMap
+import com.example.ruwia.domain.findSaleForMovement
 import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.resolveMovementProductName
 import com.example.ruwia.domain.netStockPerProductAllShops
@@ -113,6 +115,7 @@ fun StockInventoryScreen(
     onSaveCustomerPrice: (CustomerProductPrice) -> Unit = {},
     onLoadCustomerPrices: (productId: String) -> Unit = {},
     onDeleteCustomerPrice: (customerId: String, productId: String) -> Unit = { _, _ -> },
+    onEditSale: (SaleEntry) -> Unit = {},
     /** View-only mode (employee app): same UI, every editing affordance removed. */
     readOnly: Boolean = false,
     contentPadding: PaddingValues = PaddingValues(),
@@ -492,6 +495,8 @@ fun StockInventoryScreen(
                             movements = recentMovements,
                             products = products,
                             employees = state.employees,
+                            saleEntries = state.saleEntries,
+                            onEditSale = onEditSale,
                             salesByProduct = remember(state.saleEntries) {
                                 state.saleEntries.groupBy { it.productId }
                                     .mapValues { (_, rows) -> rows.firstOrNull()?.productName.orEmpty() }
@@ -1351,6 +1356,8 @@ private fun RecentActivityFeed(
     movements: List<StockMovement>,
     products: List<ProductCategory>,
     employees: List<EmployeeInfo>,
+    saleEntries: List<SaleEntry> = emptyList(),
+    onEditSale: (SaleEntry) -> Unit = {},
     salesByProduct: Map<String, String> = emptyMap(),
 ) {
     // Accordion state: only one entry is open at a time. Clicking an open entry
@@ -1389,9 +1396,11 @@ private fun RecentActivityFeed(
                 )
 
                 if (isExpanded) {
+                    val sale = findSaleForMovement(m, saleEntries)
                     ActivityDetailSheet(
                         movement = m,
                         employees = employees,
+                        onEditSale = sale?.let { { onEditSale(it) } },
                     )
                     Spacer(Modifier.height(4.dp))
                 }
@@ -1520,6 +1529,7 @@ internal fun ActivityDetailSheet(
     border: Color = SaaSColors.Border,
     textPrimary: Color = SaaSColors.TextPrimary,
     textMuted: Color = SaaSColors.TextMuted,
+    onEditSale: (() -> Unit)? = null,
 ) {
     val isAdd = movement.type == "inward"
     val isReturn = movement.source.isNotEmpty() && movement.source.isEmptyCansSource()
@@ -1588,6 +1598,19 @@ internal fun ActivityDetailSheet(
                 )
             }
             if (i < rows.lastIndex) Spacer(Modifier.height(6.dp))
+        }
+        if (onEditSale != null) {
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = onEditSale,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, border),
+            ) {
+                Icon(Icons.Rounded.Edit, null, tint = textPrimary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Edit sale", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = textPrimary)
+            }
         }
     }
 }

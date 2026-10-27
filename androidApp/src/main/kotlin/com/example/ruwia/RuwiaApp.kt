@@ -2,6 +2,7 @@ package com.example.ruwia
 
 import android.app.Application
 import com.example.ruwia.data.initKoinAndroid
+import com.example.ruwia.data.refreshPushToken
 import com.example.ruwia.data.initSupabaseClient
 import com.example.ruwia.data.reportEffectiveServiceKey
 
@@ -29,6 +30,9 @@ class RuwiaApp : Application() {
         // AndroidX Startup (SupabaseInitializer) runs before this — via ContentProviders —
         // so appContext is guaranteed to be set when Supabase initializes.
         initKoinAndroid(this)
+        // Registers this device for outside-the-app push when a session
+        // exists (restored login). No-ops without google-services.json.
+        refreshPushToken()
     }
 }
 

@@ -33,7 +33,6 @@ import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
 import com.example.ruwia.appVersionLabel
 import com.example.ruwia.presentation.AdminState
-import com.example.ruwia.presentation.toDashboardMetrics
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import com.example.ruwia.ui.dashboard.*
 import com.example.ruwia.util.capitalizeWords
@@ -51,9 +50,10 @@ fun SettingsScreen(
     onNavigateToEmployees: () -> Unit,
     onNavigateToPricing: () -> Unit,
     onNavigateToCustomers: () -> Unit = {},
+    onOpenReceivables: () -> Unit = {},
     onLogout: () -> Unit,
     onResetEmptyCases: () -> Unit = {},
-    onAddEmptyCases: (Int) -> Unit = {},
+    onOpenReceiveEmptyCans: () -> Unit = {},
     onShopNameChange: (Int, String) -> Unit = { _, _ -> },
     contentPadding: PaddingValues = PaddingValues()
 ) {
@@ -63,7 +63,6 @@ fun SettingsScreen(
     var autoBackup   by remember { mutableStateOf(true) }
     var darkMode     by remember { mutableStateOf(NTColors.isDarkMode) }
     var showResetDialog  by remember { mutableStateOf(false) }
-    var showAddEmptyDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var isLoggingOut   by remember { mutableStateOf(false) }
     var shopOneName    by remember { mutableStateOf(state.shopNames.getOrNull(0).orEmpty()) }
@@ -82,19 +81,6 @@ fun SettingsScreen(
     val shopCount  = state.shopStocks.size.coerceAtLeast(2)
     val staffCount = state.employees.count { it.status != "inactive" }
     val custCount  = state.customers.size
-    // Live Empty Cases figure for the stepper dialog (same source as dashboards).
-    val liveEmptyCases = remember(state) { state.toDashboardMetrics().emptyCansAtShop }
-
-    if (showAddEmptyDialog) {
-        EmptyCasesStepperDialog(
-            currentCount = liveEmptyCases,
-            onDismiss    = { showAddEmptyDialog = false },
-            onConfirm    = { qty ->
-                showAddEmptyDialog = false
-                onAddEmptyCases(qty)
-            },
-        )
-    }
 
     if (showResetDialog) {
         AlertDialog(
@@ -273,12 +259,21 @@ fun SettingsScreen(
                         )
                         SettingsDivider()
                         SettingsNavItem(
-                            icon = Icons.Rounded.AddBox,
+                            icon = Icons.Rounded.AccountBalanceWallet,
                             iconBg = NTColors.SurfaceVar,
                             iconFg = NTColors.TextSecondary,
-                            title = "Add Empty Cases",
-                            subtitle = "$liveEmptyCases available · record returned cases",
-                            onClick = { showAddEmptyDialog = true }
+                            title = "Payments & Dues",
+                            subtitle = "Customer ledger, collections and outstanding balances",
+                            onClick = onOpenReceivables
+                        )
+                        SettingsDivider()
+                        SettingsNavItem(
+                            icon = Icons.Rounded.Recycling,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
+                            title = "Receive Empty Cans",
+                            subtitle = "Customers holding 20L cans · record returns",
+                            onClick = onOpenReceiveEmptyCans
                         )
                         SettingsDivider()
                         SettingsNavItem(

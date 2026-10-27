@@ -56,6 +56,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.is20LitreCan
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
 import ruwia.shared.generated.resources.app_icon
@@ -102,6 +103,7 @@ private sealed class EmpScreen {
     object AddInward : EmpScreen()
     object AddSale   : EmpScreen()
     object Profile   : EmpScreen()
+    object Notifications : EmpScreen()
 }
 
 // ── Main composable ───────────────────────────────────────────────────────────
@@ -147,13 +149,18 @@ fun EmployeeDashboardScreen(
     var showLogoutDialog by remember { mutableStateOf(false) }
     var isLoggingOut by remember { mutableStateOf(false) }
     var isSubmittingAction by remember { mutableStateOf(false) }
-    var showAddEmptyCasesDialog by remember { mutableStateOf(false) }
+    var showReceiveEmptyCansDialog by remember { mutableStateOf(false) }
     var selectedCustomerForSale by remember { mutableStateOf<Customer?>(null) }
 
     LaunchedEffect(state.loading, state.error) {
         if (isSubmittingAction && !state.loading) {
             if (state.error == null) {
-                screen = EmpScreen.Home
+                if (showReceiveEmptyCansDialog) {
+                    showReceiveEmptyCansDialog = false
+                    snackbarHostState.showSnackbar("Empty cans recorded")
+                } else {
+                    screen = EmpScreen.Home
+                }
                 isSubmittingAction = false
             } else {
                 isSubmittingAction = false
@@ -248,14 +255,15 @@ fun EmployeeDashboardScreen(
                 // movement log + the employee's assigned shop. shop_stocks
                 // may be empty (unconfigured), so movements are the source
                 // that guarantees both shops actually appear.
-                val saleShops = remember(state.shopStocks, state.shopMovements, shopPart) {
-                    (state.shopStocks.map { it.name } +
-                        state.shopMovements.map { it.shopName } +
-                        shopPart)
+                val saleShops = remember(state.shopStocks, shopPart) {
+                    val configured = com.example.ruwia.domain.resolveShopNames(state.shopStocks)
+                    (listOf(shopPart) + configured)
                         .map { it.trim() }
                         .filter { it.isNotBlank() }
                         .distinctBy { com.example.ruwia.domain.shopMatchKey(it) }
-                        .takeIf { it.isNotEmpty() } ?: listOf("Shop 1", "Shop 2")
+                        .take(2)
+                        .takeIf { it.isNotEmpty() }
+                        ?: com.example.ruwia.domain.defaultShopNames()
                 }
                 AddSaleScreen(
                     products      = state.productCategories,
@@ -273,18 +281,17 @@ fun EmployeeDashboardScreen(
                             ?: 0.0
                     },
                     errorMessage  = state.error,
-                    onNewCustomer = { vm.addCustomer(it) },
+                    onNewCustomer = { vm.addCustomer(it) { saved -> selectedCustomerForSale = saved } },
                     onClearError  = vm::clearError,
                     onBack        = { screen = EmpScreen.Home },
                     shopName      = shopPart,
                     shops         = saleShops,
                     isSaving      = isSubmittingAction,
-                    onSave        = { customerName, items, emptyCans, saleDate, saleTime, saleKey, saleShop ->
+                    onSave        = { customerName, customerId, items, emptyCans, saleDate, saleTime, saleKey, saleShop, paymentReceived, paymentMode ->
                         // Persist the sale: each line item creates one sale_entries
                         // row and outward stock movement(s) in the picked shop's
                         // bucket; any empties picked up from the customer become
-                        // an inward movement (visible to the admin on the stock
-                        // dashboard).
+                        // an inward movement plus a customer 20L ledger return.
                         val saleShop = saleShop.trim().ifBlank { shopPart }
                         // sale_entries.date is a YYYY-MM-DD day bucket (all filters,
                         // grouping and charts compare on that prefix). Never append
@@ -301,18 +308,38 @@ fun EmployeeDashboardScreen(
                                 qty                  = item.qty,
                                 sellingPricePerUnit  = sellPricePerUnit,
                                 purchasePricePerUnit = if (product.purchasePrice > 0) product.purchasePrice else product.purchasePriceGC,
+                                is20Litre            = product.is20LitreCan(),
                             )
                         }
+                        // A newly created customer is selected optimistically
+                        // with a local id. Resolve the real DB row by name so
+                        // the can ledger always has a stable customer id.
+                        val resolvedCustomerId = customerId
+                            .takeIf { it.isNotBlank() && !it.startsWith("local_") }
+                            ?: state.customers.firstOrNull {
+                                it.name.equals(customerName, ignoreCase = true) &&
+                                    !it.id.isNullOrBlank() &&
+                                    !it.id.startsWith("local_")
+                            }?.id.orEmpty()
+                        val touches20LCans = emptyCans > 0 || lines.any { it.is20Litre }
+                        val paysNow = (paymentReceived.trim().toDoubleOrNull() ?: 0.0) > 0.0
                         if (lines.isNotEmpty()) {
-                            isSubmittingAction = true
-                            vm.addOutwardSale(
-                                customerName       = customerName,
-                                shopName           = saleShop,
-                                lines              = lines,
-                                emptyCansCollected = emptyCans,
-                                saleDate           = saleDay,
-                                clientSaleKey      = saleKey,
-                            )
+                            if ((touches20LCans || paysNow) && resolvedCustomerId.isBlank()) {
+                                vm.reportError("This customer is still saving. Wait a moment, then tap Save Sale again.")
+                            } else {
+                                isSubmittingAction = true
+                                vm.addOutwardSale(
+                                    customerName       = customerName,
+                                    shopName           = saleShop,
+                                    lines              = lines,
+                                    emptyCansCollected = emptyCans,
+                                    saleDate           = saleDay,
+                                    clientSaleKey      = saleKey,
+                                    paymentReceived    = paymentReceived,
+                                    paymentMode        = paymentMode,
+                                    customerId         = resolvedCustomerId,
+                                )
+                            }
                         }
                     },
                 )
@@ -321,6 +348,16 @@ fun EmployeeDashboardScreen(
                 if (isSubmittingAction && state.loading) {
                     SaaSLoadingOverlay(message = "Saving Sale")
                 }
+            }
+
+            EmpScreen.Notifications -> {
+                NotificationsScreen(
+                    notifications = state.notifications,
+                    unreadCount = state.unreadNotifications,
+                    onBack = { screen = EmpScreen.Home },
+                    onMarkRead = vm::markNotificationRead,
+                    onMarkAllRead = vm::markAllNotificationsRead,
+                )
             }
 
             EmpScreen.Profile -> {
@@ -425,8 +462,9 @@ fun EmployeeDashboardScreen(
                             onLogout       = { showLogoutDialog = true },
                             onAddInward    = { screen = EmpScreen.AddInward },
                             onAddSale      = { screen = EmpScreen.AddSale },
-                            onAddEmptyCases = { showAddEmptyCasesDialog = true },
+                            onReturnCans   = { showReceiveEmptyCansDialog = true },
                             onProfileClick = { screen = EmpScreen.Profile },
+                            onNotificationsClick = { screen = EmpScreen.Notifications },
                             onTabSelected  = { selectedTab = it },
                             contentPadding = padding,
                         )
@@ -434,13 +472,21 @@ fun EmployeeDashboardScreen(
                     }
                 }
 
-                if (showAddEmptyCasesDialog) {
-                    EmptyCasesStepperDialog(
-                        currentCount = liveEmptyCases(state).toInt(),
-                        onDismiss    = { showAddEmptyCasesDialog = false },
-                        onConfirm    = { qty ->
-                            showAddEmptyCasesDialog = false
-                            vm.addEmptyCases(qty)
+                if (showReceiveEmptyCansDialog) {
+                    ReceiveEmptyCansDialog(
+                        customers   = state.customers,
+                        shopOptions = listOf(parsedShopName),
+                        initialShop = parsedShopName,
+                        isSaving    = isSubmittingAction,
+                        onDismiss   = { if (!isSubmittingAction) showReceiveEmptyCansDialog = false },
+                        onConfirm   = { customerId, qty, referenceKey, shopName ->
+                            isSubmittingAction = true
+                            vm.recordEmptyCanReturn(
+                                customerId   = customerId,
+                                qty          = qty,
+                                referenceKey = referenceKey,
+                                shopName     = shopName,
+                            )
                         },
                     )
                 }
@@ -518,8 +564,9 @@ private fun EmployeeHomeContent(
     onLogout: () -> Unit,
     onAddInward: () -> Unit,
     onAddSale: () -> Unit,
-    onAddEmptyCases: () -> Unit,
+    onReturnCans: () -> Unit,
     onProfileClick: () -> Unit,
+    onNotificationsClick: () -> Unit = {},
     onTabSelected: (Int) -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -564,6 +611,8 @@ private fun EmployeeHomeContent(
                     shopInfo       = shopInfo,
                     onLogout       = onLogout,
                     onProfileClick = onProfileClick,
+                    onNotificationsClick = onNotificationsClick,
+                    unreadCount    = state.unreadNotifications,
                 )
                 Spacer(Modifier.height(20.dp))
             }
@@ -595,10 +644,10 @@ private fun EmployeeHomeContent(
         item {
             QuickActionGrid(
                 onRecordSale      = onAddSale,
-                onReturnEmptyCans = onAddInward,
+                onAddInward       = onAddInward,
+                onReturnCans      = onReturnCans,
                 onViewStock       = { onTabSelected(2) },
                 onHistory         = { onTabSelected(1) },
-                onAddEmptyCases   = onAddEmptyCases,
                 modifier          = Modifier.padding(horizontal = 20.dp)
             )
             Spacer(Modifier.height(24.dp))
@@ -685,7 +734,9 @@ private fun EmpHeader(
     name: String,
     shopInfo: String = "",
     onLogout: () -> Unit,
-    onProfileClick: () -> Unit
+    onProfileClick: () -> Unit,
+    onNotificationsClick: () -> Unit = {},
+    unreadCount: Int = 0,
 ) {
     val greeting = remember {
         try {
@@ -768,21 +819,42 @@ private fun EmpHeader(
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(NTDp.radMd))
-                        .background(Color.White.copy(alpha = 0.08f))
-                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(NTDp.radMd))
-                        .clickable(onClick = onProfileClick),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Rounded.Notifications,
-                        contentDescription = "Notifications",
-                        tint = Color.White,
-                        modifier = Modifier.size(NTDp.iconMd),
-                    )
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(NTDp.radMd))
+                            .background(Color.White.copy(alpha = 0.08f))
+                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(NTDp.radMd))
+                            .clickable(onClick = onNotificationsClick),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Notifications,
+                            contentDescription = "Notifications",
+                            tint = Color.White,
+                            modifier = Modifier.size(NTDp.iconMd),
+                        )
+                    }
+                    if (unreadCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 2.dp, y = (-2).dp)
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFEF4444))
+                                .border(1.5.dp, NTColors.PrimaryDeep, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = if (unreadCount > 9) "9+" else "$unreadCount",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -914,10 +986,10 @@ private fun StockItemSmallCol(
 @Composable
 private fun QuickActionGrid(
     onRecordSale: () -> Unit,
-    onReturnEmptyCans: () -> Unit,
+    onAddInward: () -> Unit,
+    onReturnCans: () -> Unit,
     onViewStock: () -> Unit,
     onHistory: () -> Unit,
-    onAddEmptyCases: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -936,9 +1008,9 @@ private fun QuickActionGrid(
                 color = NTColors.Primary
             )
             QuickActionCard(
-                icon = Icons.Rounded.Autorenew,
-                title = "Return Cases",
-                onClick = onReturnEmptyCans,
+                icon = Icons.Rounded.Recycling,
+                title = "Return Case",
+                onClick = onReturnCans,
                 modifier = Modifier.weight(1f),
                 color = NTColors.Warning
             )
@@ -948,29 +1020,29 @@ private fun QuickActionGrid(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             QuickActionCard(
+                icon = Icons.Rounded.Add,
+                title = "Add Inward",
+                onClick = onAddInward,
+                modifier = Modifier.weight(1f),
+                color = NTColors.Success
+            )
+            QuickActionCard(
                 icon = Icons.Rounded.Inventory2,
                 title = "View Stock",
                 onClick = onViewStock,
                 modifier = Modifier.weight(1f),
                 color = NTColors.Info
             )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             QuickActionCard(
                 icon = Icons.Rounded.History,
                 title = "History",
                 onClick = onHistory,
                 modifier = Modifier.weight(1f),
                 color = NTColors.Accent
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            QuickActionCard(
-                icon = Icons.Rounded.Add,
-                title = "Add Empty Cases",
-                onClick = onAddEmptyCases,
-                modifier = Modifier.weight(1f),
-                color = NTColors.Success
             )
         }
     }

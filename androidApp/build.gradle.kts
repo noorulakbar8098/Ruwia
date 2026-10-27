@@ -6,6 +6,17 @@ plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
+    // On the classpath only (not applied): the marker must resolve for the
+    // conditional apply() below to find the plugin id.
+    alias(libs.plugins.googleServices) apply false
+}
+
+// Outside-the-app push (FCM) activates only once google-services.json is in
+// place (Firebase console → Android app → download here). Until then the app
+// builds and runs normally — just without system push. In-app notifications
+// work regardless.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 kotlin {
@@ -17,6 +28,10 @@ dependencies {
     implementation(projects.shared)
 
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.core.ktx)
+
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
 
     implementation(libs.compose.uiToolingPreview)
     debugImplementation(libs.compose.uiTooling)
