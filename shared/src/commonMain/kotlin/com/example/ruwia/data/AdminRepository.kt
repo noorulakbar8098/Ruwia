@@ -3,6 +3,7 @@ package com.example.ruwia.data
 import com.example.ruwia.domain.AppSetting
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.CustomerLedger
+import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.Order
@@ -1348,8 +1349,6 @@ class AdminRepository {
         }
     }
 
-
-
     suspend fun assignEmployee(orderId: String, employeeId: String) {
         try {
             supabase.from("orders").update(buildJsonObject { put("employee_id", employeeId) }) {
@@ -1544,6 +1543,93 @@ class AdminRepository {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    // ── Delivery Tasks ─────────────────────────────────────────────────────────
+
+    suspend fun getDeliveryTasks(): List<DeliveryTask> {
+        return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
+            supabase.from("route_tasks")
+                .select {
+                    filter { eq("admin_id", adminId) }
+                    order("scheduled_date", SortOrder.DESCENDING)
+                    limit(500)
+                }
+                .decodeList<DeliveryTask>()
+        } catch (_: Exception) { emptyList() }
+    }
+
+    suspend fun createDeliveryTask(
+        customerId: String,
+        customerName: String,
+        customerAddress: String,
+        customerPhone: String,
+        employeeId: String,
+        productId: String,
+        productName: String,
+        quantity: Int,
+        deliveryDate: String,
+    ): DeliveryTask {
+        val adminId = supabase.auth.currentUserOrNull()?.id ?: throw IllegalStateException("Not logged in")
+        val payload = buildJsonObject {
+            put("admin_id", adminId)
+            put("customer_id", customerId)
+            put("customer_name", customerName)
+            put("address", customerAddress)
+            put("customer_address", customerAddress)
+            put("phone", customerPhone)
+            put("employee_id", employeeId)
+            put("employee_name", supabase.from("employees")
+                .select { filter { eq("id", employeeId) } }
+                .decodeList<com.example.ruwia.domain.EmployeeInfo>()
+                .firstOrNull()?.name ?: "")
+            put("product_id", productId)
+            put("product_name", productName)
+            put("can_qty", quantity)
+            put("scheduled_date", deliveryDate)
+            put("delivery_date", deliveryDate)
+            put("eta_text", "")
+            put("status", "pending")
+        }
+        val created = supabase.from("route_tasks")
+            .insert(payload)
+            .decodeSingle<DeliveryTask>()
+        return created
+    }
+
+    suspend fun updateDeliveryTaskStatus(taskId: String, status: String): DeliveryTask? {
+        return try {
+            supabase.from("route_tasks")
+                .update(buildJsonObject { put("status", status) }) {
+                    filter { eq("id", taskId) }
+                }
+                .decodeSingleOrNull<DeliveryTask>()
+        } catch (_: Exception) { null }
+    }
+
+    suspend fun getDeliveryTasksForEmployee(employeeId: String): List<DeliveryTask> {
+        return try {
+            val adminId = supabase.from("profiles")
+                .select { filter { eq("id", employeeId) } }
+                .decodeSingleOrNull<Profile>()
+                ?.adminId ?: supabase.from("employees")
+                .select { filter { eq("id", employeeId) } }
+                .decodeSingleOrNull<kotlinx.serialization.json.JsonObject>()
+                ?.get("admin_id")
+                ?.let { if (it is kotlinx.serialization.json.JsonPrimitive) it.content else null }
+            if (employeeId.isBlank()) return emptyList()
+            supabase.from("route_tasks")
+                .select {
+                    filter {
+                        eq("employee_id", employeeId)
+                        if (adminId != null) eq("admin_id", adminId)
+                    }
+                    order("scheduled_date", SortOrder.ASCENDING)
+                    limit(500)
+                }
+                .decodeList<DeliveryTask>()
+        } catch (_: Exception) { emptyList() }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

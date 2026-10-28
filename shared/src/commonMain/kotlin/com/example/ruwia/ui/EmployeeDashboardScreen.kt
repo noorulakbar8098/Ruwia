@@ -100,6 +100,7 @@ private fun StockMovement.toEntryDisplay(): EntryDisplay = EntryDisplay(
 
 private sealed class EmpScreen {
     object Home      : EmpScreen()
+    object Tasks     : EmpScreen()
     object AddInward : EmpScreen()
     object AddSale   : EmpScreen()
     object Profile   : EmpScreen()
@@ -383,6 +384,19 @@ fun EmployeeDashboardScreen(
                 )
             }
 
+            EmpScreen.Tasks -> {
+                EmployeeTasksScreen(
+                    tasks = state.tasks,
+                    onBack = { screen = EmpScreen.Home },
+                    onMarkDone = { taskId -> vm.updateTaskStatus(taskId, "completed") },
+                    onComplete = { task ->
+                        vm.selectTask(task)
+                        screen = EmpScreen.Home
+                    },
+                    contentPadding = PaddingValues(0.dp),
+                )
+            }
+
             EmpScreen.Home -> {
                 Scaffold(
                     containerColor = NTColors.Background,
@@ -465,6 +479,7 @@ fun EmployeeDashboardScreen(
                             onReturnCans   = { showReceiveEmptyCansDialog = true },
                             onProfileClick = { screen = EmpScreen.Profile },
                             onNotificationsClick = { screen = EmpScreen.Notifications },
+                            onViewTasks    = { screen = EmpScreen.Tasks },
                             onTabSelected  = { selectedTab = it },
                             contentPadding = padding,
                         )
@@ -648,6 +663,7 @@ private fun EmployeeHomeContent(
                 onReturnCans      = onReturnCans,
                 onViewStock       = { onTabSelected(2) },
                 onHistory         = { onTabSelected(1) },
+                onViewTasks       = { onTabSelected(3) },
                 modifier          = Modifier.padding(horizontal = 20.dp)
             )
             Spacer(Modifier.height(24.dp))
@@ -714,14 +730,14 @@ private fun EmployeeHomeContent(
                         color = NTColors.TextTertiary
                     )
                 }
-            }
-        } else {
-            items(activityItems) { item ->
-                RecentActivityItemRow(
-                    item     = item,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-                Spacer(Modifier.height(8.dp))
+            } else {
+                items(activityItems) { item ->
+                    RecentActivityItemRow(
+                        item     = item,
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
             }
         }
     }
@@ -990,6 +1006,7 @@ private fun QuickActionGrid(
     onReturnCans: () -> Unit,
     onViewStock: () -> Unit,
     onHistory: () -> Unit,
+    onViewTasks: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(

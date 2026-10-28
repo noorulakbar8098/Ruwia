@@ -248,6 +248,35 @@ class EmployeeViewModel(
         _state.value = _state.value.copy(selectedTask = task)
     }
 
+    fun updateTaskStatus(taskId: String, status: String) = viewModelScope.launch {
+        val employeeId = currentEmployeeId.ifBlank { repo.currentUserId().orEmpty() }
+        if (taskId.isBlank() || employeeId.isBlank()) {
+            _state.value = _state.value.copy(error = "Task could not be updated.")
+            return@launch
+        }
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching {
+            repo.updateTaskStatusForEmployee(taskId, employeeId, status)
+        }.onSuccess { saved ->
+            if (saved != null) {
+                _state.value = _state.value.copy(
+                    tasks = _state.value.tasks.map { if (it.id == taskId) saved else it },
+                    loading = false,
+                )
+            } else {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    error = "This task is not assigned to you.",
+                )
+            }
+        }.onFailure {
+            _state.value = _state.value.copy(
+                loading = false,
+                error = it.message ?: "Unable to update task status.",
+            )
+        }
+    }
+
     fun completeDelivery(
         taskId: String,
         customerId: String,

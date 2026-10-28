@@ -12,6 +12,7 @@ import kotlinx.coroutines.Job
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.CustomerLedger
 import com.example.ruwia.domain.CustomerProductPrice
+import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.MonthlyExpense
 import com.example.ruwia.domain.NotificationItem
@@ -107,6 +108,7 @@ data class AdminState(
     val notifications: List<NotificationItem> = emptyList(),
     /** Unread badge count for the header bell. */
     val unreadNotifications: Int = 0,
+    val tasks: List<DeliveryTask> = emptyList(),
 )
 
 class AdminViewModel(
@@ -141,6 +143,7 @@ class AdminViewModel(
                     val stockItems    = repo.getStockSummaryList()
                     val saleEntries   = repo.getSaleEntries()
                     val baseline      = repo.getEmptyCansBaseline()
+                    val tasks           = repo.getDeliveryTasks()
                     val feed          = notifications.getFeed()
 
                     // Prevent replacing valid cached data with empty lists if RLS returned empty lists due to a race
@@ -155,6 +158,7 @@ class AdminViewModel(
                             emptyCansBaseline = if (baseline >= 0) baseline else _state.value.emptyCansBaseline,
                             notifications     = feed,
                             unreadNotifications = feed.count { !it.isRead },
+                            tasks                = tasks,
                         ).deriveStockFromMovements()
                     }
                 }
@@ -198,6 +202,7 @@ class AdminViewModel(
             val shopNames        = repo.getShopNames()
             val shopName         = shopNames.firstOrNull().orEmpty()
             val baseline         = repo.getEmptyCansBaseline()
+            val tasks           = repo.getDeliveryTasks()
             val feed             = notifications.getFeed()
             AdminState(
                 loading              = false,
@@ -225,6 +230,7 @@ class AdminViewModel(
                 emptyCansBaseline    = if (baseline >= 0) baseline else 0,
                 notifications        = feed,
                 unreadNotifications  = feed.count { !it.isRead },
+                tasks                = tasks,
             )
         }.onSuccess { newState ->
             val previous = _state.value
@@ -1322,5 +1328,62 @@ class AdminViewModel(
             }
             "$py-${pm.toString().padStart(2, '0')}"
         } catch (_: Exception) { "" }
+    }
+
+    fun loadTasks() = viewModelScope.launch {
+        runCatching { repo.getDeliveryTasks() }
+            .onSuccess { _state.value = _state.value.copy(tasks = it) }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
+    }
+
+    fun createDeliveryTask(
+        customerId: String,
+        customerName: String,
+        customerAddress: String,
+        customerPhone: String,
+        employeeId: String,
+        productId: String,
+        productName: String,
+        quantity: Int,
+        deliveryDate: String,
+    ) = viewModelScope.launch {
+        if (customerId.isBlank() || employeeId.isBlank() || productId.isBlank() || quantity <= 0) {
+            _state.value = _state.value.copy(error = "Complete all task details before saving.")
+            return@launch
+        }
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching {
+            repo.createDeliveryTask(
+                customerId = customerId,
+                customerName = customerName,
+                customerAddress = customerAddress,
+                customerPhone = customerPhone,
+                employeeId = employeeId,
+                productId = productId,
+                productName = productName,
+                quantity = quantity,
+                deliveryDate = deliveryDate.ifBlank { kotlinx.datetime.LocalDate.current().toString() },
+            )
+        }.onSuccess { task ->
+            _state.value = _state.value.copy(
+                tasks = listOf(task) + _state.value.tasks,
+                loading = false,
+            )
+        }.onFailure {
+            _state.value = _state.value.copy(error = it.message ?: "Could not create delivery task", loading = false)
+        }
+    }
+
+    fun updateDeliveryTaskStatus(taskId: String, status: String) = viewModelScope.launch {
+        if (taskId.isBlank()) return@launch
+        runCatching { repo.updateDeliveryTaskStatus(taskId, status) }
+            .onSuccess { saved ->
+                if (saved != null) {
+                    _state.value = _state.value.copy(
+                        tasks = _state.value.tasks.map { if (it.id == taskId) saved else it }
+                    )
+                }
+            }
+            .onFailure { _state.value = _state.value.copy(error = it.message) }
     }
 }

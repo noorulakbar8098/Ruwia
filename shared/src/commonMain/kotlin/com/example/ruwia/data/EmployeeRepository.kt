@@ -1162,6 +1162,38 @@ class EmployeeRepository {
             }
         ) { filter { eq("id", cat.id) } }
     }
+
+    suspend fun updateTaskStatusForEmployee(
+        taskId: String,
+        employeeId: String,
+        status: String,
+    ): DeliveryTask? {
+        if (taskId.isBlank() || employeeId.isBlank()) return null
+        val normalized = status.trim().lowercase()
+        val allowed = when (normalized) {
+            "completed", "done" -> "completed"
+            "pending" -> "pending"
+            else -> "pending"
+        }
+        return try {
+            val adminId = getAdminIdForUser(employeeId)
+            val existing = supabase.from("route_tasks")
+                .select {
+                    filter {
+                        eq("id", taskId)
+                        eq("employee_id", employeeId)
+                        if (adminId != null) eq("admin_id", adminId)
+                    }
+                }
+                .decodeSingleOrNull<DeliveryTask>()
+            if (existing == null) return null
+            supabase.from("route_tasks")
+                .update(buildJsonObject { put("status", allowed) }) {
+                    filter { eq("id", taskId) }
+                }
+                .decodeSingleOrNull<DeliveryTask>()
+        } catch (_: Exception) { null }
+    }
 }
 
 private fun String.isEmptyCansSource(): Boolean =

@@ -147,13 +147,22 @@ data class EmployeeInfo(
 
 @Serializable
 data class DeliveryTask(
-    val id: String,
-    @SerialName("customer_name") val customerName: String,
+    val id: String = "",
+    @SerialName("customer_name") val customerName: String = "",
+    @SerialName("customer_id") val customerId: String? = null,
+    @SerialName("employee_id") val employeeId: String? = null,
+    @SerialName("employee_name") val employeeName: String? = null,
+    @SerialName("product_id") val productId: String? = null,
+    @SerialName("product_name") val productName: String? = null,
     val phone: String = "",
     val address: String = "",
-    @SerialName("can_qty") val canQty: Int,
+    @SerialName("customer_address") val customerAddress: String? = null,
+    @SerialName("can_qty") val canQty: Int = 0,
     @SerialName("eta_text") val etaText: String = "",
-    val status: String = "queued",
+    @SerialName("scheduled_date") val scheduledDate: String? = null,
+    @SerialName("delivery_date") val deliveryDate: String? = null,
+    @SerialName("admin_id") val adminId: String? = null,
+    val status: String = "pending",
 )
 
 @Serializable
