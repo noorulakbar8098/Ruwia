@@ -85,7 +85,7 @@ fun LoginScreen(
     onForgotPassword: () -> Unit,
     onLoggedIn: (UserRole?) -> Unit,
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
 
     // Screen states
     var isSignUp by remember { mutableStateOf(false) }

@@ -33,7 +33,7 @@ fun UserHomeScreen(
     onPlaceOrder: () -> Unit,
     onLogout: () -> Unit,
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     var showLogoutDialog by remember { mutableStateOf(false) }
 
     if (showLogoutDialog) {

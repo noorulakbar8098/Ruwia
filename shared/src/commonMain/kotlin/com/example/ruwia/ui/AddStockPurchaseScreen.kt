@@ -128,7 +128,7 @@ fun AddStockPurchaseScreen(
             purchasePriceStr = productToRestock.purchasePrice.toString()
             sellingPriceStr = productToRestock.defaultSellPrice.toString()
 
-            // Pre-fill the product's own alert threshold (OFF when saved as 0).
+            // Pre-fill low-stock alert threshold.
             val saved = productToRestock.lowStockAlert.coerceIn(0, 999)
             alertEnabled = saved > 0
             alertThresholdText = if (saved > 0) saved.toString() else DEFAULT_LOW_STOCK_ALERT.toString()

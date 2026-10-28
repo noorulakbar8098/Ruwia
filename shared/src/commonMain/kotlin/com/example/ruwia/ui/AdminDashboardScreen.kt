@@ -63,7 +63,7 @@ fun AdminDashboardScreen(
     adminName: String = "Admin",
     adminEmail: String = "",
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
 
