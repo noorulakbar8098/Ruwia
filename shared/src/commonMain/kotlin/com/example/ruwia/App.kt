@@ -78,14 +78,14 @@ fun App() {
                 Screen.Splash -> {
                     var minTimeDone by remember { mutableStateOf(false) }
 
-                    // Start session check + minimum display timer in parallel
+                    // Check session and minimum display timer in parallel.
                     LaunchedEffect(Unit) {
                         authVm.checkSession()
                         kotlinx.coroutines.delay(2500L)
                         minTimeDone = true
                     }
 
-                    // Navigate only when BOTH: 2.5 s elapsed AND session check finished
+                    // Navigate after 2.5s and session check completion.
                     LaunchedEffect(minTimeDone, authState.loading, authState.role, authState.loggedIn) {
                         if (minTimeDone && !authState.loading) {
                             screen = when {
@@ -100,7 +100,7 @@ fun App() {
                         }
                     }
 
-                    // Splash renders normally; navigation is driven by the LaunchedEffect above
+                    // Splash render; navigation handled by LaunchedEffect.
                     SplashScreen(onTimeout = {})
                 }
 

@@ -132,7 +132,7 @@ fun EmployeeEntriesScreen(
         }
     }
 
-    // Delivered units follow the selected date filter (sum of outward qty).
+    // Sum of outward quantity for selected date filter.
     val deliveredUnits = remember(filtered) { filtered.sumOf { it.qty } }
 
     // Dispatch analytics aggregate the same movement feed — memoized so the

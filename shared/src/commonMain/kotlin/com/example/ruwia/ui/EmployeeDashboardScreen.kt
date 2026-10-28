@@ -116,7 +116,7 @@ fun EmployeeDashboardScreen(
     shopInfo: String = "",
     userEmail: String = "",
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
 
     DisposableEffect(lifecycleOwner) {

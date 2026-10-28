@@ -16,7 +16,7 @@ fun PlaceOrderScreen(
     vm: UserViewModel,
     onBack: () -> Unit,
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     var qty by remember { mutableStateOf("") }
 
     LaunchedEffect(state.orderPlaced) {
