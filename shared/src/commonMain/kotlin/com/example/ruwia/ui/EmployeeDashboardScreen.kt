@@ -55,6 +55,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.is20LitreCan
 import org.jetbrains.compose.resources.painterResource
@@ -389,10 +390,6 @@ fun EmployeeDashboardScreen(
                     tasks = state.tasks,
                     onBack = { screen = EmpScreen.Home },
                     onMarkDone = { taskId -> vm.updateTaskStatus(taskId, "completed") },
-                    onComplete = { task ->
-                        vm.selectTask(task)
-                        screen = EmpScreen.Home
-                    },
                     contentPadding = PaddingValues(0.dp),
                 )
             }
@@ -582,6 +579,7 @@ private fun EmployeeHomeContent(
     onReturnCans: () -> Unit,
     onProfileClick: () -> Unit,
     onNotificationsClick: () -> Unit = {},
+    onViewTasks: () -> Unit,
     onTabSelected: (Int) -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -663,7 +661,7 @@ private fun EmployeeHomeContent(
                 onReturnCans      = onReturnCans,
                 onViewStock       = { onTabSelected(2) },
                 onHistory         = { onTabSelected(1) },
-                onViewTasks       = { onTabSelected(3) },
+                onViewTasks       = onViewTasks,
                 modifier          = Modifier.padding(horizontal = 20.dp)
             )
             Spacer(Modifier.height(24.dp))
@@ -730,14 +728,14 @@ private fun EmployeeHomeContent(
                         color = NTColors.TextTertiary
                     )
                 }
-            } else {
-                items(activityItems) { item ->
-                    RecentActivityItemRow(
-                        item     = item,
-                        modifier = Modifier.padding(horizontal = 20.dp),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
+            }
+        } else {
+            items(activityItems) { item ->
+                RecentActivityItemRow(
+                    item     = item,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
@@ -1053,6 +1051,7 @@ private fun QuickActionGrid(
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             QuickActionCard(
                 icon = Icons.Rounded.History,
@@ -1060,6 +1059,13 @@ private fun QuickActionGrid(
                 onClick = onHistory,
                 modifier = Modifier.weight(1f),
                 color = NTColors.Accent
+            )
+            QuickActionCard(
+                icon = Icons.AutoMirrored.Rounded.Assignment,
+                title = "My Tasks",
+                onClick = onViewTasks,
+                modifier = Modifier.weight(1f),
+                color = NTColors.Success
             )
         }
     }

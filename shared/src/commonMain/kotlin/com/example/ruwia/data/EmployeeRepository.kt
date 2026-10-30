@@ -67,7 +67,10 @@ class EmployeeRepository {
                     }
                     order("created_at", SortOrder.ASCENDING)
                 }
-                .decodeList()
+                .decodeList<DeliveryTask>()
+                // A cancelled task is closed for the admin but must disappear
+                // from the employee's route entirely.
+                .filterNot { it.status.equals("cancelled", ignoreCase = true) }
         } catch (e: Exception) { emptyList() }
     }
 

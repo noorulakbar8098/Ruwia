@@ -1570,6 +1570,8 @@ class AdminRepository {
         productName: String,
         quantity: Int,
         deliveryDate: String,
+        deliveryTime: String = "",
+        employeeName: String = "",
     ): DeliveryTask {
         val adminId = supabase.auth.currentUserOrNull()?.id ?: throw IllegalStateException("Not logged in")
         val payload = buildJsonObject {
@@ -1580,16 +1582,13 @@ class AdminRepository {
             put("customer_address", customerAddress)
             put("phone", customerPhone)
             put("employee_id", employeeId)
-            put("employee_name", supabase.from("employees")
-                .select { filter { eq("id", employeeId) } }
-                .decodeList<com.example.ruwia.domain.EmployeeInfo>()
-                .firstOrNull()?.name ?: "")
+            put("employee_name", employeeName.trim())
             put("product_id", productId)
             put("product_name", productName)
             put("can_qty", quantity)
             put("scheduled_date", deliveryDate)
             put("delivery_date", deliveryDate)
-            put("eta_text", "")
+            put("eta_text", deliveryTime.trim())
             put("status", "pending")
         }
         val created = supabase.from("route_tasks")

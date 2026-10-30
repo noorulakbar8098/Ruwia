@@ -47,6 +47,9 @@ fun CustomerPickerOverlay(
     onDismiss: () -> Unit,
     onSelect: (Customer) -> Unit,
     onNewCustomer: (Customer) -> Unit = {},
+    /** When false the "+ New" entry point is hidden (e.g. flows that must
+     *  reference an already-persisted customer with a real database id). */
+    allowAddNew: Boolean = true,
 ) {
     var mode by remember { mutableStateOf(SheetMode.Pick) }
     var search by remember { mutableStateOf("") }
@@ -103,7 +106,11 @@ fun CustomerPickerOverlay(
                     search           = search,
                     onSearchChange   = { search = it },
                     onSelect         = { onSelect(it); onDismiss() },
-                    onAddNew         = { mode = SheetMode.AddNew },
+                    onAddNew         = if (allowAddNew) {
+                        { mode = SheetMode.AddNew }
+                    } else {
+                        null
+                    },
                 )
                 SheetMode.AddNew -> AddNewContent(
                     name           = newName,
@@ -224,7 +231,7 @@ private fun ColumnScope.PickContent(
     search: String,
     onSearchChange: (String) -> Unit,
     onSelect: (Customer) -> Unit,
-    onAddNew: () -> Unit,
+    onAddNew: (() -> Unit)?,
 ) {
     // Header
     Row(
@@ -243,17 +250,19 @@ private fun ColumnScope.PickContent(
             color      = RuwiaColor.TextPrimary,
             modifier   = Modifier.weight(1f),
         )
-        // + New chip
-        Row(
-            modifier = Modifier
-                .background(RuwiaColor.TealPrimary, RoundedCornerShape(10.dp))
-                .clickable(onClick = onAddNew)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(14.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("New", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        // + New chip (optional)
+        if (onAddNew != null) {
+            Row(
+                modifier = Modifier
+                    .background(RuwiaColor.TealPrimary, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onAddNew)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("New", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
         }
     }
 
@@ -309,7 +318,15 @@ private fun ColumnScope.PickContent(
                 Spacer(Modifier.height(14.dp))
                 Text("No customer found", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextSecondary)
                 Spacer(Modifier.height(4.dp))
-                Text("Tap + New to add a new customer", fontSize = 13.sp, color = RuwiaColor.TextMuted)
+                Text(
+                    text = if (onAddNew != null) {
+                        "Tap + New to add a new customer"
+                    } else {
+                        "Try a different search"
+                    },
+                    fontSize = 13.sp,
+                    color = RuwiaColor.TextMuted,
+                )
             }
         }
     } else {

@@ -199,6 +199,21 @@ ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS client_key TEXT;
 ALTER TABLE sale_entries ADD COLUMN IF NOT EXISTS client_key TEXT;
 ALTER TABLE sale_entries ADD COLUMN IF NOT EXISTS payment_received TEXT;
 
+-- Delivery tasks store the structured customer/product/schedule the admin
+-- flow writes. Older installs only had the free-text route columns.
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS customer_id UUID;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS customer_address TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS employee_name TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS product_id UUID;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS product_name TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS delivery_date DATE;
+ALTER TABLE route_tasks ALTER COLUMN status SET DEFAULT 'pending';
+
+CREATE INDEX IF NOT EXISTS route_tasks_admin_schedule_idx
+    ON route_tasks (admin_id, scheduled_date);
+CREATE INDEX IF NOT EXISTS route_tasks_employee_schedule_idx
+    ON route_tasks (admin_id, employee_id, scheduled_date);
+
 -- Special case: Profiles RLS
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "profiles_isolation" ON profiles;

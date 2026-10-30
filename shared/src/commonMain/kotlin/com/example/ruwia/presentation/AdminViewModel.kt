@@ -1346,9 +1346,16 @@ class AdminViewModel(
         productName: String,
         quantity: Int,
         deliveryDate: String,
+        deliveryTime: String,
+        employeeName: String = "",
+        onFinished: (created: Boolean) -> Unit = {},
     ) = viewModelScope.launch {
-        if (customerId.isBlank() || employeeId.isBlank() || productId.isBlank() || quantity <= 0) {
+        if (
+            customerId.isBlank() || employeeId.isBlank() || productId.isBlank() ||
+            quantity <= 0 || deliveryDate.isBlank() || deliveryTime.isBlank()
+        ) {
             _state.value = _state.value.copy(error = "Complete all task details before saving.")
+            onFinished(false)
             return@launch
         }
         _state.value = _state.value.copy(loading = true, error = null)
@@ -1359,31 +1366,64 @@ class AdminViewModel(
                 customerAddress = customerAddress,
                 customerPhone = customerPhone,
                 employeeId = employeeId,
+                employeeName = employeeName,
                 productId = productId,
                 productName = productName,
                 quantity = quantity,
-                deliveryDate = deliveryDate.ifBlank { kotlinx.datetime.LocalDate.current().toString() },
+                deliveryDate = deliveryDate,
+                deliveryTime = deliveryTime,
             )
         }.onSuccess { task ->
             _state.value = _state.value.copy(
                 tasks = listOf(task) + _state.value.tasks,
                 loading = false,
             )
+            onFinished(true)
         }.onFailure {
-            _state.value = _state.value.copy(error = it.message ?: "Could not create delivery task", loading = false)
+            _state.value = _state.value.copy(
+                error = deliveryTaskErrorMessage(it, "Could not create delivery task"),
+                loading = false,
+            )
+            onFinished(false)
         }
     }
 
     fun updateDeliveryTaskStatus(taskId: String, status: String) = viewModelScope.launch {
         if (taskId.isBlank()) return@launch
+        _state.value = _state.value.copy(error = null)
         runCatching { repo.updateDeliveryTaskStatus(taskId, status) }
             .onSuccess { saved ->
                 if (saved != null) {
                     _state.value = _state.value.copy(
                         tasks = _state.value.tasks.map { if (it.id == taskId) saved else it }
                     )
+                } else {
+                    _state.value = _state.value.copy(
+                        error = "This task could not be updated. Refresh the board and try again."
+                    )
                 }
             }
-            .onFailure { _state.value = _state.value.copy(error = it.message) }
+            .onFailure {
+                _state.value = _state.value.copy(
+                    error = deliveryTaskErrorMessage(it, "Unable to update this delivery task.")
+                )
+            }
+    }
+}
+
+/**
+ * Supabase reports a missing route_tasks column as
+ * "Could not find the 'x' column ... in the schema cache". Point the admin at
+ * the migration instead of surfacing that raw PostgREST message.
+ */
+private fun deliveryTaskErrorMessage(error: Throwable, fallback: String): String {
+    val raw = error.message.orEmpty()
+    return if (raw.contains("route_tasks", ignoreCase = true) &&
+        raw.contains("schema cache", ignoreCase = true)
+    ) {
+        "The delivery tasks table is missing required columns. Run " +
+            "supabase_migration_delivery_tasks.sql in the Supabase SQL Editor, then try again."
+    } else {
+        raw.ifBlank { fallback }
     }
 }

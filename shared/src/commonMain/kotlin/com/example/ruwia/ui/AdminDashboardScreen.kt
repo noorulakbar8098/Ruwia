@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -27,7 +28,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ruwia.domain.Customer
+import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.Order
@@ -125,6 +128,9 @@ private fun AdminDashboardContentSwitcher(
     var productDetailName by remember { mutableStateOf<String?>(null) }
     var showStockHistory by remember { mutableStateOf(false) }
     var showNotifications by remember { mutableStateOf(false) }
+    var showDeliveryTasks by remember { mutableStateOf(false) }
+    var showCreateDeliveryTask by remember { mutableStateOf(false) }
+    var isCreatingDeliveryTask by remember { mutableStateOf(false) }
     var showReceiveEmptyCansDialog by remember { mutableStateOf(false) }
     var isSubmittingReturn by remember { mutableStateOf(false) }
     var saleToEdit by remember { mutableStateOf<SaleEntry?>(null) }
@@ -147,6 +153,11 @@ private fun AdminDashboardContentSwitcher(
     var isRefreshing by remember { mutableStateOf(false) }
     LaunchedEffect(state.loading) {
         if (!state.loading) isRefreshing = false
+    }
+
+    // Refresh the route board whenever the admin opens it.
+    LaunchedEffect(showDeliveryTasks) {
+        if (showDeliveryTasks) vm.loadTasks()
     }
 
     fun beginSaleEdit(sale: SaleEntry) {
@@ -243,6 +254,57 @@ private fun AdminDashboardContentSwitcher(
             onBack = { showNotifications = false },
             onMarkRead = vm::markNotificationRead,
             onMarkAllRead = vm::markAllNotificationsRead,
+        )
+        return
+    }
+
+    // ── Delivery tasks ────────────────────────────────────────
+    if (showCreateDeliveryTask) {
+        AdminCreateDeliveryTaskScreen(
+            customers = state.customers,
+            products = state.productCategories,
+            employees = state.employees,
+            isSaving = isCreatingDeliveryTask,
+            errorMessage = state.error,
+            onBack = { if (!isCreatingDeliveryTask) showCreateDeliveryTask = false },
+            onSave = { input ->
+                vm.clearError()
+                isCreatingDeliveryTask = true
+                vm.createDeliveryTask(
+                    customerId = input.customerId,
+                    customerName = input.customerName,
+                    customerAddress = input.customerAddress,
+                    customerPhone = input.customerPhone,
+                    employeeId = input.employeeId,
+                    employeeName = input.employeeName,
+                    productId = input.productId,
+                    productName = input.productName,
+                    quantity = input.quantity,
+                    deliveryDate = input.deliveryDate,
+                    deliveryTime = input.deliveryTime,
+                    onFinished = { created ->
+                        isCreatingDeliveryTask = false
+                        if (created) showCreateDeliveryTask = false
+                    },
+                )
+            },
+            contentPadding = PaddingValues(0.dp),
+        )
+        return
+    }
+
+    if (showDeliveryTasks) {
+        AdminDeliveryTasksScreen(
+            tasks = state.tasks,
+            onBack = { showDeliveryTasks = false },
+            onCreateTask = {
+                vm.clearError()
+                showCreateDeliveryTask = true
+            },
+            onUpdateStatus = vm::updateDeliveryTaskStatus,
+            errorMessage = state.error,
+            onClearError = vm::clearError,
+            contentPadding = PaddingValues(0.dp),
         )
         return
     }
@@ -455,6 +517,7 @@ private fun AdminDashboardContentSwitcher(
                      onOpenCustomers = { showCustomers = true },
                      onOpenInventory = { selectedTab = 1 },
                      onOpenNotifications = { showNotifications = true },
+                     onOpenDeliveryTasks = { showDeliveryTasks = true },
                  )
             1 -> InventoryScreen(
                      state          = state,
@@ -533,6 +596,7 @@ private fun AdminHomeTab(
     onOpenCustomers: () -> Unit = {},
     onOpenInventory: () -> Unit = {},
     onOpenNotifications: () -> Unit = {},
+    onOpenDeliveryTasks: () -> Unit = {},
 ) {
     when {
         state.loading  -> NTDashboardSkeleton(contentPadding)
@@ -551,6 +615,7 @@ private fun AdminHomeTab(
             onOpenCustomers = onOpenCustomers,
             onOpenInventory = onOpenInventory,
             onOpenNotifications = onOpenNotifications,
+            onOpenDeliveryTasks = onOpenDeliveryTasks,
         )
     }
 }
@@ -566,6 +631,7 @@ private fun AdminDashboardContent(
     onOpenCustomers: () -> Unit = {},
     onOpenInventory: () -> Unit = {},
     onOpenNotifications: () -> Unit = {},
+    onOpenDeliveryTasks: () -> Unit = {},
 ) {
     // Revenue + customer pickers drive their own charts.
     // Overview period dropdown defaults to Month.
@@ -701,6 +767,16 @@ private fun AdminDashboardContent(
 
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
 
+        // Delivery operations — open route board and task creation.
+        item {
+            DeliveryTasksOverviewCard(
+                tasks = state.tasks,
+                onOpen = onOpenDeliveryTasks,
+            )
+        }
+
+        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+
         // Analytics — revenue line chart reacts to its own picker.
         item {
             Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
@@ -766,6 +842,99 @@ private fun AdminDashboardContent(
             )
         }
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+    }
+}
+
+// ── Delivery tasks card ─────────────────────────────────────────
+
+@Composable
+private fun DeliveryTasksOverviewCard(
+    tasks: List<DeliveryTask>,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val openTasks = remember(tasks) { tasks.filter { !it.isTaskClosed() } }
+    val nextTask = remember(tasks) { tasks.nextScheduledTask() }
+    val title = when {
+        tasks.isEmpty() -> "Plan your first delivery"
+        openTasks.isEmpty() -> "All deliveries completed"
+        openTasks.size == 1 -> "1 delivery in progress"
+        else -> "${openTasks.size} deliveries in progress"
+    }
+    val supporting = nextTask?.let {
+        "Next: ${it.customerName} · ${deliveryTaskScheduleLabel(it)}"
+    } ?: "Assign a delivery to a customer."
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = NTDp.screenPad)
+            .shadow(3.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(NTColors.Surface)
+            .border(1.dp, NTColors.Border, RoundedCornerShape(24.dp))
+            .clickable(onClickLabel = "Open delivery tasks", onClick = onOpen)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(NTColors.PrimaryLight),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.AutoMirrored.Rounded.Assignment,
+                contentDescription = null,
+                tint = NTColors.Primary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "DELIVERY TASKS",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp,
+                color = NTColors.TextTertiary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = title,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.2).sp,
+                color = NTColors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = supporting,
+                fontSize = 11.sp,
+                color = NTColors.TextSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(NTColors.SurfaceVar)
+                .border(1.dp, NTColors.Border, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = NTColors.Primary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
