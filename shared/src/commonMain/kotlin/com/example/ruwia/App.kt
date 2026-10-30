@@ -16,6 +16,7 @@ import com.example.ruwia.ui.ForgotPasswordScreen
 import com.example.ruwia.ui.LoginScreen
 import com.example.ruwia.ui.SplashScreen
 import com.example.ruwia.ui.NoInternetScreen
+import com.example.ruwia.ui.CrashAnalyzerScreen
 import com.example.ruwia.ui.dashboard.NTTheme
 import com.example.ruwia.theme.RuwiaTheme
 import org.koin.compose.koinInject
@@ -27,6 +28,7 @@ private sealed class Screen {
     data object UserHome : Screen()
     data object AdminHome : Screen()
     data object EmployeeHome : Screen()
+    data object CrashAnalyzer : Screen()
 }
 
 @Composable
@@ -108,6 +110,7 @@ fun App() {
                     LoginScreen(
                         vm = authVm,
                         onForgotPassword = { screen = Screen.ForgotPassword },
+                        onOpenCrashAnalyzer = { screen = Screen.CrashAnalyzer },
                         onLoggedIn = { role ->
                             screen = when (role) {
                                 UserRole.admin    -> Screen.AdminHome
@@ -117,6 +120,16 @@ fun App() {
                             }
                         }
                     )
+                }
+
+                Screen.CrashAnalyzer -> {
+                    NTTheme {
+                        RuwiaTheme {
+                            CrashAnalyzerScreen(
+                                onBack = { screen = Screen.Login }
+                            )
+                        }
+                    }
                 }
 
                 Screen.ForgotPassword -> {

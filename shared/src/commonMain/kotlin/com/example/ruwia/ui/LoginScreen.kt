@@ -85,6 +85,7 @@ fun LoginScreen(
     vm: AuthViewModel,
     onForgotPassword: () -> Unit,
     onLoggedIn: (UserRole?) -> Unit,
+    onOpenCrashAnalyzer: () -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
 
@@ -166,7 +167,31 @@ fun LoginScreen(
                 onToggleMode = { isSignUp = !isSignUp }
             )
 
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(20.dp))
+
+            OutlinedButton(
+                onClick = onOpenCrashAnalyzer,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, DroplyColor.Primary.copy(alpha = 0.5f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = DroplyColor.Primary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.BugReport,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Crash Analyzer",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
 
             // ── Footer ────────────────────────────────────────────────
             LoginFooter()

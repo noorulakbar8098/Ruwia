@@ -106,6 +106,7 @@ private sealed class EmpScreen {
     object AddSale   : EmpScreen()
     object Profile   : EmpScreen()
     object Notifications : EmpScreen()
+    object CrashAnalyzer : EmpScreen()
 }
 
 // ── Main composable ───────────────────────────────────────────────────────────
@@ -394,6 +395,12 @@ fun EmployeeDashboardScreen(
                 )
             }
 
+            EmpScreen.CrashAnalyzer -> {
+                CrashAnalyzerScreen(
+                    onBack = { screen = EmpScreen.Home },
+                )
+            }
+
             EmpScreen.Home -> {
                 Scaffold(
                     containerColor = NTColors.Background,
@@ -477,6 +484,7 @@ fun EmployeeDashboardScreen(
                             onProfileClick = { screen = EmpScreen.Profile },
                             onNotificationsClick = { screen = EmpScreen.Notifications },
                             onViewTasks    = { screen = EmpScreen.Tasks },
+                            onCrashAnalyzer = { screen = EmpScreen.CrashAnalyzer },
                             onTabSelected  = { selectedTab = it },
                             contentPadding = padding,
                         )
@@ -580,6 +588,7 @@ private fun EmployeeHomeContent(
     onProfileClick: () -> Unit,
     onNotificationsClick: () -> Unit = {},
     onViewTasks: () -> Unit,
+    onCrashAnalyzer: () -> Unit,
     onTabSelected: (Int) -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -662,6 +671,7 @@ private fun EmployeeHomeContent(
                 onViewStock       = { onTabSelected(2) },
                 onHistory         = { onTabSelected(1) },
                 onViewTasks       = onViewTasks,
+                onCrashAnalyzer   = onCrashAnalyzer,
                 modifier          = Modifier.padding(horizontal = 20.dp)
             )
             Spacer(Modifier.height(24.dp))
@@ -1005,6 +1015,7 @@ private fun QuickActionGrid(
     onViewStock: () -> Unit,
     onHistory: () -> Unit,
     onViewTasks: () -> Unit,
+    onCrashAnalyzer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -1066,6 +1077,18 @@ private fun QuickActionGrid(
                 onClick = onViewTasks,
                 modifier = Modifier.weight(1f),
                 color = NTColors.Success
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            QuickActionCard(
+                icon = Icons.Rounded.BugReport,
+                title = "Crash Analyzer",
+                onClick = onCrashAnalyzer,
+                modifier = Modifier.fillMaxWidth(),
+                color = NTColors.Error
             )
         }
     }

@@ -19,8 +19,10 @@ val appModule = module {
     single { NotificationRepository() }
     single { AuthViewModel(get(), get()) }
     factory { UserViewModel(get(), get()) }
+    single { CrashReportRepository(get()) }
     single { AdminViewModel(get(), get()) }
     single { EmployeeViewModel(get(), get()) }
+    factory { com.example.ruwia.presentation.CrashAnalyzerViewModel(get()) }
 }
 
 // Guard against double-init (iOS re-entry, Activity recreation on Android)

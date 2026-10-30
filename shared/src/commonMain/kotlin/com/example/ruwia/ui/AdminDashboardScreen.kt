@@ -136,6 +136,7 @@ private fun AdminDashboardContentSwitcher(
     var saleToEdit by remember { mutableStateOf<SaleEntry?>(null) }
     var saleEditLines by remember { mutableStateOf<List<SaleEntry>>(emptyList()) }
     var isSavingSaleEdit by remember { mutableStateOf(false) }
+    var showCrashAnalyzer by remember { mutableStateOf(false) }
 
     // Close the receive dialog only after the backend confirms the return.
     LaunchedEffect(state.loading, state.error) {
@@ -305,6 +306,14 @@ private fun AdminDashboardContentSwitcher(
             errorMessage = state.error,
             onClearError = vm::clearError,
             contentPadding = PaddingValues(0.dp),
+        )
+        return
+    }
+
+    if (showCrashAnalyzer) {
+        SystemBackHandler { showCrashAnalyzer = false }
+        CrashAnalyzerScreen(
+            onBack = { showCrashAnalyzer = false },
         )
         return
     }
@@ -518,6 +527,7 @@ private fun AdminDashboardContentSwitcher(
                      onOpenInventory = { selectedTab = 1 },
                      onOpenNotifications = { showNotifications = true },
                      onOpenDeliveryTasks = { showDeliveryTasks = true },
+                     onOpenCrashAnalyzer = { showCrashAnalyzer = true },
                  )
             1 -> InventoryScreen(
                      state          = state,
@@ -597,6 +607,7 @@ private fun AdminHomeTab(
     onOpenInventory: () -> Unit = {},
     onOpenNotifications: () -> Unit = {},
     onOpenDeliveryTasks: () -> Unit = {},
+    onOpenCrashAnalyzer: () -> Unit = {},
 ) {
     when {
         state.loading  -> NTDashboardSkeleton(contentPadding)
@@ -616,6 +627,7 @@ private fun AdminHomeTab(
             onOpenInventory = onOpenInventory,
             onOpenNotifications = onOpenNotifications,
             onOpenDeliveryTasks = onOpenDeliveryTasks,
+            onOpenCrashAnalyzer = onOpenCrashAnalyzer,
         )
     }
 }
@@ -632,6 +644,7 @@ private fun AdminDashboardContent(
     onOpenInventory: () -> Unit = {},
     onOpenNotifications: () -> Unit = {},
     onOpenDeliveryTasks: () -> Unit = {},
+    onOpenCrashAnalyzer: () -> Unit = {},
 ) {
     // Revenue + customer pickers drive their own charts.
     // Overview period dropdown defaults to Month.
@@ -773,6 +786,45 @@ private fun AdminDashboardContent(
                 tasks = state.tasks,
                 onOpen = onOpenDeliveryTasks,
             )
+        }
+
+        item { Spacer(modifier = Modifier.height(NTDp.lg)) }
+
+        // Crash Analyzer
+        item {
+            Button(
+                onClick = onOpenCrashAnalyzer,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = NTDp.screenPad),
+                shape = RoundedCornerShape(NTDp.radLg),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NTColors.Surface,
+                    contentColor = NTColors.TextPrimary,
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, NTColors.Border),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.BugReport,
+                        contentDescription = null,
+                        tint = NTColors.Error,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Crash Analyzer",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = NTColors.TextPrimary,
+                    )
+                }
+            }
         }
 
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
