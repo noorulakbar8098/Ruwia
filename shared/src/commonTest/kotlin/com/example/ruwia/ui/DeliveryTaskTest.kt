@@ -61,4 +61,54 @@ class DeliveryTaskTest {
         assertEquals("2 Cases · 20L Bottle", deliveryTaskProductLabel(task))
         assertEquals("1 Case", deliveryTaskProductLabel(DeliveryTask(canQty = 1)))
     }
+
+    @Test
+    fun deliveryTaskSupportsTimelinePoints() {
+        val points = listOf(
+            com.example.ruwia.domain.TaskTimelinePoint(
+                label = "Start Point",
+                latitude = 11.0168,
+                longitude = 76.9558,
+                placeName = "RS Puram, Coimbatore",
+                recordedAt = "10:15 AM",
+                status = "accepted",
+            ),
+            com.example.ruwia.domain.TaskTimelinePoint(
+                label = "Second Point",
+                latitude = 11.0250,
+                longitude = 76.9610,
+                placeName = "Mettupalayam Road",
+                recordedAt = "10:25 AM",
+                status = "in_transit",
+            ),
+        )
+        val task = DeliveryTask(id = "task-1", status = "in_transit", timeline = points)
+        assertEquals(2, task.timeline.size)
+        assertEquals("RS Puram, Coimbatore", task.timeline.first().placeName)
+        assertEquals("Second Point", task.timeline[1].label)
+    }
+
+    @Test
+    fun deliveryTaskStoresDestinationAndLiveTrackingDetails() {
+        val task = DeliveryTask(
+            id = "task-dest",
+            destName = "Green City Grocers",
+            destLatitude = 12.9716,
+            destLongitude = 77.5946,
+            mapsLink = "https://maps.google.com/?q=12.9716,77.5946",
+            currentLatitude = 12.9500,
+            currentLongitude = 77.5800,
+            currentLocationName = "Lalbagh West Gate",
+            journeyStartTime = "10:00 AM",
+            lastLocationUpdateTime = "10:18 AM",
+            distanceRemainingMeters = 2400.0,
+            liveEta = "~10 mins (10:28 AM)",
+        )
+
+        assertEquals("Green City Grocers", task.destName)
+        assertEquals(12.9716, task.destLatitude)
+        assertEquals(77.5946, task.destLongitude)
+        assertEquals(2400.0, task.distanceRemainingMeters)
+        assertEquals("~10 mins (10:28 AM)", task.liveEta)
+    }
 }

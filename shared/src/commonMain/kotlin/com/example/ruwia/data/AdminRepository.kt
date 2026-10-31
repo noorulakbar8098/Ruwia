@@ -1572,6 +1572,10 @@ class AdminRepository {
         deliveryDate: String,
         deliveryTime: String = "",
         employeeName: String = "",
+        destLatitude: Double? = null,
+        destLongitude: Double? = null,
+        destName: String? = null,
+        mapsLink: String? = null,
     ): DeliveryTask {
         val adminId = supabase.auth.currentUserOrNull()?.id ?: throw IllegalStateException("Not logged in")
         val payload = buildJsonObject {
@@ -1590,9 +1594,15 @@ class AdminRepository {
             put("delivery_date", deliveryDate)
             put("eta_text", deliveryTime.trim())
             put("status", "pending")
+            destLatitude?.let { put("dest_latitude", it) }
+            destLongitude?.let { put("dest_longitude", it) }
+            destName?.let { put("dest_name", it) }
+            mapsLink?.let { put("maps_link", it) }
         }
         val created = supabase.from("route_tasks")
-            .insert(payload)
+            .insert(payload) {
+                select()
+            }
             .decodeSingle<DeliveryTask>()
         return created
     }
@@ -1601,6 +1611,7 @@ class AdminRepository {
         return try {
             supabase.from("route_tasks")
                 .update(buildJsonObject { put("status", status) }) {
+                    select()
                     filter { eq("id", taskId) }
                 }
                 .decodeSingleOrNull<DeliveryTask>()

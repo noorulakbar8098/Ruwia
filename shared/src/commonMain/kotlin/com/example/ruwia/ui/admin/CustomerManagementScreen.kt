@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalUriHandler
@@ -40,6 +41,14 @@ import com.example.ruwia.ui.dashboard.GlossyTealBox
 import com.example.ruwia.util.capitalizeWords
 import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.isTextField
+import com.example.ruwia.ui.components.formKeyboardActions
+import com.example.ruwia.data.getLocationService
+import com.example.ruwia.util.LocationPermissionRationaleDialog
+import com.example.ruwia.util.LocationPermissionStatus
+import com.example.ruwia.util.LocationUtils
+import com.example.ruwia.util.openMapNavigation
+import com.example.ruwia.util.rememberLocationPermissionController
+import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -168,6 +177,8 @@ fun CustomerManagementScreen(
                             onValueChange = { search = it },
                             textStyle     = TextStyle(fontSize = 14.sp, color = NTColors.TextPrimary),
                             cursorBrush   = SolidColor(NTColors.Primary),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = formKeyboardActions(),
                             singleLine    = true,
                             modifier      = Modifier.fillMaxWidth(),
                         )
@@ -630,12 +641,101 @@ private fun CustomerFormDialog(
     var address by remember { mutableStateOf(initial?.address ?: "") }
     var other   by remember { mutableStateOf(initial?.otherDetails ?: "") }
 
+    val coroutineScope = rememberCoroutineScope()
+    val locationService = remember { getLocationService() }
+    var isLocating by remember { mutableStateOf(false) }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    var showRationaleDialog by remember { mutableStateOf(false) }
+    var showMapPicker by remember { mutableStateOf(false) }
+
+    val permissionController = rememberLocationPermissionController { granted ->
+        if (granted) {
+            coroutineScope.launch {
+                isLocating = true
+                locationError = null
+                try {
+                    val loc = locationService.getCurrentLocation()
+                    if (loc != null) {
+                        val fullAddress = locationService.reverseGeocode(loc.latitude, loc.longitude)
+                        address = fullAddress
+                    } else {
+                        locationError = "Unable to fetch GPS location. Please check if device GPS is turned on."
+                    }
+                } catch (e: Exception) {
+                    locationError = e.message ?: "Failed to get location"
+                } finally {
+                    isLocating = false
+                }
+            }
+        }
+    }
+
+    fun fetchCurrentLocation() {
+        if (permissionController.status != LocationPermissionStatus.GRANTED) {
+            showRationaleDialog = true
+            return
+        }
+        coroutineScope.launch {
+            isLocating = true
+            locationError = null
+            try {
+                val loc = locationService.getCurrentLocation()
+                if (loc != null) {
+                    val fullAddress = locationService.reverseGeocode(loc.latitude, loc.longitude)
+                    address = fullAddress
+                } else {
+                    locationError = "Unable to fetch GPS location. Please check if device GPS is turned on."
+                }
+            } catch (e: Exception) {
+                locationError = e.message ?: "Failed to get location"
+            } finally {
+                isLocating = false
+            }
+        }
+    }
+
+    if (showRationaleDialog) {
+        LocationPermissionRationaleDialog(
+            status = permissionController.status,
+            onDismiss = { showRationaleDialog = false },
+            onRequestPermission = { permissionController.requestPermission() },
+            onOpenSettings = { permissionController.openAppSettings() },
+        )
+    }
+
+    if (showMapPicker) {
+        CustomerMapLocationDialog(
+            currentAddress = address,
+            isLocating = isLocating,
+            onUseCurrentLocation = {
+                showMapPicker = false
+                fetchCurrentLocation()
+            },
+            onConfirmLocation = { newAddr ->
+                address = newAddr
+                showMapPicker = false
+            },
+            onDismiss = { showMapPicker = false },
+        )
+    }
+
+    fun saveCustomer() {
+        if (name.isBlank()) return
+        onSave(
+            name.trim(),
+            phone.trim().ifEmpty { null },
+            address.trim().ifEmpty { null },
+            other.trim().ifEmpty { null },
+        )
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(NTColors.Surface, RoundedCornerShape(20.dp))
-                .padding(24.dp),
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState()),
         ) {
             Text(
                 title,
@@ -654,6 +754,7 @@ private fun CustomerFormDialog(
                 value = name, onValueChange = { name = it },
                 placeholder = "e.g. Murugan Stores",
                 keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Next,
             )
 
             Spacer(Modifier.height(NTDp.md))
@@ -665,15 +766,133 @@ private fun CustomerFormDialog(
                 },
                 placeholder = "10-digit mobile",
                 keyboardType = KeyboardType.Phone,
+                imeAction = ImeAction.Next,
             )
 
             Spacer(Modifier.height(NTDp.md))
-            CustomerFormFieldLabel("Address")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                CustomerFormFieldLabel("Address")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(enabled = !isLocating) { fetchCurrentLocation() }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                ) {
+                    if (isLocating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = NTColors.Primary,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "Locating…",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NTColors.Primary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.MyLocation,
+                            contentDescription = null,
+                            tint = NTColors.Primary,
+                            modifier = Modifier.size(13.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "Use Current Location",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NTColors.Primary,
+                        )
+                    }
+                }
+            }
+
             CustomerFormInput(
-                value = address, onValueChange = { address = it },
-                placeholder = "Area / street / landmark",
+                value = address,
+                onValueChange = { newText ->
+                    address = newText
+                    val isMapsLinkOrCoords = LocationUtils.isGoogleMapsUrl(newText) ||
+                            LocationUtils.parseGoogleMapsCoordinates(newText) != null
+                    if (isMapsLinkOrCoords) {
+                        coroutineScope.launch {
+                            isLocating = true
+                            locationError = null
+                            try {
+                                val coords = locationService.resolveCoordinatesFromInput(newText)
+                                if (coords != null) {
+                                    val resolved = locationService.reverseGeocode(coords.first, coords.second)
+                                    if (resolved.isNotBlank() && !resolved.startsWith("Point")) {
+                                        address = resolved
+                                    }
+                                } else {
+                                    locationError = "Could not resolve address from the Google Maps link."
+                                }
+                            } catch (e: Exception) {
+                                locationError = "Error resolving location: ${e.message}"
+                            } finally {
+                                isLocating = false
+                            }
+                        }
+                    }
+                },
+                placeholder = "Area / street / landmark or paste Maps link",
                 keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Next,
             )
+
+            // Map and location actions bar (Swiggy / Zomato style)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { showMapPicker = true }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Map,
+                        contentDescription = null,
+                        tint = NTColors.Primary,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "Pick on Map / Paste Link",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NTColors.Primary,
+                    )
+                }
+
+                val detected = LocationUtils.parseGoogleMapsCoordinates(address)
+                if (detected != null) {
+                    val (lat, lon) = detected
+                    val latStr = ((lat * 10000).toLong() / 10000.0).toString()
+                    val lonStr = ((lon * 10000).toLong() / 10000.0).toString()
+                    Text(
+                        text = "📍 $latStr, $lonStr",
+                        fontSize = 11.sp,
+                        color = NTColors.Success,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+
+            if (locationError != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(locationError!!, fontSize = 11.sp, color = NTColors.Error)
+            }
 
             Spacer(Modifier.height(NTDp.md))
             CustomerFormFieldLabel("Notes")
@@ -681,6 +900,8 @@ private fun CustomerFormDialog(
                 value = other, onValueChange = { other = it },
                 placeholder = "Delivery preferences, billing, etc.",
                 keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Done,
+                onImeDone = ::saveCustomer,
             )
 
             Spacer(Modifier.height(NTDp.lg))
@@ -689,14 +910,7 @@ private fun CustomerFormDialog(
                     Text("Cancel")
                 }
                 Button(
-                    onClick = {
-                        onSave(
-                            name.trim(),
-                            phone.trim().ifEmpty { null },
-                            address.trim().ifEmpty { null },
-                            other.trim().ifEmpty { null },
-                        )
-                    },
+                    onClick = ::saveCustomer,
                     enabled  = name.isNotBlank(),
                     modifier = Modifier.weight(1f),
                     colors   = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
@@ -704,6 +918,311 @@ private fun CustomerFormDialog(
                     Icon(Icons.Rounded.CheckCircle, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Save", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CustomerMapLocationDialog(
+    currentAddress: String,
+    isLocating: Boolean,
+    onUseCurrentLocation: () -> Unit,
+    onConfirmLocation: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var rawInput by remember { mutableStateOf(currentAddress) }
+    var resolvedAddress by remember { mutableStateOf(currentAddress) }
+    var detectedCoords by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var isResolving by remember { mutableStateOf(false) }
+    var resolveError by remember { mutableStateOf<String?>(null) }
+    val locationService = remember { getLocationService() }
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    LaunchedEffect(rawInput) {
+        if (rawInput.isBlank()) {
+            detectedCoords = null
+            resolveError = null
+            return@LaunchedEffect
+        }
+        val direct = LocationUtils.parseGoogleMapsCoordinates(rawInput)
+        if (direct != null) {
+            detectedCoords = direct
+            resolveError = null
+            isResolving = true
+            try {
+                val res = locationService.reverseGeocode(direct.first, direct.second)
+                if (res.isNotBlank() && !res.startsWith("Point")) {
+                    resolvedAddress = res
+                } else {
+                    resolvedAddress = "${direct.first}, ${direct.second}"
+                }
+            } catch (_: Exception) {
+            } finally {
+                isResolving = false
+            }
+        } else if (LocationUtils.isGoogleMapsUrl(rawInput) || rawInput.contains("http")) {
+            isResolving = true
+            resolveError = null
+            try {
+                val resolved = locationService.resolveCoordinatesFromInput(rawInput)
+                if (resolved != null) {
+                    detectedCoords = resolved
+                    val res = locationService.reverseGeocode(resolved.first, resolved.second)
+                    if (res.isNotBlank() && !res.startsWith("Point")) {
+                        resolvedAddress = res
+                    } else {
+                        resolvedAddress = "${resolved.first}, ${resolved.second}"
+                    }
+                } else {
+                    resolveError = "Could not extract GPS coordinates from this link."
+                }
+            } catch (e: Exception) {
+                resolveError = "Failed to resolve link: ${e.message}"
+            } finally {
+                isResolving = false
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(NTColors.Surface, RoundedCornerShape(20.dp))
+                .padding(22.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(NTColors.Primary.copy(alpha = 0.12f), RoundedCornerShape(10.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.LocationOn,
+                            contentDescription = null,
+                            tint = NTColors.Primary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Select Shop Location",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NTColors.TextPrimary,
+                        )
+                        Text(
+                            text = "Auto-fetch GPS or paste Maps link",
+                            fontSize = 11.sp,
+                            color = NTColors.TextTertiary,
+                        )
+                    }
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Rounded.Close, "Close", tint = NTColors.TextTertiary, modifier = Modifier.size(18.dp))
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            // Option 1: Use GPS Current Location
+            Button(
+                onClick = onUseCurrentLocation,
+                enabled = !isLocating,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
+            ) {
+                if (isLocating) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Fetching GPS Location…", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Icon(Icons.Rounded.MyLocation, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("📍 Use Current GPS Location", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Option 2: Open Map / View on Map
+            OutlinedButton(
+                onClick = {
+                    val coords = detectedCoords ?: LocationUtils.parseGoogleMapsCoordinates(resolvedAddress)
+                    if (coords != null) {
+                        openMapNavigation(coords.first, coords.second, resolvedAddress)
+                    } else {
+                        openMapNavigation(0.0, 0.0, resolvedAddress.ifBlank { "Shop Location" })
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, NTColors.Border),
+            ) {
+                Icon(Icons.Rounded.Map, null, tint = NTColors.Primary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("🗺️ View / Pick on Google Maps", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = NTColors.Primary)
+            }
+
+            Spacer(Modifier.height(18.dp))
+            HorizontalDivider(color = NTColors.Border.copy(alpha = 0.6f))
+            Spacer(Modifier.height(16.dp))
+
+            // Option 3: Paste link or coordinates
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                CustomerFormFieldLabel("Paste Google Maps Link / Coordinates")
+                val clipboardText = clipboardManager.getText()?.text
+                if (!clipboardText.isNullOrBlank()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable {
+                                rawInput = clipboardText.trim()
+                            }
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                    ) {
+                        Icon(Icons.Rounded.ContentPaste, null, tint = NTColors.Primary, modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Paste Copied Link", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NTColors.Primary)
+                    }
+                }
+            }
+            CustomerFormInput(
+                value = rawInput,
+                onValueChange = {
+                    rawInput = it
+                    if (LocationUtils.parseGoogleMapsCoordinates(it) == null && !LocationUtils.isGoogleMapsUrl(it)) {
+                        resolvedAddress = it
+                    }
+                },
+                placeholder = "https://maps.app.goo.gl/... or 12.9716, 77.5946",
+                keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Next,
+            )
+
+            if (isResolving) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(NTColors.Primary.copy(alpha = 0.08f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 1.5.dp,
+                        color = NTColors.Primary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Resolving Google Maps share link…",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NTColors.Primary,
+                    )
+                }
+            }
+
+            if (resolveError != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(resolveError!!, fontSize = 11.sp, color = NTColors.Error)
+            }
+
+            if (detectedCoords != null) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(NTColors.SuccessLight)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        tint = NTColors.Success,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "GPS Coordinates: ${detectedCoords!!.first}, ${detectedCoords!!.second}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NTColors.Success,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // Resolved street address preview / edit
+            CustomerFormFieldLabel("Full Delivery Address")
+            if (isResolving) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 1.5.dp,
+                        color = NTColors.Primary,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Resolving street address…", fontSize = 11.sp, color = NTColors.TextTertiary)
+                }
+            }
+            CustomerFormInput(
+                value = resolvedAddress,
+                onValueChange = { resolvedAddress = it },
+                placeholder = "Door / shop no, street name, area, pincode",
+                keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Done,
+                onImeDone = {
+                    if (resolvedAddress.isNotBlank()) onConfirmLocation(resolvedAddress.trim())
+                },
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(NTDp.sm)) {
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                    Text("Cancel")
+                }
+                Button(
+                    onClick = {
+                        val finalAddr = resolvedAddress.trim().ifEmpty { rawInput.trim() }
+                        onConfirmLocation(finalAddr)
+                    },
+                    enabled = resolvedAddress.isNotBlank() || rawInput.isNotBlank(),
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
+                ) {
+                    Icon(Icons.Rounded.CheckCircle, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Use Address", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -727,6 +1246,8 @@ private fun CustomerFormInput(
     onValueChange: (String) -> Unit,
     placeholder: String,
     keyboardType: KeyboardType,
+    imeAction: ImeAction,
+    onImeDone: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
@@ -747,7 +1268,9 @@ private fun CustomerFormInput(
             keyboardOptions = KeyboardOptions(
                 keyboardType = keyboardType,
                 capitalization = if (keyboardType.isTextField()) KeyboardCapitalization.Words else KeyboardCapitalization.None,
+                imeAction = imeAction,
             ),
+            keyboardActions = formKeyboardActions(onDone = onImeDone),
             modifier = Modifier.fillMaxWidth(),
         )
     }

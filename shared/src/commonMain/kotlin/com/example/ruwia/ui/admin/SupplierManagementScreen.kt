@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,6 +30,7 @@ import com.example.ruwia.domain.Supplier
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import com.example.ruwia.util.capitalizeWords
+import com.example.ruwia.ui.components.formKeyboardActions
 
 /**
  * Supplier management screen — admin can add new suppliers, view the list and
@@ -267,6 +269,10 @@ private fun SupplierFormDialog(
 ) {
     var name     by remember { mutableStateOf("") }
     var location by remember { mutableStateOf("") }
+    fun saveSupplier() {
+        if (name.isBlank()) return
+        onSave(name.trim(), location.trim().takeIf { it.isNotBlank() })
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -288,6 +294,7 @@ private fun SupplierFormDialog(
                 value = name,
                 onValueChange = { name = it },
                 placeholder = "e.g. Aqua Pure",
+                imeAction = ImeAction.Next,
             )
 
             Spacer(Modifier.height(NTDp.md))
@@ -296,6 +303,8 @@ private fun SupplierFormDialog(
                 value = location,
                 onValueChange = { location = it },
                 placeholder = "e.g. Coimbatore",
+                imeAction = ImeAction.Done,
+                onImeDone = ::saveSupplier,
             )
 
             Spacer(Modifier.height(NTDp.lg))
@@ -304,7 +313,7 @@ private fun SupplierFormDialog(
                     Text("Cancel")
                 }
                 Button(
-                    onClick = { onSave(name.trim(), location.trim().takeIf { it.isNotBlank() }) },
+                    onClick = ::saveSupplier,
                     enabled = name.isNotBlank(),
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
@@ -333,6 +342,8 @@ private fun SupplierFormInput(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
+    imeAction: ImeAction,
+    onImeDone: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
@@ -350,9 +361,12 @@ private fun SupplierFormInput(
             textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
             cursorBrush = SolidColor(NTColors.Primary),
             singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Words,
+                imeAction = imeAction,
+            ),
+            keyboardActions = formKeyboardActions(onDone = onImeDone),
             modifier = Modifier.fillMaxWidth(),
         )
     }
 }
-

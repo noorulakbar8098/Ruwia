@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -42,6 +44,7 @@ import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.resolveMovementProductName
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.components.formKeyboardActions
 import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
 import com.example.ruwia.util.isoToDisplayDate
 import com.example.ruwia.util.isoToDisplayTime
@@ -457,6 +460,8 @@ private fun StockHistoryControls(
                 singleLine = true,
                 textStyle = LocalTextStyle.current.copy(color = NTColors.TextPrimary, fontSize = 13.sp),
                 cursorBrush = SolidColor(NTColors.Primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = formKeyboardActions(),
             )
             if (query.isNotEmpty()) {
                 Icon(

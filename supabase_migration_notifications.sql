@@ -30,12 +30,52 @@ CREATE TABLE IF NOT EXISTS notification_reads (
 
 -- 3. FCM device tokens for outside-the-app push.
 CREATE TABLE IF NOT EXISTS device_tokens (
-    user_id UUID NOT NULL PRIMARY KEY,
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID NOT NULL,
     admin_id UUID REFERENCES auth.users(id),
     token TEXT NOT NULL,
     platform TEXT DEFAULT 'android',
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- A user can sign in on several Android devices. Keep one row per FCM token,
+-- and upgrade installations that ran the original one-token-per-user schema.
+ALTER TABLE public.device_tokens
+    ADD COLUMN IF NOT EXISTS id UUID DEFAULT uuid_generate_v4();
+UPDATE public.device_tokens SET id = uuid_generate_v4() WHERE id IS NULL;
+ALTER TABLE public.device_tokens ALTER COLUMN id SET DEFAULT uuid_generate_v4();
+ALTER TABLE public.device_tokens ALTER COLUMN id SET NOT NULL;
+
+DO $$
+DECLARE
+    primary_key_name TEXT;
+BEGIN
+    SELECT conname INTO primary_key_name
+    FROM pg_constraint
+    WHERE conrelid = 'public.device_tokens'::regclass
+      AND contype = 'p';
+
+    IF primary_key_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE public.device_tokens DROP CONSTRAINT %I', primary_key_name);
+    END IF;
+
+    ALTER TABLE public.device_tokens
+        ADD CONSTRAINT device_tokens_pkey PRIMARY KEY (id);
+END $$;
+
+WITH duplicate_tokens AS (
+    SELECT ctid,
+           row_number() OVER (
+               PARTITION BY token
+               ORDER BY updated_at DESC NULLS LAST, ctid DESC
+           ) AS row_number
+    FROM public.device_tokens
+)
+DELETE FROM public.device_tokens
+WHERE ctid IN (SELECT ctid FROM duplicate_tokens WHERE row_number > 1);
+
+CREATE UNIQUE INDEX IF NOT EXISTS device_tokens_token_unique
+    ON public.device_tokens(token);
 
 -- 4. Tenant isolation via the shared helper (stamps admin_id + strict
 --    admin_id = get_admin_id() policy, same as every other table).

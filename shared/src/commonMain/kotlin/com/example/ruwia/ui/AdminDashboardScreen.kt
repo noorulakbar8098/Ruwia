@@ -282,6 +282,10 @@ private fun AdminDashboardContentSwitcher(
                     quantity = input.quantity,
                     deliveryDate = input.deliveryDate,
                     deliveryTime = input.deliveryTime,
+                    destLatitude = input.destLatitude,
+                    destLongitude = input.destLongitude,
+                    destName = input.destName,
+                    mapsLink = input.mapsLink,
                     onFinished = { created ->
                         isCreatingDeliveryTask = false
                         if (created) showCreateDeliveryTask = false
@@ -302,6 +306,7 @@ private fun AdminDashboardContentSwitcher(
                 showCreateDeliveryTask = true
             },
             onUpdateStatus = vm::updateDeliveryTaskStatus,
+            onRefresh = vm::loadTasks,
             errorMessage = state.error,
             onClearError = vm::clearError,
             contentPadding = PaddingValues(0.dp),

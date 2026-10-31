@@ -41,6 +41,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -48,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.util.capitalizeWords
+import com.example.ruwia.ui.components.formKeyboardActions
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import org.jetbrains.compose.resources.painterResource
@@ -317,6 +319,8 @@ fun ProductManagementScreen(
                                         color = NTColors.TextPrimary
                                     ),
                                     cursorBrush = SolidColor(NTColors.Primary),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = formKeyboardActions(),
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -1583,10 +1587,14 @@ private fun FormDialogInput(
                 ),
                 cursorBrush = SolidColor(NTColors.Primary),
                 keyboardOptions = if (isNumeric) {
-                    KeyboardOptions(keyboardType = KeyboardType.Number)
+                    KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done)
                 } else {
-                    KeyboardOptions(capitalization = KeyboardCapitalization.Words)
+                    KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Words,
+                        imeAction = ImeAction.Done,
+                    )
                 },
+                keyboardActions = formKeyboardActions(),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -1653,6 +1661,18 @@ fun ProductFormSheet(
     var selectedShop  by remember(shops) { mutableStateOf(shops.firstOrNull()?.name.orEmpty()) }
     var showShopMenu  by remember { mutableStateOf(false) }
 
+    fun saveProduct() {
+        if (name.isBlank() || displayName.isBlank()) return
+        val product = (existing ?: ProductCategory(id = "", name = name, displayName = displayName)).copy(
+            name = name.trim(),
+            displayName = displayName.trim(),
+            brandName = brandName.trim(),
+            purchasePrice = purchasePrice.toDoubleOrNull() ?: 0.0,
+            defaultSellPrice = sellPrice.toDoubleOrNull() ?: 0.0,
+        )
+        onSave(product, openingStock.toIntOrNull() ?: 0, selectedShop)
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -1683,19 +1703,19 @@ fun ProductFormSheet(
             Column(modifier = Modifier.weight(1f)) {
                 Text("Product SKU", fontSize = 13.sp, color = NTColors.TextTertiary)
                 Spacer(Modifier.height(4.dp))
-                FormInput("SKU (e.g. 500ML)", name) { name = it }
+                FormInput("SKU (e.g. 500ML)", name, imeAction = ImeAction.Next) { name = it }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text("Brand Name", fontSize = 13.sp, color = NTColors.TextTertiary)
                 Spacer(Modifier.height(4.dp))
-                FormInput("Brand (e.g. Bisleri)", brandName) { brandName = it }
+                FormInput("Brand (e.g. Bisleri)", brandName, imeAction = ImeAction.Next) { brandName = it }
             }
         }
         Spacer(Modifier.height(12.dp))
         
         Text("Display Name", fontSize = 13.sp, color = NTColors.TextTertiary)
         Spacer(Modifier.height(4.dp))
-        FormInput("Display Title (e.g. 500ML Water Bottle)", displayName) { displayName = it }
+        FormInput("Display Title (e.g. 500ML Water Bottle)", displayName, imeAction = ImeAction.Next) { displayName = it }
         
         Spacer(Modifier.height(16.dp))
 
@@ -1703,12 +1723,16 @@ fun ProductFormSheet(
             Column(modifier = Modifier.weight(1f)) {
                 Text("Purchase Price", fontSize = 13.sp, color = NTColors.TextTertiary)
                 Spacer(Modifier.height(4.dp))
-                PriceInput(purchasePrice) { purchasePrice = it }
+                PriceInput(purchasePrice, imeAction = ImeAction.Next) { purchasePrice = it }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text("Selling Price", fontSize = 13.sp, color = NTColors.TextTertiary)
                 Spacer(Modifier.height(4.dp))
-                PriceInput(sellPrice) { sellPrice = it }
+                PriceInput(
+                    sellPrice,
+                    imeAction = if (existing == null) ImeAction.Next else ImeAction.Done,
+                    onImeDone = if (existing != null) ::saveProduct else null,
+                ) { sellPrice = it }
             }
         }
         
@@ -1718,7 +1742,12 @@ fun ProductFormSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Opening Stock (Units)", fontSize = 13.sp, color = NTColors.TextTertiary)
                     Spacer(Modifier.height(4.dp))
-                    FormInput("Qty (e.g. 100)", openingStock) { if (it.all { c -> c.isDigit() }) openingStock = it }
+                    FormInput(
+                        "Qty (e.g. 100)",
+                        openingStock,
+                        imeAction = ImeAction.Done,
+                        onImeDone = ::saveProduct,
+                    ) { if (it.all { c -> c.isDigit() }) openingStock = it }
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Initial Shop", fontSize = 13.sp, color = NTColors.TextTertiary)
@@ -1759,16 +1788,7 @@ fun ProductFormSheet(
                 Text("Cancel")
             }
             Button(
-                onClick = {
-                    val product = (existing ?: ProductCategory(id = "", name = name, displayName = displayName)).copy(
-                        name             = name.trim(),
-                        displayName      = displayName.trim(),
-                        brandName        = brandName.trim(),
-                        purchasePrice    = purchasePrice.toDoubleOrNull() ?: 0.0,
-                        defaultSellPrice = sellPrice.toDoubleOrNull() ?: 0.0,
-                    )
-                    onSave(product, openingStock.toIntOrNull() ?: 0, selectedShop)
-                },
+                onClick = ::saveProduct,
                 enabled  = name.isNotBlank() && displayName.isNotBlank(),
                 modifier = Modifier.weight(2f).height(48.dp),
                 shape    = RoundedCornerShape(12.dp),
@@ -1783,7 +1803,13 @@ fun ProductFormSheet(
 }
 
 @Composable
-private fun FormInput(placeholder: String, value: String, onChange: (String) -> Unit) {
+private fun FormInput(
+    placeholder: String,
+    value: String,
+    imeAction: ImeAction = ImeAction.Done,
+    onImeDone: (() -> Unit)? = null,
+    onChange: (String) -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth()
             .background(NTColors.Background, RoundedCornerShape(10.dp))
@@ -1797,7 +1823,11 @@ private fun FormInput(placeholder: String, value: String, onChange: (String) -> 
                 value = value, onValueChange = { onChange(capitalizeWords(it)) },
                 textStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
                 cursorBrush = SolidColor(NTColors.Primary), singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Words,
+                    imeAction = imeAction,
+                ),
+                keyboardActions = formKeyboardActions(onDone = onImeDone),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -1805,7 +1835,12 @@ private fun FormInput(placeholder: String, value: String, onChange: (String) -> 
 }
 
 @Composable
-private fun PriceInput(value: String, onChange: (String) -> Unit) {
+private fun PriceInput(
+    value: String,
+    imeAction: ImeAction = ImeAction.Done,
+    onImeDone: (() -> Unit)? = null,
+    onChange: (String) -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth()
             .background(NTColors.Background, RoundedCornerShape(10.dp))
@@ -1821,7 +1856,8 @@ private fun PriceInput(value: String, onChange: (String) -> Unit) {
                 value = value, onValueChange = { if (it.all { c -> c.isDigit() || c == '.' }) onChange(it) },
                 textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary),
                 cursorBrush = SolidColor(NTColors.Primary),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = imeAction),
+                keyboardActions = formKeyboardActions(onDone = onImeDone),
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
         }

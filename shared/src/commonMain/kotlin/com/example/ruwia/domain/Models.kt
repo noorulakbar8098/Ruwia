@@ -146,6 +146,17 @@ data class EmployeeInfo(
 )
 
 @Serializable
+data class TaskTimelinePoint(
+    val label: String = "",
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    @SerialName("place_name") val placeName: String = "",
+    @SerialName("recorded_at") val recordedAt: String = "",
+    val status: String = "",
+    @SerialName("accuracy_meters") val accuracyMeters: Double? = null,
+)
+
+@Serializable
 data class DeliveryTask(
     val id: String = "",
     @SerialName("customer_name") val customerName: String = "",
@@ -163,6 +174,19 @@ data class DeliveryTask(
     @SerialName("delivery_date") val deliveryDate: String? = null,
     @SerialName("admin_id") val adminId: String? = null,
     val status: String = "pending",
+    val timeline: List<TaskTimelinePoint> = emptyList(),
+    @SerialName("dest_latitude") val destLatitude: Double? = null,
+    @SerialName("dest_longitude") val destLongitude: Double? = null,
+    @SerialName("dest_name") val destName: String? = null,
+    @SerialName("maps_link") val mapsLink: String? = null,
+    @SerialName("current_latitude") val currentLatitude: Double? = null,
+    @SerialName("current_longitude") val currentLongitude: Double? = null,
+    @SerialName("current_location_name") val currentLocationName: String? = null,
+    @SerialName("journey_start_time") val journeyStartTime: String? = null,
+    @SerialName("last_location_update_time") val lastLocationUpdateTime: String? = null,
+    @SerialName("arrival_time") val arrivalTime: String? = null,
+    @SerialName("distance_remaining_meters") val distanceRemainingMeters: Double? = null,
+    @SerialName("live_eta") val liveEta: String? = null,
 )
 
 @Serializable

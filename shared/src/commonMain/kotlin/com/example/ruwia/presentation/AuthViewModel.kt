@@ -61,6 +61,10 @@ class AuthViewModel(
             return@launch
         }
 
+        // Token retrieval at Application startup can finish before Supabase
+        // restores its persisted session. Register again once auth is ready.
+        com.example.ruwia.data.refreshPushToken()
+
         // ── Step 3: token is valid — resolve role ──────────────────────────
         // Prefer the locally cached role so cold-start is instant and works
         // even when the network is flaky. The actual `profiles` row is the
@@ -126,6 +130,7 @@ class AuthViewModel(
         // restore the previous user's role from disk.
         rolePrefs.clear()
         logoutJob = viewModelScope.launch {
+            runCatching { com.example.ruwia.data.unregisterPushToken() }
             // repo.logout() runs inside NonCancellable internally, so the
             // local session is guaranteed to be wiped from disk even if this
             // job is later joined/awaited by a fast follow-up login.

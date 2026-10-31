@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -23,12 +24,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
 import ruwia.shared.generated.resources.app_icon
+import com.example.ruwia.ui.components.formKeyboardActions
 
 // Reusing the same SaaS palette from LoginScreen
 private val DarkSurface = Color(0xFF0D1B2A)
@@ -189,6 +192,10 @@ fun ForgotPasswordScreen(
                                 value = email,
                                 onValueChange = { email = it },
                                 singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = formKeyboardActions(
+                                    onDone = { if (email.contains("@")) submitted = true },
+                                ),
                                 placeholder = {
                                     Text(
                                         text = "you@company.com",

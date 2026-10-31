@@ -244,6 +244,15 @@ class EmployeeViewModel(
         }
     }
 
+    fun refreshTasks() = viewModelScope.launch {
+        val empId = currentEmployeeId.ifBlank { repo.currentUserId().orEmpty() }
+        if (empId.isBlank()) return@launch
+        runCatching { repo.getTodayRouteTasks(empId) }
+            .onSuccess { updated ->
+                _state.value = _state.value.copy(tasks = updated)
+            }
+    }
+
     fun selectTask(task: DeliveryTask?) {
         _state.value = _state.value.copy(selectedTask = task)
     }
@@ -263,6 +272,12 @@ class EmployeeViewModel(
                     tasks = _state.value.tasks.map { if (it.id == taskId) saved else it },
                     loading = false,
                 )
+                notifyAdmin(
+                    "Delivery updated",
+                    "${saved.customerName} · ${saved.status.replaceFirstChar { it.uppercase() }}",
+                    kind = "delivery",
+                    relatedId = saved.id,
+                )
             } else {
                 _state.value = _state.value.copy(
                     loading = false,
@@ -274,6 +289,78 @@ class EmployeeViewModel(
                 loading = false,
                 error = it.message ?: "Unable to update task status.",
             )
+        }
+    }
+
+    fun acceptTask(taskId: String) = viewModelScope.launch {
+        val employeeId = currentEmployeeId.ifBlank { repo.currentUserId().orEmpty() }
+        if (taskId.isBlank() || employeeId.isBlank()) return@launch
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching {
+            repo.acceptDeliveryTask(taskId, employeeId)
+        }.onSuccess { saved ->
+            if (saved != null) {
+                _state.value = _state.value.copy(
+                    tasks = _state.value.tasks.map { if (it.id == taskId) saved else it },
+                    loading = false,
+                )
+                notifyAdmin(
+                    "Delivery accepted",
+                    saved.customerName,
+                    kind = "delivery",
+                    relatedId = saved.id,
+                )
+            } else {
+                _state.value = _state.value.copy(loading = false, error = "Could not accept task.")
+            }
+        }.onFailure {
+            _state.value = _state.value.copy(loading = false, error = it.message ?: "Failed to accept task")
+        }
+    }
+
+    fun recordTaskCheckpoint(taskId: String) = viewModelScope.launch {
+        val employeeId = currentEmployeeId.ifBlank { repo.currentUserId().orEmpty() }
+        if (taskId.isBlank() || employeeId.isBlank()) return@launch
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching {
+            repo.recordTaskCheckpoint(taskId, employeeId)
+        }.onSuccess { saved ->
+            if (saved != null) {
+                _state.value = _state.value.copy(
+                    tasks = _state.value.tasks.map { if (it.id == taskId) saved else it },
+                    loading = false,
+                )
+            } else {
+                _state.value = _state.value.copy(loading = false, error = "Could not record checkpoint.")
+            }
+        }.onFailure {
+            _state.value = _state.value.copy(loading = false, error = it.message ?: "Failed to record location")
+        }
+    }
+
+    fun completeTask(taskId: String) = viewModelScope.launch {
+        val employeeId = currentEmployeeId.ifBlank { repo.currentUserId().orEmpty() }
+        if (taskId.isBlank() || employeeId.isBlank()) return@launch
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching {
+            repo.completeDeliveryTask(taskId, employeeId)
+        }.onSuccess { saved ->
+            if (saved != null) {
+                _state.value = _state.value.copy(
+                    tasks = _state.value.tasks.map { if (it.id == taskId) saved else it },
+                    loading = false,
+                )
+                notifyAdmin(
+                    "Delivery completed",
+                    saved.customerName,
+                    kind = "delivery",
+                    relatedId = saved.id,
+                )
+            } else {
+                _state.value = _state.value.copy(loading = false, error = "Could not complete task.")
+            }
+        }.onFailure {
+            _state.value = _state.value.copy(loading = false, error = it.message ?: "Failed to complete delivery")
         }
     }
 
@@ -301,6 +388,12 @@ class EmployeeViewModel(
         }.onSuccess {
             loadDashboard(employeeId)
             _state.value = _state.value.copy(selectedTask = null)
+            notifyAdmin(
+                "Delivery completed",
+                "Delivered $delivered · returned $returned empty can(s)",
+                kind = "delivery",
+                relatedId = taskId,
+            )
         }.onFailure {
             _state.value = _state.value.copy(loading = false, error = it.message ?: "Submission failed")
         }
@@ -320,6 +413,7 @@ class EmployeeViewModel(
                         existing.id == saved.id
                     } + saved
                 _state.value = _state.value.copy(customers = merged, loading = false)
+                notifyAdmin("New customer", saved.name, kind = "customer", relatedId = saved.id)
                 onSaved(saved)
             }
             .onFailure {
@@ -340,9 +434,14 @@ class EmployeeViewModel(
     // ── In-app notifications ────────────────────────────────────────────────
 
     /** Notifies the tenant admin (e.g. after a sale). Never fails the caller. */
-    fun notifyAdmin(title: String, body: String, kind: String = "sale") {
+    fun notifyAdmin(
+        title: String,
+        body: String,
+        kind: String = "sale",
+        relatedId: String? = null,
+    ) {
         viewModelScope.launch {
-            runCatching { notifications.sendToAdmin(title, body, kind) }
+            runCatching { notifications.sendToAdmin(title, body, kind, relatedId) }
             refreshNotifications()
         }
     }
@@ -469,6 +568,11 @@ class EmployeeViewModel(
             }
         }.onSuccess {
             loadDashboard(currentEmployeeId)
+            notifyAdmin(
+                "Stock updated",
+                "${brandName.trim().ifBlank { sku.trim() }} · +$qty units @ ${shopName.trim()}",
+                kind = "stock",
+            )
         }.onFailure {
             _state.value = _state.value.copy(error = it.message ?: "Failed to save stock purchase", loading = false)
         }
@@ -504,6 +608,13 @@ class EmployeeViewModel(
                 },
             )
             loadDashboard(currentEmployeeId)
+            val customerName = _state.value.customers.find { it.id == customerId }?.name ?: "Customer"
+            notifyAdmin(
+                "Stock updated",
+                "$customerName · returned $qty empty can(s)",
+                kind = "stock",
+                relatedId = customerId,
+            )
         }.onFailure {
             it.printStackTrace()
             _state.value = _state.value.copy(

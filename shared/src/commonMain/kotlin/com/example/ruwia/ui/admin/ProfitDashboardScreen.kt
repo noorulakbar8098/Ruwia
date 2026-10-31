@@ -36,6 +36,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,6 +45,7 @@ import com.example.ruwia.domain.*
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.GlossyTealBox
+import com.example.ruwia.ui.components.formKeyboardActions
 import kotlin.time.Clock
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -523,6 +525,35 @@ fun ProfitDashboardScreen(
             }
         }
 
+        fun saveExpense() {
+            val amount = (if (isCustom) customAmount else editValue).toDoubleOrNull() ?: 0.0
+            val updated = if (isCustom) {
+                if (field == "new") {
+                    val list = selectedExpense.customExpensesList.toMutableList()
+                    list.add(CustomExpense(customName.ifBlank { "Expense" }, amount))
+                    selectedExpense.copy(customExpenses = jsonEncode(list))
+                } else {
+                    val idx = field.substringAfter("custom_").toIntOrNull() ?: 0
+                    val list = selectedExpense.customExpensesList.toMutableList()
+                    if (idx in list.indices) {
+                        list[idx] = CustomExpense(customName.ifBlank { list[idx].name }, amount)
+                    }
+                    selectedExpense.copy(customExpenses = jsonEncode(list))
+                }
+            } else {
+                when (field) {
+                    "shopRent"      -> selectedExpense.copy(shopRent = amount)
+                    "adminSalary"   -> selectedExpense.copy(adminSalary = amount)
+                    "deliveryStaff" -> selectedExpense.copy(deliveryStaff = amount)
+                    "misc"          -> selectedExpense.copy(miscellaneous = amount)
+                    "bike"          -> selectedExpense.copy(bikeExpense = amount)
+                    else -> selectedExpense
+                }
+            }
+            onExpenseSave(updated)
+            editingField = null
+        }
+
         Dialog(onDismissRequest = { editingField = null }) {
             Column(
                 modifier = Modifier
@@ -549,6 +580,8 @@ fun ProfitDashboardScreen(
                             value = customName,
                             onValueChange = { customName = it },
                             textStyle = TextStyle(fontSize = 14.sp, color = SaaSColors.TextPrimary),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                            keyboardActions = formKeyboardActions(),
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -570,7 +603,11 @@ fun ProfitDashboardScreen(
                         value = if (isCustom) customAmount else editValue,
                         onValueChange = { if (isCustom) customAmount = it else editValue = it },
                         textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SaaSColors.TextPrimary),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = formKeyboardActions(onDone = ::saveExpense),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -585,34 +622,7 @@ fun ProfitDashboardScreen(
                         Text("Cancel", color = SaaSColors.TextSecondary)
                     }
                     Button(
-                        onClick = {
-                            val amount = (if (isCustom) customAmount else editValue).toDoubleOrNull() ?: 0.0
-                            val updated = if (isCustom) {
-                                if (field == "new") {
-                                    val list = selectedExpense.customExpensesList.toMutableList()
-                                    list.add(CustomExpense(customName.ifBlank { "Expense" }, amount))
-                                    selectedExpense.copy(customExpenses = jsonEncode(list))
-                                } else {
-                                    val idx = field.substringAfter("custom_").toIntOrNull() ?: 0
-                                    val list = selectedExpense.customExpensesList.toMutableList()
-                                    if (idx in list.indices) {
-                                        list[idx] = CustomExpense(customName.ifBlank { list[idx].name }, amount)
-                                    }
-                                    selectedExpense.copy(customExpenses = jsonEncode(list))
-                                }
-                            } else {
-                                when (field) {
-                                    "shopRent"      -> selectedExpense.copy(shopRent = amount)
-                                    "adminSalary"   -> selectedExpense.copy(adminSalary = amount)
-                                    "deliveryStaff" -> selectedExpense.copy(deliveryStaff = amount)
-                                    "misc"          -> selectedExpense.copy(miscellaneous = amount)
-                                    "bike"          -> selectedExpense.copy(bikeExpense = amount)
-                                    else -> selectedExpense
-                                }
-                            }
-                            onExpenseSave(updated)
-                            editingField = null
-                        },
+                        onClick = ::saveExpense,
                         colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)

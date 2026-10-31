@@ -404,6 +404,10 @@ private fun TxSearchField(
             androidx.compose.foundation.text.BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                ),
+                keyboardActions = com.example.ruwia.ui.components.formKeyboardActions(),
                 singleLine = true,
                 textStyle = androidx.compose.ui.text.TextStyle(
                     color = NTColors.TextPrimary, fontSize = 14.sp,

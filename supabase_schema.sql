@@ -207,6 +207,19 @@ ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS employee_name TEXT;
 ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS product_id UUID;
 ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS product_name TEXT;
 ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS delivery_date DATE;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS timeline JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS dest_latitude DOUBLE PRECISION;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS dest_longitude DOUBLE PRECISION;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS dest_name TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS maps_link TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS current_latitude DOUBLE PRECISION;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS current_longitude DOUBLE PRECISION;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS current_location_name TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS journey_start_time TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS last_location_update_time TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS arrival_time TEXT;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS distance_remaining_meters DOUBLE PRECISION;
+ALTER TABLE route_tasks ADD COLUMN IF NOT EXISTS live_eta TEXT;
 ALTER TABLE route_tasks ALTER COLUMN status SET DEFAULT 'pending';
 
 CREATE INDEX IF NOT EXISTS route_tasks_admin_schedule_idx

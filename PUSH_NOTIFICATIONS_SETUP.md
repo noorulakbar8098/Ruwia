@@ -12,10 +12,11 @@ Two layers ship in this repo:
 ## A. In-app feed (5 minutes)
 
 1. Open Supabase Dashboard → SQL Editor.
-2. Paste the contents of `supabase_migration_notifications.sql` → Run.
-3. Done. Events already wired:
-   - employee makes a sale → admin gets **"New sale"**
-   - admin adds stock / product / adjustment → all employees get a broadcast
+2. Paste the contents of `supabase_migration_notifications.sql` → Run. Re-run it for existing installations to enable multiple devices per account.
+3. Events wired in the app:
+   - employee records a sale, stock change, customer, or delivery update → admin is notified
+   - admin adds/updates/removes a customer or changes stock → employees are notified
+   - admin assigns or updates a delivery task → that employee is notified
 4. Open the app → bell icon → Notifications screen. Tap a row to mark it read.
 
 ## B. System push via FCM (Android)
@@ -52,7 +53,7 @@ supabase functions deploy send-push
 4. Admin adds stock → employee phone buzzes.
 
 ### How it fits together
-`RuwiaMessagingService` (system tray) ← FCM ← `send-push` edge function ← `notifications` table ← app writes. Tokens land in `device_tokens` at login and app start; rotation is handled automatically. Tapping a banner opens the app, where the same item waits in the bell center.
+`RuwiaMessagingService` (system tray) ← FCM ← `send-push` edge function ← `notifications` table ← app writes. Device tokens register after login and session restoration, refresh on FCM rotation, and are removed on logout. The migration supports multiple devices per account. Tapping a banner opens the app, where the same item waits in the bell center.
 
 ### iOS note
 iOS needs APNs certificates plus a native delegate — not wired in this change. The in-app feed works on iOS as-is.

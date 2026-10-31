@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,6 +35,7 @@ import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
+import com.example.ruwia.ui.components.formKeyboardActions
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -245,6 +247,40 @@ fun SalesSummaryScreen(
             }
         }
 
+        fun saveExpense() {
+            if (isCustom) {
+                val name = customName.trim()
+                if (name.isEmpty()) return
+                val amount = customAmount.trim().ifEmpty { "0" }.toDoubleOrNull() ?: return
+                val currentList = expense.customExpensesList.toMutableList()
+                if (field == "new") {
+                    currentList.add(com.example.ruwia.domain.CustomExpense(name, amount))
+                } else {
+                    val idx = field.substringAfter("custom_").toIntOrNull() ?: return
+                    if (idx in currentList.indices) {
+                        currentList[idx] = com.example.ruwia.domain.CustomExpense(name, amount)
+                    }
+                }
+                val updatedJson = kotlinx.serialization.json.Json.encodeToString(currentList)
+                val updated = expense.copy(customExpenses = updatedJson)
+                expense = updated
+                onExpenseSave(updated)
+            } else {
+                val v = editValue.trim().ifEmpty { "0" }.toDoubleOrNull() ?: return
+                val updated = when (field) {
+                    "shopRent"      -> expense.copy(shopRent = v)
+                    "adminSalary"   -> expense.copy(adminSalary = v)
+                    "deliveryStaff" -> expense.copy(deliveryStaff = v)
+                    "misc"          -> expense.copy(miscellaneous = v)
+                    "bike"          -> expense.copy(bikeExpense = v)
+                    else -> expense
+                }
+                expense = updated
+                onExpenseSave(updated)
+            }
+            editingField = null
+        }
+
         Dialog(onDismissRequest = { editingField = null }) {
             Column(
                 modifier = Modifier
@@ -271,6 +307,8 @@ fun SalesSummaryScreen(
                             onValueChange = { customName = it },
                             textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium, color = NTColors.TextPrimary),
                             cursorBrush = SolidColor(NTColors.Primary),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                            keyboardActions = formKeyboardActions(),
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -295,7 +333,11 @@ fun SalesSummaryScreen(
                         onValueChange = { if (isCustom) customAmount = it else editValue = it },
                         textStyle = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary),
                         cursorBrush = SolidColor(NTColors.Primary),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = formKeyboardActions(onDone = ::saveExpense),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -331,39 +373,7 @@ fun SalesSummaryScreen(
                         }
                     }
                     Button(
-                        onClick = {
-                            if (isCustom) {
-                                val name = customName.trim()
-                                if (name.isEmpty()) return@Button
-                                val amount = customAmount.trim().ifEmpty { "0" }.toDoubleOrNull() ?: return@Button
-                                val currentList = expense.customExpensesList.toMutableList()
-                                if (field == "new") {
-                                    currentList.add(com.example.ruwia.domain.CustomExpense(name, amount))
-                                } else {
-                                    val idx = field.substringAfter("custom_").toIntOrNull() ?: return@Button
-                                    if (idx in currentList.indices) {
-                                        currentList[idx] = com.example.ruwia.domain.CustomExpense(name, amount)
-                                    }
-                                }
-                                val updatedJson = kotlinx.serialization.json.Json.encodeToString(currentList)
-                                val updated = expense.copy(customExpenses = updatedJson)
-                                expense = updated
-                                onExpenseSave(updated)
-                            } else {
-                                val v = editValue.trim().ifEmpty { "0" }.toDoubleOrNull() ?: return@Button
-                                val updated = when (field) {
-                                    "shopRent"      -> expense.copy(shopRent = v)
-                                    "adminSalary"   -> expense.copy(adminSalary = v)
-                                    "deliveryStaff" -> expense.copy(deliveryStaff = v)
-                                    "misc"          -> expense.copy(miscellaneous = v)
-                                    "bike"          -> expense.copy(bikeExpense = v)
-                                    else -> expense
-                                }
-                                expense = updated
-                                onExpenseSave(updated)
-                            }
-                            editingField = null
-                        },
+                        onClick = ::saveExpense,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
                     ) { Text("Save") }

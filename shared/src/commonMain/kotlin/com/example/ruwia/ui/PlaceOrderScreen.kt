@@ -7,9 +7,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ruwia.presentation.UserViewModel
+import com.example.ruwia.ui.components.formKeyboardActions
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -25,6 +27,10 @@ fun PlaceOrderScreen(
             vm.clearOrderPlaced()
             onBack()
         }
+    }
+    val n = qty.toIntOrNull() ?: 0
+    fun placeOrder() {
+        if (!state.loading && n > 0) vm.placeOrder(n)
     }
 
     Scaffold(
@@ -56,15 +62,18 @@ fun PlaceOrderScreen(
                 value = qty,
                 onValueChange = { v -> if (v.all(Char::isDigit)) qty = v },
                 label = { Text("Quantity") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = formKeyboardActions(onDone = ::placeOrder),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(24.dp))
 
-            val n = qty.toIntOrNull() ?: 0
             Button(
-                onClick = { vm.placeOrder(n) },
+                onClick = ::placeOrder,
                 enabled = !state.loading && n > 0,
                 modifier = Modifier.fillMaxWidth(),
             ) {

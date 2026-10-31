@@ -26,8 +26,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import com.example.ruwia.util.capitalizeWords
 import com.example.ruwia.util.isTextField
+import com.example.ruwia.ui.components.formKeyboardActions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -405,6 +407,19 @@ private fun EmployeeEditDialog(
     var shop   by remember { mutableStateOf(initial.shopName.ifBlank { shops.firstOrNull().orEmpty() }) }
     var salary by remember { mutableStateOf(initial.monthlySalary.toString()) }
 
+    fun saveEmployee() {
+        if (name.isBlank()) return
+        onSave(
+            initial.copy(
+                name = name.trim().ifBlank { initial.name },
+                phone = phone.trim(),
+                role = role.lowercase(),
+                shopName = shop,
+                monthlySalary = salary.toDoubleOrNull() ?: initial.monthlySalary,
+            )
+        )
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -422,6 +437,7 @@ private fun EmployeeEditDialog(
                 value = name, onValueChange = { name = it },
                 placeholder = "Employee name",
                 keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Next,
             )
             Spacer(Modifier.height(NTDp.md))
             EmployeeFieldLabel("Phone")
@@ -429,6 +445,7 @@ private fun EmployeeEditDialog(
                 value = phone, onValueChange = { phone = it },
                 placeholder = "Mobile number",
                 keyboardType = KeyboardType.Phone,
+                imeAction = ImeAction.Next,
             )
             Spacer(Modifier.height(NTDp.md))
             EmployeeFieldLabel("Monthly salary")
@@ -436,6 +453,8 @@ private fun EmployeeEditDialog(
                 value = salary, onValueChange = { salary = it },
                 placeholder = "e.g. 15000",
                 keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Done,
+                onImeDone = ::saveEmployee,
             )
 
             Spacer(Modifier.height(NTDp.md))
@@ -539,17 +558,7 @@ private fun EmployeeEditDialog(
                         .weight(1f)
                         .clip(RoundedCornerShape(12.dp))
                         .background(if (name.isNotBlank()) NTColors.Primary else NTColors.TextDisabled)
-                        .clickable(enabled = name.isNotBlank()) {
-                            onSave(
-                                initial.copy(
-                                    name          = name.trim().ifBlank { initial.name },
-                                    phone         = phone.trim(),
-                                    role          = role.lowercase(),
-                                    shopName      = shop,
-                                    monthlySalary = salary.toDoubleOrNull() ?: initial.monthlySalary,
-                                )
-                            )
-                        }
+                        .clickable(enabled = name.isNotBlank(), onClick = ::saveEmployee)
                         .padding(vertical = 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -577,6 +586,8 @@ private fun EmployeeFieldInput(
     onValueChange: (String) -> Unit,
     placeholder: String,
     keyboardType: KeyboardType,
+    imeAction: ImeAction,
+    onImeDone: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
@@ -597,7 +608,9 @@ private fun EmployeeFieldInput(
             keyboardOptions = KeyboardOptions(
                 keyboardType = keyboardType,
                 capitalization = if (keyboardType.isTextField()) KeyboardCapitalization.Words else KeyboardCapitalization.None,
+                imeAction = imeAction,
             ),
+            keyboardActions = formKeyboardActions(onDone = onImeDone),
             modifier = Modifier.fillMaxWidth(),
         )
     }

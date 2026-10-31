@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,6 +47,7 @@ import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.theme.RuwiaColor
 import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.isoToDisplayTime
+import com.example.ruwia.ui.components.formKeyboardActions
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 import kotlinx.datetime.TimeZone
@@ -346,6 +348,65 @@ fun AddSaleScreen(
         effectiveStockMap(products, stockMovements, shopMatchKey(selectedShop).ifBlank { null })
     }
 
+    fun saveSale() {
+        if (!isSaveEnabled || isSaving) return
+        if (isEditing) {
+            val customer = selectedCustomer ?: return
+            val customerId = liveSelectedCustomer?.id.orEmpty()
+            if (customerId.isBlank() || customerId.startsWith("local_")) {
+                errorDialogText = "Select a saved customer before saving this sale."
+                return
+            }
+            onSaveEdit(customer.name, customerId)
+            return
+        }
+        val empties = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val overStockLine = lineItems.firstOrNull { item ->
+            val product = products.getOrNull(item.productIdx) ?: return@firstOrNull false
+            val availRaw = availableUnitsMap[product.id] ?: product.stockAvailable
+            item.qty > availRaw
+        }
+        if (overStockLine != null) {
+            val product = products.getOrNull(overStockLine.productIdx)
+            val availRaw = product?.let { availableUnitsMap[it.id] ?: it.stockAvailable } ?: 0
+            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cases\nAvailable: $availRaw Cases\n\nPlease reduce the quantity and try again."
+            return
+        }
+        if (!canPreview.isWithinLimit) {
+            errorDialogText = buildString {
+                append("Cannot receive $emptyCansReceived empty 20L cans.\n\n")
+                append("Previously outstanding: $previouslyOutstanding\n")
+                append("New 20L cans in this sale: $issued20LCans\n")
+                append("Maximum you can receive: ${canPreview.maxReturnable}")
+            }
+            return
+        }
+        val customerId = liveSelectedCustomer?.id.orEmpty()
+        if ((issued20LCans > 0 || empties > 0 || paidNow > 0.0) &&
+            (customerId.isBlank() || customerId.startsWith("local_"))
+        ) {
+            errorDialogText = "This customer is still saving. Wait a moment, then tap Save Sale again."
+            return
+        }
+        if (paidNow > totalDue + 0.001) {
+            errorDialogText = "Payment received (₹${paidNow.toInt()}) cannot exceed the total amount due of ₹${totalDue.toInt()}."
+            return
+        }
+        val saleShop = selectedShop.ifBlank { shopOptions.firstOrNull().orEmpty() }
+        onSave(
+            selectedCustomer!!.name,
+            customerId,
+            lineItems,
+            empties,
+            nowSaleDate(),
+            nowSaleTime(),
+            saleKey,
+            saleShop,
+            paymentReceivedText,
+            paymentMode,
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(RuwiaColor.Background)) {
         Scaffold(
             containerColor = RuwiaColor.Background,
@@ -359,77 +420,7 @@ fun AddSaleScreen(
                     totalQty = totalQty,
                     onCancel = onBack,
                     saveLabel = if (isEditing) "Save Changes" else "Save Sale",
-                    onSave   = {
-                        if (isEditing) {
-                            val customer = selectedCustomer ?: return@SaleBottomBar
-                            val customerId = liveSelectedCustomer?.id.orEmpty()
-                            if (customerId.isBlank() || customerId.startsWith("local_")) {
-                                errorDialogText = "Select a saved customer before saving this sale."
-                                return@SaleBottomBar
-                            }
-                            onSaveEdit(customer.name, customerId)
-                            return@SaleBottomBar
-                        }
-                        val empties = emptyCansText.toIntOrNull()?.coerceAtLeast(0) ?: 0
-                        // ── Stock validation ───────────────────────────────────
-                        // Check each line item against available stock. Block the
-                        // sale and show a clear error if any product is over-limit.
-                        // item.qty is in cases, so convert available units→cases.
-                        val overStockLine = lineItems.firstOrNull { item ->
-                            val product = products.getOrNull(item.productIdx) ?: return@firstOrNull false
-                            val availRaw = availableUnitsMap[product.id] ?: product.stockAvailable
-                            item.qty > availRaw
-                        }
-                        if (overStockLine != null) {
-                            val product = products.getOrNull(overStockLine.productIdx)
-                            val availRaw = product?.let { availableUnitsMap[it.id] ?: it.stockAvailable } ?: 0
-                            errorDialogText = "Not enough stock for ${product?.displayName ?: "this product"}.\n\nRequested: ${overStockLine.qty} Cases\nAvailable: $availRaw Cases\n\nPlease reduce the quantity and try again."
-                            return@SaleBottomBar
-                        }
-                        // ── 20L can validation ─────────────────────────────
-                        // A return may never exceed the customer's outstanding
-                        // balance before this sale; new cans issued in this
-                        // entry do not increase the return limit.
-                        if (!canPreview.isWithinLimit) {
-                            errorDialogText = buildString {
-                                append("Cannot receive $emptyCansReceived empty 20L cans.\n\n")
-                                append("Previously outstanding: $previouslyOutstanding\n")
-                                append("New 20L cans in this sale: $issued20LCans\n")
-                                append("Maximum you can receive: ${canPreview.maxReturnable}")
-                            }
-                            return@SaleBottomBar
-                        }
-                        val customerId = liveSelectedCustomer?.id.orEmpty()
-                        if ((issued20LCans > 0 || empties > 0 || paidNow > 0.0) &&
-                            (customerId.isBlank() || customerId.startsWith("local_"))
-                        ) {
-                            errorDialogText = "This customer is still saving. Wait a moment, then tap Save Sale again."
-                            return@SaleBottomBar
-                        }
-                        if (paidNow > totalDue + 0.001) {
-                            errorDialogText = "Payment received (₹${paidNow.toInt()}) cannot exceed the total amount due of ₹${totalDue.toInt()}."
-                            return@SaleBottomBar
-                        }
-                        // The picked shop travels with the save so the outward
-                        // movement lands in that shop's bucket (never blank —
-                        // a blank shop_name would orphan the row from every
-                        // shop tab).
-                        val saleShop = selectedShop.ifBlank {
-                            shopOptions.firstOrNull().orEmpty()
-                        }
-                        onSave(
-                            selectedCustomer!!.name,
-                            customerId,
-                            lineItems,
-                            empties,
-                            nowSaleDate(),
-                            nowSaleTime(),
-                            saleKey,
-                            saleShop,
-                            paymentReceivedText,
-                            paymentMode,
-                        )
-                    },
+                    onSave = ::saveSale,
                 )
             },
         ) { padding ->
@@ -595,6 +586,7 @@ fun AddSaleScreen(
                             }
                         },
                         onModeChange = { paymentMode = it },
+                        onImeDone = ::saveSale,
                     )
                     Spacer(Modifier.height(20.dp))
                 }
@@ -656,6 +648,8 @@ fun AddSaleScreen(
                         value = productSearchQuery,
                         onValueChange = { productSearchQuery = it },
                         textStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Medium, color = RuwiaColor.TextPrimary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = formKeyboardActions(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1258,6 +1252,7 @@ private fun CanTrackingSection(
     preview: CanBalancePreview,
     value: String,
     onValueChange: (String) -> Unit,
+    onImeDone: (() -> Unit)? = null,
 ) {
     val canEdit = preview.maxReturnable > 0
 
@@ -1315,7 +1310,11 @@ private fun CanTrackingSection(
                     enabled = canEdit,
                     textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RuwiaColor.TextPrimary),
                     cursorBrush = SolidColor(RuwiaColor.TealPrimary),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = formKeyboardActions(onDone = onImeDone),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1382,6 +1381,7 @@ private fun PaymentReceivedSection(
     mode: String,
     onValueChange: (String) -> Unit,
     onModeChange: (String) -> Unit,
+    onImeDone: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -1444,7 +1444,11 @@ private fun PaymentReceivedSection(
                     onValueChange = onValueChange,
                     textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RuwiaColor.TextPrimary),
                     cursorBrush = SolidColor(RuwiaColor.TealPrimary),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = formKeyboardActions(onDone = onImeDone),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )

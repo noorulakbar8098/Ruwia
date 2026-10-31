@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -32,6 +33,7 @@ import androidx.compose.ui.window.Dialog
 import com.example.ruwia.ui.dashboard.*
 import com.example.ruwia.util.capitalizeWords
 import com.example.ruwia.util.isTextField
+import com.example.ruwia.ui.components.formKeyboardActions
 import kotlin.random.Random
 
 // ─────────────────────────────────────────────────────────────
@@ -113,6 +115,14 @@ fun AddEmployeeScreen(
                   name.isNotBlank() && phone.isNotBlank() &&
                   role.isNotBlank() && shop.isNotBlank() &&
                   email.contains("@") && password.length >= 8
+    fun saveEmployee() {
+        if (!canSave) return
+        onSave(
+            name.trim(), phone.trim(), role, shop,
+            salary.toDoubleOrNull() ?: 0.0,
+            email.trim(), password
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(NTColors.Background).statusBarsPadding()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -202,14 +212,16 @@ fun AddEmployeeScreen(
                     AESectionCard(1, "Personal info") {
                         AELabel("Full name")
                         AETextField(value = name, onValueChange = { name = it },
-                            icon = Icons.Rounded.Person, placeholder = "e.g. Ravi Velu")
+                            icon = Icons.Rounded.Person, placeholder = "e.g. Ravi Velu",
+                            imeAction = ImeAction.Next)
 
                         Spacer(modifier = Modifier.height(NTDp.md))
 
                         AELabel("Phone number")
                         AETextField(value = phone, onValueChange = { v -> if (v.length <= 15) phone = v },
                             icon = Icons.Rounded.Phone, placeholder = "+91 98765 43210",
-                            keyboard = KeyboardType.Phone)
+                            keyboard = KeyboardType.Phone,
+                            imeAction = ImeAction.Next)
                     }
                 }
 
@@ -240,6 +252,7 @@ fun AddEmployeeScreen(
                             icon = Icons.Rounded.CurrencyRupee,
                             placeholder = "0",
                             keyboard = KeyboardType.Number,
+                            imeAction = ImeAction.Next,
                             trailingLabel = "/ month"
                         )
                     }
@@ -279,7 +292,8 @@ fun AddEmployeeScreen(
                             onValueChange = { emailEdited = true; email = it },
                             icon = Icons.Rounded.Email,
                             placeholder = "employee@neerthuli.in",
-                            keyboard = KeyboardType.Email
+                            keyboard = KeyboardType.Email,
+                            imeAction = ImeAction.Next,
                         )
 
                         Spacer(modifier = Modifier.height(NTDp.md))
@@ -313,6 +327,8 @@ fun AddEmployeeScreen(
                                     ),
                                     cursorBrush = SolidColor(NTColors.Primary),
                                     singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = formKeyboardActions(onDone = ::saveEmployee),
                                     visualTransformation = if (showPassword)
                                         VisualTransformation.None
                                     else PasswordVisualTransformation(),
@@ -372,13 +388,7 @@ fun AddEmployeeScreen(
                 GlossyTealBox(
                     shape = RoundedCornerShape(NTDp.radFull),
                     enabled = canSave,
-                    onClick = {
-                        onSave(
-                            name.trim(), phone.trim(), role, shop,
-                            salary.toDoubleOrNull() ?: 0.0,
-                            email.trim(), password
-                        )
-                    },
+                    onClick = ::saveEmployee,
                     onClickLabel = "Create account",
                     modifier = Modifier.weight(2f).height(52.dp),
                 ) {
@@ -481,7 +491,9 @@ private fun AETextField(
     icon: ImageVector,
     placeholder: String = "",
     keyboard: KeyboardType = KeyboardType.Text,
-    trailingLabel: String? = null
+    trailingLabel: String? = null,
+    imeAction: ImeAction = ImeAction.Done,
+    onImeDone: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().height(50.dp)
@@ -506,7 +518,9 @@ private fun AETextField(
                 keyboardOptions = KeyboardOptions(
                     keyboardType = keyboard,
                     capitalization = if (keyboard.isTextField()) KeyboardCapitalization.Words else KeyboardCapitalization.None,
+                    imeAction = imeAction,
                 ),
+                keyboardActions = formKeyboardActions(onDone = onImeDone),
                 textStyle = TextStyle(color = NTColors.TextPrimary, fontSize = 14.sp,
                     fontWeight = FontWeight.Medium),
                 cursorBrush = SolidColor(NTColors.Primary),

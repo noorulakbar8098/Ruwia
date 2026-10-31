@@ -68,7 +68,15 @@ Deno.serve(async (req: Request) => {
     // Resolve recipient user ids within the tenant.
     let userIds: string[] = [];
     if (notification.to_user_id) {
-      userIds = [notification.to_user_id];
+      const { data, error } = await supabase
+        .from("employees")
+        .select("id")
+        .eq("id", notification.to_user_id)
+        .eq("admin_id", notification.admin_id)
+        .eq("status", "active")
+        .limit(1);
+      if (error) throw error;
+      userIds = (data ?? []).map((employee: { id: string }) => employee.id);
     } else if (notification.to_role === "employee") {
       const { data, error } = await supabase
         .from("employees")
@@ -88,7 +96,8 @@ Deno.serve(async (req: Request) => {
     const { data: tokens, error: tokenError } = await supabase
       .from("device_tokens")
       .select("token")
-      .in("user_id", userIds);
+      .in("user_id", userIds)
+      .eq("admin_id", notification.admin_id);
     if (tokenError) throw tokenError;
     const pushTokens = [...new Set((tokens ?? []).map((t: { token: string }) => t.token))];
     if (pushTokens.length === 0) {

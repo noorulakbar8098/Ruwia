@@ -29,6 +29,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -55,6 +56,7 @@ import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
+import com.example.ruwia.ui.components.formKeyboardActions
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import ruwia.shared.generated.resources.*
@@ -765,6 +767,8 @@ private fun InventoryHeader(
                                 color = SaaSColors.TextPrimary,
                                 fontSize = 14.sp
                             ),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = formKeyboardActions(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1807,6 +1811,8 @@ private fun CustomerPricePickerDialog(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = formKeyboardActions(),
                     placeholder = { Text("Search customers...") },
                     leadingIcon = {
                         Icon(
@@ -1928,6 +1934,10 @@ private fun CustomerPricePickerDialog(
                             val isCustom = hasDbCustom ||
                                 purchaseValue != defaultPurchase || sellingValue != defaultSelling
                             val isSaved = savedIds.contains(customerId)
+                            fun saveCustomerPrice() {
+                                onPriceSave(customerId, purchaseValue.toDouble(), sellingValue.toDouble())
+                                savedIds = savedIds + customerId
+                            }
 
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2024,7 +2034,11 @@ private fun CustomerPricePickerDialog(
                                             label = { Text("Purchase", fontSize = 11.sp) },
                                             prefix = { Text("₹") },
                                             singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            keyboardOptions = KeyboardOptions(
+                                                keyboardType = KeyboardType.Number,
+                                                imeAction = ImeAction.Next,
+                                            ),
+                                            keyboardActions = formKeyboardActions(),
                                             shape = RoundedCornerShape(12.dp)
                                         )
                                         OutlinedTextField(
@@ -2046,7 +2060,11 @@ private fun CustomerPricePickerDialog(
                                             label = { Text("Selling", fontSize = 11.sp) },
                                             prefix = { Text("₹") },
                                             singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            keyboardOptions = KeyboardOptions(
+                                                keyboardType = KeyboardType.Number,
+                                                imeAction = ImeAction.Done,
+                                            ),
+                                            keyboardActions = formKeyboardActions(onDone = ::saveCustomerPrice),
                                             shape = RoundedCornerShape(12.dp)
                                         )
                                     }
@@ -2094,10 +2112,7 @@ private fun CustomerPricePickerDialog(
                                             Spacer(Modifier.width(1.dp))
                                         }
                                         Button(
-                                            onClick = {
-                                                onPriceSave(customerId, purchaseValue.toDouble(), sellingValue.toDouble())
-                                                savedIds = savedIds + customerId
-                                            },
+                                            onClick = ::saveCustomerPrice,
                                             modifier = Modifier.height(38.dp),
                                             shape = RoundedCornerShape(10.dp),
                                             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
@@ -2407,6 +2422,13 @@ private fun AdjustStockDialog(
     var expandedReason by remember { mutableStateOf(false) }
     var expandedShop by remember { mutableStateOf(false) }
 
+    fun saveAdjustment() {
+        if (isFutureTimestamp(dateTimeIso)) {
+            dateError = "Future date/time is not allowed. Pick today or a past date/time."
+            return
+        }
+        onConfirm(targetCount, reason, selectedShop, dateTimeIso)
+    }
 
     val unitWord = "Units"
 
@@ -2506,7 +2528,11 @@ private fun AdjustStockDialog(
                             color = SaaSColors.TextPrimary,
                             textAlign = TextAlign.Center
                         ),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = formKeyboardActions(onDone = ::saveAdjustment),
                         modifier = Modifier
                             .padding(horizontal = 16.dp)
                             .width(80.dp)
@@ -2634,15 +2660,7 @@ private fun AdjustStockDialog(
                         Text("Cancel", fontWeight = FontWeight.Bold)
                     }
                     Button(
-                        onClick = {
-                            // Last line of defence: a future stamp must never
-                            // be saved even if it slipped past the pickers.
-                            if (isFutureTimestamp(dateTimeIso)) {
-                                dateError = "Future date/time is not allowed. Pick today or a past date/time."
-                                return@Button
-                            }
-                            onConfirm(targetCount, reason, selectedShop, dateTimeIso)
-                        },
+                        onClick = ::saveAdjustment,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary)

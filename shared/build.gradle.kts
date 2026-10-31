@@ -57,6 +57,7 @@ kotlin {
             // no-ops without google-services.json). BOM is declared in the
             // top-level dependencies block below.
             implementation(libs.firebase.messaging)
+            implementation(libs.play.services.location)
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)

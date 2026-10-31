@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,6 +36,7 @@ import com.example.ruwia.util.capitalizeWords
 import com.example.ruwia.util.isFutureTimestamp
 import com.example.ruwia.util.isoToDisplayDate
 import com.example.ruwia.util.isoToDisplayTime
+import com.example.ruwia.ui.components.formKeyboardActions
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 
@@ -96,6 +98,38 @@ fun AddStockPurchaseScreen(
 
     var showShopDropdown by remember { mutableStateOf(false) }
     var showErrorAlert by remember { mutableStateOf<String?>(null) }
+
+    fun saveStock() {
+        val purchasePrice = purchasePriceStr.toDoubleOrNull()
+        val sellingPrice = sellingPriceStr.toDoubleOrNull()
+        if (brandName.isBlank() || sku.isBlank() || purchasePrice == null || sellingPrice == null) {
+            showErrorAlert = "Please fill all fields correctly."
+            return
+        }
+        if (isFutureTimestamp(dateTimeIso)) {
+            showErrorAlert = "Future date/time is not allowed. Pick today or a past date/time."
+            return
+        }
+        val alertLevel = if (alertEnabled) {
+            alertThresholdText.toIntOrNull()?.coerceIn(0, 999)
+                ?: DEFAULT_LOW_STOCK_ALERT
+        } else {
+            0
+        }
+        onSave(
+            productToRestock?.id,
+            sku,
+            brandName,
+            purchasePrice,
+            sellingPrice,
+            qty,
+            selectedShop,
+            dateTimeIso,
+            emptyCans,
+            alertLevel,
+            notes.trim()
+        )
+    }
 
     // Apply a picked date/time as the entry timestamp. Past and present are
     // kept; future values are rejected with an error (never silently clamped).
@@ -277,7 +311,11 @@ fun AddStockPurchaseScreen(
                     },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Words,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = formKeyboardActions(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = FormTeal,
                         unfocusedBorderColor = NTColors.Border,
@@ -318,6 +356,8 @@ fun AddStockPurchaseScreen(
                         placeholder = { Text("e.g. 20L, 1L, 250ml", color = NTColors.TextTertiary) },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        keyboardActions = formKeyboardActions(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = FormTeal,
                             unfocusedBorderColor = NTColors.Border,
@@ -390,7 +430,11 @@ fun AddStockPurchaseScreen(
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.SemiBold,
                             ),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Decimal,
+                                imeAction = ImeAction.Next,
+                            ),
+                            keyboardActions = formKeyboardActions(),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = FormTeal,
                                 unfocusedBorderColor = NTColors.Border,
@@ -416,7 +460,13 @@ fun AddStockPurchaseScreen(
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.SemiBold,
                             ),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Decimal,
+                                imeAction = if (alertEnabled || !isEditMode) ImeAction.Next else ImeAction.Done,
+                            ),
+                            keyboardActions = formKeyboardActions(
+                                onDone = if (!alertEnabled && isEditMode) ::saveStock else null,
+                            ),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = FormTeal,
                                 unfocusedBorderColor = NTColors.Border,
@@ -499,7 +549,13 @@ fun AddStockPurchaseScreen(
                                     fontWeight = FontWeight.ExtraBold,
                                     textAlign = TextAlign.Center,
                                 ),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = if (isEditMode) ImeAction.Done else ImeAction.Next,
+                                ),
+                                keyboardActions = formKeyboardActions(
+                                    onDone = if (isEditMode) ::saveStock else null,
+                                ),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = FormTeal,
@@ -772,6 +828,8 @@ fun AddStockPurchaseScreen(
                             placeholder = { Text("Add any additional notes…", color = NTColors.TextTertiary) },
                             minLines = 2,
                             maxLines = 4,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = formKeyboardActions(onDone = ::saveStock),
                             shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = FormTeal,
@@ -800,39 +858,7 @@ fun AddStockPurchaseScreen(
                         .padding(20.dp)
                 ) {
                     Button(
-                        onClick = {
-                            val purchasePrice = purchasePriceStr.toDoubleOrNull()
-                            val sellingPrice = sellingPriceStr.toDoubleOrNull()
-                            if (brandName.isBlank() || sku.isBlank() || purchasePrice == null || sellingPrice == null) {
-                                showErrorAlert = "Please fill all fields correctly."
-                                return@Button
-                            }
-                            // Last line of defence: a future timestamp must
-                            // never be saved even if it slipped past the pickers.
-                            if (isFutureTimestamp(dateTimeIso)) {
-                                showErrorAlert = "Future date/time is not allowed. Pick today or a past date/time."
-                                return@Button
-                            }
-                            val alertLevel = if (alertEnabled) {
-                                alertThresholdText.toIntOrNull()?.coerceIn(0, 999)
-                                    ?: DEFAULT_LOW_STOCK_ALERT
-                            } else {
-                                0
-                            }
-                            onSave(
-                                productToRestock?.id,
-                                sku,
-                                brandName,
-                                purchasePrice,
-                                sellingPrice,
-                                qty,
-                                selectedShop,
-                                dateTimeIso,
-                                emptyCans,
-                                alertLevel,
-                                notes.trim()
-                            )
-                        },
+                        onClick = ::saveStock,
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color.Transparent,

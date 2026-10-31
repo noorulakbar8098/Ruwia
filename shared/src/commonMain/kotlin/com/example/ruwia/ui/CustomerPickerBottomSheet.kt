@@ -26,12 +26,20 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ruwia.data.getLocationService
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.theme.RuwiaColor
+import com.example.ruwia.util.LocationPermissionRationaleDialog
+import com.example.ruwia.util.LocationPermissionStatus
+import com.example.ruwia.util.LocationUtils
 import com.example.ruwia.util.capitalizeWords
 import com.example.ruwia.util.isTextField
+import com.example.ruwia.util.rememberLocationPermissionController
+import com.example.ruwia.ui.components.formKeyboardActions
+import kotlinx.coroutines.launch
 
 // ── Two modes inside the sheet ────────────────────────────────────────────────
 
@@ -287,6 +295,8 @@ private fun ColumnScope.PickContent(
                 onValueChange = onSearchChange,
                 textStyle     = TextStyle(fontSize = 14.sp, color = RuwiaColor.TextPrimary),
                 cursorBrush   = SolidColor(RuwiaColor.TealPrimary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = formKeyboardActions(),
                 singleLine    = true,
                 modifier      = Modifier.fillMaxWidth(),
             )
@@ -427,6 +437,52 @@ private fun ColumnScope.AddNewContent(
     onSave: () -> Unit,
 ) {
     val isSaveEnabled = name.isNotBlank()
+    val coroutineScope = rememberCoroutineScope()
+    val locationService = remember { getLocationService() }
+    var isLocating by remember { mutableStateOf(false) }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    var showRationaleDialog by remember { mutableStateOf(false) }
+
+    fun fetchCurrentLocation() {
+        isLocating = true
+        locationError = null
+        coroutineScope.launch {
+            try {
+                val loc = locationService.getCurrentLocation()
+                if (loc != null) {
+                    val addr = locationService.reverseGeocode(loc.latitude, loc.longitude)
+                    if (addr.isNotBlank() && !addr.startsWith("Point")) {
+                        onLocChange(addr)
+                    } else {
+                        onLocChange("${loc.latitude}, ${loc.longitude}")
+                    }
+                } else {
+                    locationError = "Unable to get GPS fix. Please ensure location is enabled."
+                }
+            } catch (e: Exception) {
+                locationError = "Location error: ${e.message}"
+            } finally {
+                isLocating = false
+            }
+        }
+    }
+
+    val permissionController = rememberLocationPermissionController { isGranted ->
+        if (isGranted) {
+            fetchCurrentLocation()
+        } else {
+            showRationaleDialog = true
+        }
+    }
+
+    if (showRationaleDialog) {
+        LocationPermissionRationaleDialog(
+            status = permissionController.status,
+            onDismiss = { showRationaleDialog = false },
+            onRequestPermission = { permissionController.requestPermission() },
+            onOpenSettings = { permissionController.openAppSettings() },
+        )
+    }
 
     // Header
     Row(
@@ -471,6 +527,7 @@ private fun ColumnScope.AddNewContent(
             placeholder = "e.g. Murugan Stores",
             icon        = Icons.Rounded.Person,
             keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Next,
         )
         AddCustomerField(
             label       = "Phone number",
@@ -480,16 +537,106 @@ private fun ColumnScope.AddNewContent(
             placeholder = "10-digit mobile number",
             icon        = Icons.Rounded.Phone,
             keyboardType = KeyboardType.Phone,
+            imeAction = ImeAction.Next,
         )
-        AddCustomerField(
-            label       = "Location",
-            required    = false,
-            value       = location,
-            onChange    = onLocChange,
-            placeholder = "Area / street / landmark",
-            icon        = Icons.Rounded.LocationOn,
-            keyboardType = KeyboardType.Text,
-        )
+
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Location / Shop Address", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RuwiaColor.TextSecondary)
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(enabled = !isLocating) {
+                            if (permissionController.status == LocationPermissionStatus.GRANTED) {
+                                fetchCurrentLocation()
+                            } else {
+                                permissionController.requestPermission()
+                            }
+                        }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                ) {
+                    if (isLocating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = RuwiaColor.TealPrimary,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Locating…", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TealPrimary)
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.MyLocation,
+                            contentDescription = null,
+                            tint = RuwiaColor.TealPrimary,
+                            modifier = Modifier.size(13.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Use Current Location", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TealPrimary)
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            AddCustomerField(
+                label       = "",
+                required    = false,
+                value       = location,
+                onChange    = { newLoc ->
+                    onLocChange(newLoc)
+                    val isMapsLinkOrCoords = LocationUtils.isGoogleMapsUrl(newLoc) ||
+                            LocationUtils.parseGoogleMapsCoordinates(newLoc) != null
+                    if (isMapsLinkOrCoords) {
+                        coroutineScope.launch {
+                            isLocating = true
+                            locationError = null
+                            try {
+                                val coords = locationService.resolveCoordinatesFromInput(newLoc)
+                                if (coords != null) {
+                                    val resolved = locationService.reverseGeocode(coords.first, coords.second)
+                                    if (resolved.isNotBlank() && !resolved.startsWith("Point")) {
+                                        onLocChange(resolved)
+                                    }
+                                } else {
+                                    locationError = "Could not resolve address from Google Maps link."
+                                }
+                            } catch (e: Exception) {
+                                locationError = "Failed to resolve link: ${e.message}"
+                            } finally {
+                                isLocating = false
+                            }
+                        }
+                    }
+                },
+                placeholder = "Area / street / landmark or paste Maps link",
+                icon        = Icons.Rounded.LocationOn,
+                keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Next,
+            )
+            val detected = LocationUtils.parseGoogleMapsCoordinates(location)
+            if (detected != null) {
+                Spacer(Modifier.height(4.dp))
+                val (lat, lon) = detected
+                val latStr = ((lat * 10000).toLong() / 10000.0).toString()
+                val lonStr = ((lon * 10000).toLong() / 10000.0).toString()
+                Text(
+                    text = "📍 $latStr, $lonStr",
+                    fontSize = 11.sp,
+                    color = RuwiaColor.TealPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            if (locationError != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(locationError!!, fontSize = 11.sp, color = Color.Red)
+            }
+        }
+
         AddCustomerField(
             label       = "Other details",
             required    = false,
@@ -498,7 +645,9 @@ private fun ColumnScope.AddNewContent(
             placeholder = "Delivery preference, notes, etc.",
             icon        = Icons.Rounded.Notes,
             keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Done,
             multiline   = true,
+            onImeDone = onSave,
         )
     }
 
@@ -536,7 +685,9 @@ private fun AddCustomerField(
     placeholder: String,
     icon: ImageVector,
     keyboardType: KeyboardType,
+    imeAction: ImeAction,
     multiline: Boolean = false,
+    onImeDone: (() -> Unit)? = null,
 ) {
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -585,7 +736,9 @@ private fun AddCustomerField(
                     keyboardOptions  = KeyboardOptions(
                         keyboardType  = keyboardType,
                         capitalization = if (keyboardType.isTextField()) KeyboardCapitalization.Words else KeyboardCapitalization.None,
+                        imeAction = imeAction,
                     ),
+                    keyboardActions = formKeyboardActions(onDone = onImeDone),
                     modifier         = Modifier.fillMaxWidth(),
                 )
             }

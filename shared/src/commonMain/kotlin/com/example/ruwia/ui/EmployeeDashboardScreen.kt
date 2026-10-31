@@ -389,7 +389,10 @@ fun EmployeeDashboardScreen(
                 EmployeeTasksScreen(
                     tasks = state.tasks,
                     onBack = { screen = EmpScreen.Home },
-                    onMarkDone = { taskId -> vm.updateTaskStatus(taskId, "completed") },
+                    onAccept = { taskId -> vm.acceptTask(taskId) },
+                    onRecordCheckpoint = { taskId -> vm.recordTaskCheckpoint(taskId) },
+                    onMarkDone = { taskId -> vm.completeTask(taskId) },
+                    onRefresh = { vm.refreshTasks() },
                     contentPadding = PaddingValues(0.dp),
                 )
             }

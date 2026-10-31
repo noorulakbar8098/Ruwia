@@ -61,6 +61,7 @@ firebase-messaging   = { module = "com.google.firebase:firebase-messaging" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
 multiplatform-settings-no-arg = { module = "com.russhwolf:multiplatform-settings-no-arg", version.ref = "multiplatformSettings" }
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
+play-services-location = { module = "com.google.android.gms:play-services-location", version = "21.3.0" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

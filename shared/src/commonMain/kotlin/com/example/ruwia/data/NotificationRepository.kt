@@ -65,6 +65,20 @@ class NotificationRepository {
         insertRow(adminId, me, toUserId = null, toRole = "employee", title, body, kind, relatedId)
     }
 
+    /** Admin → one employee, such as a newly assigned delivery task. */
+    suspend fun sendToEmployee(
+        employeeId: String,
+        title: String,
+        body: String,
+        kind: String = "general",
+        relatedId: String? = null,
+    ) {
+        val me = currentUserId() ?: return
+        val adminId = tenantAdminId() ?: return
+        if (employeeId.isBlank()) return
+        insertRow(adminId, me, employeeId, toRole = null, title, body, kind, relatedId)
+    }
+
     private suspend fun insertRow(
         adminId: String,
         fromUserId: String,
@@ -155,8 +169,7 @@ class NotificationRepository {
 
     /**
      * Registers/refreshes this device's FCM token for outside-the-app push.
-     * Insert-then-update: the row is keyed by user, so a second device for
-     * the same user simply moves the token (last writer wins).
+     * Insert-then-update by token allows one user to register multiple devices.
      */
     suspend fun upsertDeviceToken(token: String, platform: String = "android") {
         val me = currentUserId() ?: return
@@ -167,6 +180,7 @@ class NotificationRepository {
             put("admin_id", adminId)
             put("token", token)
             put("platform", platform)
+            put("updated_at", kotlin.time.Clock.System.now().toString())
         }
         try {
             supabase.from("device_tokens").insert(payload())
@@ -175,7 +189,7 @@ class NotificationRepository {
             if (msg.contains("duplicate", ignoreCase = true) || msg.contains("conflict", ignoreCase = true)) {
                 try {
                     supabase.from("device_tokens").update(payload()) {
-                        filter { eq("user_id", me) }
+                        filter { eq("token", token) }
                     }
                 } catch (e2: Exception) {
                     e2.printStackTrace()
@@ -183,6 +197,21 @@ class NotificationRepository {
             } else {
                 e.printStackTrace()
             }
+        }
+    }
+
+    suspend fun removeDeviceToken(token: String) {
+        val me = currentUserId() ?: return
+        if (token.isBlank()) return
+        try {
+            supabase.from("device_tokens").delete {
+                filter {
+                    eq("user_id", me)
+                    eq("token", token)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 

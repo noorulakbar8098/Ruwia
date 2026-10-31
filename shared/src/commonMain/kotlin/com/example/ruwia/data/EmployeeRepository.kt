@@ -12,6 +12,8 @@ import com.example.ruwia.domain.netStockPerProductInShop
 import com.example.ruwia.domain.orderedShopSlots
 import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.domain.Supplier
+import com.example.ruwia.domain.TaskTimelinePoint
+import com.example.ruwia.util.LocationUtils
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
@@ -19,6 +21,8 @@ import io.github.jan.supabase.postgrest.query.Order as SortOrder
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -62,16 +66,19 @@ class EmployeeRepository {
                 .select {
                     filter {
                         eq("employee_id", employeeId)
-                        eq("scheduled_date", today())
                         if (adminId != null) eq("admin_id", adminId)
                     }
-                    order("created_at", SortOrder.ASCENDING)
+                    order("scheduled_date", SortOrder.ASCENDING)
+                    limit(500)
                 }
                 .decodeList<DeliveryTask>()
                 // A cancelled task is closed for the admin but must disappear
                 // from the employee's route entirely.
                 .filterNot { it.status.equals("cancelled", ignoreCase = true) }
-        } catch (e: Exception) { emptyList() }
+        } catch (e: Exception) {
+            println("Error fetching employee route tasks: ${e.message}")
+            emptyList()
+        }
     }
 
     private suspend fun getAdminIdForUser(userId: String): String? {
@@ -108,28 +115,26 @@ class EmployeeRepository {
         employeeId: String,
         shopName: String,
     ) {
-        try {
-            supabase.from("outward").insert(
-                Outward(
-                    customerId         = customerId,
-                    qtyDelivered       = deliveredQty,
-                    qtyEmptyReturned   = returnedEmptyQty,
-                    rate               = collectedAmount,
-                    employeeId         = employeeId,
-                )
+        supabase.from("outward").insert(
+            Outward(
+                customerId         = customerId,
+                qtyDelivered       = deliveredQty,
+                qtyEmptyReturned   = returnedEmptyQty,
+                rate               = collectedAmount,
+                employeeId         = employeeId,
             )
-            if (returnedEmptyQty > 0) {
-                addStockMovement(
-                    source   = "Empty cans · route",
-                    qty      = returnedEmptyQty,
-                    type     = "inward",
-                    shopName = shopName,
-                )
-            }
-            supabase.from("route_tasks").update(
-                buildJsonObject { put("status", "done") }
-            ) { filter { eq("id", taskId) } }
-        } catch (_: Exception) {}
+        )
+        if (returnedEmptyQty > 0) {
+            addStockMovement(
+                source   = "Empty cans · route",
+                qty      = returnedEmptyQty,
+                type     = "inward",
+                shopName = shopName,
+            )
+        }
+        supabase.from("route_tasks").update(
+            buildJsonObject { put("status", "done") }
+        ) { filter { eq("id", taskId) } }
     }
 
     // ── Summary queries ───────────────────────────────────────────────────────
@@ -1166,18 +1171,25 @@ class EmployeeRepository {
         ) { filter { eq("id", cat.id) } }
     }
 
-    suspend fun updateTaskStatusForEmployee(
+    private val locationService = getLocationService()
+
+    private fun currentFormattedTime(): String {
+        val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+        val h = now.hour
+        val hh = when { h == 0 -> 12; h > 12 -> h - 12; else -> h }
+        val ampm = if (h >= 12) "PM" else "AM"
+        val mm = now.minute.toString().padStart(2, '0')
+        return "$hh:$mm $ampm"
+    }
+
+    private fun timelineLabelForIndex(index: Int, isCompleted: Boolean = false): String =
+        LocationUtils.timelineLabelForIndex(index, isCompleted)
+
+    suspend fun acceptDeliveryTask(
         taskId: String,
         employeeId: String,
-        status: String,
     ): DeliveryTask? {
         if (taskId.isBlank() || employeeId.isBlank()) return null
-        val normalized = status.trim().lowercase()
-        val allowed = when (normalized) {
-            "completed", "done" -> "completed"
-            "pending" -> "pending"
-            else -> "pending"
-        }
         return try {
             val adminId = getAdminIdForUser(employeeId)
             val existing = supabase.from("route_tasks")
@@ -1188,14 +1200,228 @@ class EmployeeRepository {
                         if (adminId != null) eq("admin_id", adminId)
                     }
                 }
-                .decodeSingleOrNull<DeliveryTask>()
-            if (existing == null) return null
-            supabase.from("route_tasks")
-                .update(buildJsonObject { put("status", allowed) }) {
-                    filter { eq("id", taskId) }
+                .decodeSingleOrNull<DeliveryTask>() ?: return null
+
+            // Record location on the second itself
+            val loc = locationService.getCurrentLocation()
+            val placeName = if (loc != null) {
+                locationService.reverseGeocode(loc.latitude, loc.longitude)
+            } else {
+                "Starting Point Recorded"
+            }
+
+            val formattedNow = currentFormattedTime()
+            val startPoint = TaskTimelinePoint(
+                label = "Start Point",
+                latitude = loc?.latitude,
+                longitude = loc?.longitude,
+                placeName = placeName,
+                recordedAt = formattedNow,
+                status = "accepted",
+            )
+            val updatedTimeline = listOf(startPoint)
+
+            val payload = buildJsonObject {
+                put("status", "in_transit")
+                put("journey_start_time", formattedNow)
+                put("last_location_update_time", formattedNow)
+                put("timeline", Json.encodeToJsonElement(ListSerializer(TaskTimelinePoint.serializer()), updatedTimeline))
+                if (loc != null) {
+                    put("current_latitude", loc.latitude)
+                    put("current_longitude", loc.longitude)
+                    put("current_location_name", placeName)
+                    if (existing.destLatitude != null && existing.destLongitude != null) {
+                        val dist = LocationUtils.haversineDistanceMeters(loc.latitude, loc.longitude, existing.destLatitude, existing.destLongitude)
+                        put("distance_remaining_meters", dist)
+                        put("live_eta", LocationUtils.calculateEta(dist))
+                    }
                 }
-                .decodeSingleOrNull<DeliveryTask>()
-        } catch (_: Exception) { null }
+            }
+
+            try {
+                supabase.from("route_tasks")
+                    .update(payload) {
+                        select()
+                        filter { eq("id", taskId) }
+                    }
+                    .decodeSingleOrNull<DeliveryTask>()
+            } catch (_: Exception) {
+                // If extra columns are not in DB yet, fall back to status update
+                supabase.from("route_tasks")
+                    .update(buildJsonObject { put("status", "in_transit") }) {
+                        select()
+                        filter { eq("id", taskId) }
+                    }
+                    .decodeSingleOrNull<DeliveryTask>()
+                    ?.copy(timeline = updatedTimeline)
+            }
+        } catch (e: Exception) {
+            println("Error accepting task: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun recordTaskCheckpoint(
+        taskId: String,
+        employeeId: String,
+    ): DeliveryTask? {
+        if (taskId.isBlank() || employeeId.isBlank()) return null
+        return try {
+            val adminId = getAdminIdForUser(employeeId)
+            val existing = supabase.from("route_tasks")
+                .select {
+                    filter {
+                        eq("id", taskId)
+                        eq("employee_id", employeeId)
+                        if (adminId != null) eq("admin_id", adminId)
+                    }
+                }
+                .decodeSingleOrNull<DeliveryTask>() ?: return null
+
+            val loc = locationService.getCurrentLocation()
+            val nextIndex = existing.timeline.size
+            val defaultLabel = timelineLabelForIndex(nextIndex)
+            val placeName = if (loc != null) {
+                locationService.reverseGeocode(loc.latitude, loc.longitude)
+            } else {
+                defaultLabel
+            }
+
+            val formattedNow = currentFormattedTime()
+            val point = TaskTimelinePoint(
+                label = defaultLabel,
+                latitude = loc?.latitude,
+                longitude = loc?.longitude,
+                placeName = placeName,
+                recordedAt = formattedNow,
+                status = "in_transit",
+            )
+            val updatedTimeline = LocationUtils.rollTimelinePoints(existing.timeline, point)
+
+            val payload = buildJsonObject {
+                put("status", "in_transit")
+                put("last_location_update_time", formattedNow)
+                put("timeline", Json.encodeToJsonElement(ListSerializer(TaskTimelinePoint.serializer()), updatedTimeline))
+                if (loc != null) {
+                    put("current_latitude", loc.latitude)
+                    put("current_longitude", loc.longitude)
+                    put("current_location_name", placeName)
+                    if (existing.destLatitude != null && existing.destLongitude != null) {
+                        val dist = LocationUtils.haversineDistanceMeters(loc.latitude, loc.longitude, existing.destLatitude, existing.destLongitude)
+                        put("distance_remaining_meters", dist)
+                        put("live_eta", LocationUtils.calculateEta(dist))
+                    }
+                }
+            }
+
+            try {
+                supabase.from("route_tasks")
+                    .update(payload) {
+                        select()
+                        filter { eq("id", taskId) }
+                    }
+                    .decodeSingleOrNull<DeliveryTask>()
+            } catch (_: Exception) {
+                existing.copy(timeline = updatedTimeline)
+            }
+        } catch (e: Exception) {
+            println("Error recording checkpoint: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun completeDeliveryTask(
+        taskId: String,
+        employeeId: String,
+    ): DeliveryTask? {
+        if (taskId.isBlank() || employeeId.isBlank()) return null
+        return try {
+            val adminId = getAdminIdForUser(employeeId)
+            val existing = supabase.from("route_tasks")
+                .select {
+                    filter {
+                        eq("id", taskId)
+                        eq("employee_id", employeeId)
+                        if (adminId != null) eq("admin_id", adminId)
+                    }
+                }
+                .decodeSingleOrNull<DeliveryTask>() ?: return null
+
+            val loc = locationService.getCurrentLocation()
+            val placeName = if (loc != null) {
+                locationService.reverseGeocode(loc.latitude, loc.longitude)
+            } else {
+                "Destination (Delivered)"
+            }
+
+            val formattedNow = currentFormattedTime()
+            val finalPoint = TaskTimelinePoint(
+                label = "Delivery Completed",
+                latitude = loc?.latitude,
+                longitude = loc?.longitude,
+                placeName = placeName,
+                recordedAt = formattedNow,
+                status = "completed",
+            )
+            val updatedTimeline = LocationUtils.rollTimelinePoints(existing.timeline, finalPoint)
+
+            val payload = buildJsonObject {
+                put("status", "completed")
+                put("arrival_time", formattedNow)
+                put("last_location_update_time", formattedNow)
+                put("distance_remaining_meters", 0.0)
+                put("live_eta", "Arrived")
+                put("timeline", Json.encodeToJsonElement(ListSerializer(TaskTimelinePoint.serializer()), updatedTimeline))
+                if (loc != null) {
+                    put("current_latitude", loc.latitude)
+                    put("current_longitude", loc.longitude)
+                    put("current_location_name", placeName)
+                }
+            }
+
+            try {
+                supabase.from("route_tasks")
+                    .update(payload) {
+                        select()
+                        filter { eq("id", taskId) }
+                    }
+                    .decodeSingleOrNull<DeliveryTask>()
+            } catch (_: Exception) {
+                supabase.from("route_tasks")
+                    .update(buildJsonObject { put("status", "completed") }) {
+                        select()
+                        filter { eq("id", taskId) }
+                    }
+                    .decodeSingleOrNull<DeliveryTask>()
+                    ?.copy(timeline = updatedTimeline)
+            }
+        } catch (e: Exception) {
+            println("Error completing task: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun updateTaskStatusForEmployee(
+        taskId: String,
+        employeeId: String,
+        status: String,
+    ): DeliveryTask? {
+        if (taskId.isBlank() || employeeId.isBlank()) return null
+        val normalized = status.trim().lowercase()
+        return when (normalized) {
+            "in_transit", "accepted", "on_the_way" -> acceptDeliveryTask(taskId, employeeId)
+            "completed", "done", "delivered" -> completeDeliveryTask(taskId, employeeId)
+            else -> {
+                try {
+                    supabase.from("route_tasks")
+                        .update(buildJsonObject { put("status", normalized) }) {
+                            select()
+                            filter { eq("id", taskId) }
+                        }
+                        .decodeSingleOrNull<DeliveryTask>()
+                } catch (_: Exception) { null }
+            }
+        }
     }
 }
 

@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.ImeAction
+import com.example.ruwia.ui.components.formKeyboardActions
 import androidx.compose.ui.autofill.AutofillNode
 import androidx.compose.ui.autofill.AutofillType
 import androidx.compose.ui.layout.boundsInWindow
@@ -386,6 +387,9 @@ private fun LoginGlassCard(
                         isPassword = true,
                         passwordVisible = passwordVisible,
                         onTogglePassword = onTogglePassword,
+                        onImeDone = {
+                            if (!isLoading && email.isNotBlank() && password.length >= 6) onPrimaryAction()
+                        },
                         autofillTypes = listOf(AutofillType.Password)
                     )
                     
@@ -573,6 +577,7 @@ private fun DroplyInput(
     isPassword: Boolean = false,
     passwordVisible: Boolean = false,
     onTogglePassword: () -> Unit = {},
+    onImeDone: (() -> Unit)? = null,
     keyboardType: KeyboardType = KeyboardType.Text,
     autofillTypes: List<AutofillType>? = null
 ) {
@@ -671,6 +676,9 @@ private fun DroplyInput(
             keyboardOptions = KeyboardOptions(
                 keyboardType = keyboardType,
                 imeAction = if (isPassword) ImeAction.Done else ImeAction.Next
+            ),
+            keyboardActions = formKeyboardActions(
+                onDone = if (isPassword) onImeDone else null,
             ),
             singleLine = true,
             shape = RoundedCornerShape(18.dp),
@@ -893,4 +901,3 @@ private fun LoginFooter() {
 //        }
     }
 }
-

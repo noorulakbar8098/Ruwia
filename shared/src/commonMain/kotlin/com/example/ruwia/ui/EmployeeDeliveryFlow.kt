@@ -19,9 +19,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.DeliveryTask
+import com.example.ruwia.ui.components.formKeyboardActions
 
 @Composable
 fun EmployeeDeliveryDetailsScreen(
@@ -114,17 +116,18 @@ fun EmployeeDeliveryCompletionScreen(
     var emptyCansReturned by remember { mutableStateOf(task.canQty.toString()) }
     var collectedAmt by remember { mutableStateOf("480.0") } // Auto calculated base rate: 4 * 120
     var payMode by remember { mutableStateOf("UPI") } // UPI | Cash | Due
+    fun submitSettlement() {
+        val del = cansDelivered.toIntOrNull() ?: task.canQty
+        val ret = emptyCansReturned.toIntOrNull() ?: task.canQty
+        val amt = collectedAmt.toDoubleOrNull() ?: 0.0
+        onSubmit(del, ret, amt, payMode)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             Button(
-                onClick = {
-                    val del = cansDelivered.toIntOrNull() ?: task.canQty
-                    val ret = emptyCansReturned.toIntOrNull() ?: task.canQty
-                    val amt = collectedAmt.toDoubleOrNull() ?: 0.0
-                    onSubmit(del, ret, amt, payMode)
-                },
+                onClick = ::submitSettlement,
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A9D8F)),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -143,7 +146,11 @@ fun EmployeeDeliveryCompletionScreen(
                     value = cansDelivered,
                     onValueChange = { cansDelivered = it },
                     label = { Text("Cases Delivered", color = Color.White.copy(alpha = 0.8f)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = formKeyboardActions(),
                     singleLine = true,
                     textStyle = TextStyle(color = Color.White),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -158,7 +165,11 @@ fun EmployeeDeliveryCompletionScreen(
                     value = emptyCansReturned,
                     onValueChange = { emptyCansReturned = it },
                     label = { Text("Empty Cases Returned", color = Color.White.copy(alpha = 0.8f)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = formKeyboardActions(),
                     singleLine = true,
                     textStyle = TextStyle(color = Color.White),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -173,7 +184,11 @@ fun EmployeeDeliveryCompletionScreen(
                     value = collectedAmt,
                     onValueChange = { collectedAmt = it },
                     label = { Text("Amount Collected (₹)", color = Color.White.copy(alpha = 0.8f)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = formKeyboardActions(onDone = ::submitSettlement),
                     singleLine = true,
                     textStyle = TextStyle(color = Color.White),
                     colors = OutlinedTextFieldDefaults.colors(

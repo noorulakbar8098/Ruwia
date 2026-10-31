@@ -11,4 +11,11 @@ package com.example.ruwia.data
  * Call after login/signup (session user exists) and at app start (restored
  * session) — covered by the Android Application class and AuthViewModel.
  */
-expect fun refreshPushToken()
+expect fun refreshPushToken(token: String?)
+
+fun refreshPushToken() {
+    refreshPushToken(null)
+}
+
+/** Removes this device's registration before the current account signs out. */
+expect suspend fun unregisterPushToken()

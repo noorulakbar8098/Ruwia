@@ -21,7 +21,7 @@ import com.google.firebase.messaging.RemoteMessage
 class RuwiaMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
-        refreshPushToken()
+        refreshPushToken(token)
     }
 
     override fun onMessageReceived(message: RemoteMessage) {

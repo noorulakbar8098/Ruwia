@@ -23,12 +23,14 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.theme.RuwiaColor
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
+import com.example.ruwia.ui.components.formKeyboardActions
 
 /**
  * Customer-aware "receive empty cans" flow shared by the employee and admin
@@ -94,6 +96,14 @@ fun ReceiveEmptyCansDialog(
         qty != null &&
         qty in 1..outstanding &&
         !isSaving
+
+    fun confirmReturn() {
+        if (!isValid || isSaving) return
+        val customer = selected ?: return
+        val id = customer.id ?: return
+        val count = qty ?: return
+        onConfirm(id, count, referenceKey, selectedShop)
+    }
 
     AlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
@@ -288,7 +298,11 @@ fun ReceiveEmptyCansDialog(
                                     color = RuwiaColor.TextPrimary,
                                 ),
                                 cursorBrush = SolidColor(RuwiaColor.TealPrimary),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Done,
+                                ),
+                                keyboardActions = formKeyboardActions(onDone = ::confirmReturn),
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                             )
@@ -323,6 +337,7 @@ fun ReceiveEmptyCansDialog(
                     }
 
                     if (selectedShop.isNotBlank()) {
+
                         Spacer(Modifier.height(10.dp))
                         Text(
                             "Returned cans are added to $selectedShop's empty stock.",
@@ -336,12 +351,7 @@ fun ReceiveEmptyCansDialog(
         confirmButton = {
             TextButton(
                 enabled = isValid,
-                onClick = {
-                    val customer = selected ?: return@TextButton
-                    val id = customer.id ?: return@TextButton
-                    val count = qty ?: return@TextButton
-                    onConfirm(id, count, referenceKey, selectedShop)
-                },
+                onClick = ::confirmReturn,
                 colors = ButtonDefaults.textButtonColors(contentColor = RuwiaColor.TealPrimary),
             ) {
                 Text(if (isSaving) "Saving…" else "Record Return", fontWeight = FontWeight.Bold)

@@ -6,8 +6,12 @@ import androidx.compose.ui.text.input.KeyboardType
  *  whitespace). The rest of each word is preserved exactly as typed. */
 private val WORD_FIRST_LETTER = Regex("(?<=^|\\s)[a-z]")
 
-fun capitalizeWords(text: String): String =
-    WORD_FIRST_LETTER.replace(text) { it.value.uppercase() }
+fun capitalizeWords(text: String): String {
+    if (text.contains("://") || text.startsWith("http", ignoreCase = true) || text.contains("maps.app.goo.gl")) {
+        return text
+    }
+    return WORD_FIRST_LETTER.replace(text) { it.value.uppercase() }
+}
 
 /** True when a [KeyboardType] represents free text (not numbers / passwords /
  *  emails / phones), i.e. fields that benefit from auto-capitalization. */

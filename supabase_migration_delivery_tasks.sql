@@ -15,6 +15,20 @@ ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS product_id UUID;
 ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS product_name TEXT;
 ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS delivery_date DATE;
 ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS admin_id UUID REFERENCES auth.users(id);
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS timeline JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS dest_latitude DOUBLE PRECISION;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS dest_longitude DOUBLE PRECISION;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS dest_name TEXT;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS maps_link TEXT;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS current_latitude DOUBLE PRECISION;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS current_longitude DOUBLE PRECISION;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS current_location_name TEXT;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS journey_start_time TEXT;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS last_location_update_time TEXT;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS arrival_time TEXT;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS distance_remaining_meters DOUBLE PRECISION;
+ALTER TABLE public.route_tasks ADD COLUMN IF NOT EXISTS live_eta TEXT;
 
 ALTER TABLE public.route_tasks ALTER COLUMN status SET DEFAULT 'pending';
 

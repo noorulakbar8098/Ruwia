@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -32,6 +33,7 @@ import com.example.ruwia.domain.CustomerLedgerEntry
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.util.isoToDisplayDate
+import com.example.ruwia.ui.components.formKeyboardActions
 
 @Composable
 fun ReceivablesScreen(
@@ -496,6 +498,8 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
                 onValueChange = onValueChange,
                 textStyle = TextStyle(fontSize = 13.sp, color = NTColors.TextPrimary),
                 cursorBrush = SolidColor(NTColors.Primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = formKeyboardActions(),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -532,6 +536,9 @@ private fun RecordPaymentDialog(
     var note by remember { mutableStateOf("") }
     val parsed = amount.toDoubleOrNull() ?: 0.0
     val invalid = parsed <= 0.0 || parsed > customer.balance + 0.001
+    fun savePayment() {
+        if (!isSaving && !invalid) onConfirm(amount, mode, note)
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -579,7 +586,11 @@ private fun RecordPaymentDialog(
                         onValueChange = { value -> if (value.all { it.isDigit() } || value.isEmpty()) amount = value },
                         textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary),
                         cursorBrush = SolidColor(NTColors.Primary),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Next,
+                        ),
+                        keyboardActions = formKeyboardActions(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -597,6 +608,8 @@ private fun RecordPaymentDialog(
                 value = note,
                 onValueChange = { note = it },
                 label = { Text("Note (optional)", fontSize = 11.sp) },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = formKeyboardActions(onDone = ::savePayment),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -610,7 +623,7 @@ private fun RecordPaymentDialog(
                     shape = RoundedCornerShape(13.dp),
                 ) { Text("Cancel") }
                 Button(
-                    onClick = { onConfirm(amount, mode, note) },
+                    onClick = ::savePayment,
                     enabled = !isSaving && !invalid,
                     modifier = Modifier.weight(1f).height(46.dp),
                     shape = RoundedCornerShape(13.dp),

@@ -314,6 +314,13 @@ class AdminViewModel(
                 },
             )
             loadData()
+            val customerName = _state.value.customers.find { it.id == customerId }?.name ?: "Customer"
+            notifyEmployees(
+                "Stock updated",
+                "$customerName · returned $qty empty can(s)",
+                kind = "stock",
+                relatedId = customerId,
+            )
         }.onFailure {
             it.printStackTrace()
             _state.value = _state.value.copy(
@@ -479,17 +486,33 @@ class AdminViewModel(
                     }
                 )
                 loadData()
+                notifyEmployees(
+                    "Product updated",
+                    cat.displayName.ifBlank { cat.name },
+                    kind = "stock",
+                    relatedId = cat.id,
+                )
             }
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
     }
 
     fun deleteProductCategory(id: String) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
+        val productName = _state.value.productCategories
+            .find { it.id == id }
+            ?.let { it.displayName.ifBlank { it.name } }
+            .orEmpty()
         runCatching { repo.deleteProductCategory(id) }
             .onSuccess {
                 _state.value = _state.value.copy(
                     productCategories = _state.value.productCategories.filter { it.id != id },
                     loading = false
+                )
+                notifyEmployees(
+                    "Product removed",
+                    productName.ifBlank { "A product was removed" },
+                    kind = "stock",
+                    relatedId = id,
                 )
             }
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
@@ -557,6 +580,12 @@ class AdminViewModel(
                         loading = false
                     )
                 }
+                notifyEmployees(
+                    "Sale recorded",
+                    "${entry.customerName} · ${entry.qty} unit(s)",
+                    kind = "sale",
+                    relatedId = entry.id,
+                )
             }
             .onFailure { _state.value = _state.value.copy(error = it.message, loading = false) }
     }
@@ -744,6 +773,7 @@ class AdminViewModel(
                         existing.id == saved.id
                     } + saved
                 _state.value = _state.value.copy(customers = merged, loading = false)
+                    notifyEmployees("New customer", saved.name, kind = "customer", relatedId = saved.id)
             }
             .onFailure {
                 it.printStackTrace()
@@ -753,10 +783,17 @@ class AdminViewModel(
 
     fun deleteCustomer(id: String) = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
+        val customerName = _state.value.customers.find { it.id == id }?.name.orEmpty()
         runCatching { repo.deleteCustomer(id) }
             .onSuccess {
                 val updated = repo.getAllCustomers()
                 _state.value = _state.value.copy(customers = updated, loading = false)
+                notifyEmployees(
+                    "Customer removed",
+                    customerName.ifBlank { "A customer was removed" },
+                    kind = "customer",
+                    relatedId = id,
+                )
             }
             .onFailure {
                 it.printStackTrace()
@@ -775,6 +812,7 @@ class AdminViewModel(
                 // stock_movements sources, so refresh so every screen (report
                 // summary, stock history) shows the new name immediately.
                 loadData()
+                notifyEmployees("Customer updated", saved.name, kind = "customer", relatedId = saved.id)
             }
             .onFailure {
                 it.printStackTrace()
@@ -815,9 +853,30 @@ class AdminViewModel(
      * forget: a notification failure must never fail the stock write itself.
      * Refreshes the admin's own feed copy so the bell clears correctly.
      */
-    fun notifyEmployees(title: String, body: String, kind: String = "stock") {
+    fun notifyEmployees(
+        title: String,
+        body: String,
+        kind: String = "stock",
+        relatedId: String? = null,
+    ) {
         viewModelScope.launch {
-            runCatching { notifications.broadcastToEmployees(title, body, kind) }
+            runCatching { notifications.broadcastToEmployees(title, body, kind, relatedId) }
+            refreshNotifications()
+        }
+    }
+
+    private fun notifyEmployee(
+        employeeId: String,
+        title: String,
+        body: String,
+        kind: String,
+        relatedId: String? = null,
+    ) {
+        if (employeeId.isBlank()) return
+        viewModelScope.launch {
+            runCatching {
+                notifications.sendToEmployee(employeeId, title, body, kind, relatedId)
+            }
             refreshNotifications()
         }
     }
@@ -958,6 +1017,16 @@ class AdminViewModel(
             }
         }.onSuccess {
             loadData() // Refresh all data
+            val productName = _state.value.productCategories
+                .find { it.id == productId }
+                ?.let { it.displayName.ifBlank { it.name } }
+                ?: productId
+            notifyEmployees(
+                "Stock restocked",
+                "$productName · +$qty units @ $shopName",
+                kind = "stock",
+                relatedId = productId,
+            )
         }.onFailure {
             _state.value = _state.value.copy(error = it.message, loading = false)
         }
@@ -1095,6 +1164,19 @@ class AdminViewModel(
             }
         }.onSuccess {
             loadData()
+            if (newStock != previousStock) {
+                val productName = _state.value.productCategories
+                    .find { it.id == productId }
+                    ?.let { it.displayName.ifBlank { it.name } }
+                    ?: productId
+                val sign = if (newStock > previousStock) "+" else "−"
+                notifyEmployees(
+                    "Stock adjusted",
+                    "$productName · $sign${kotlin.math.abs(newStock - previousStock)} units @ $shopName",
+                    kind = "stock",
+                    relatedId = productId,
+                )
+            }
         }.onFailure {
             _state.value = _state.value.copy(error = it.message ?: "Failed to update product", loading = false)
         }
@@ -1348,6 +1430,10 @@ class AdminViewModel(
         deliveryDate: String,
         deliveryTime: String,
         employeeName: String = "",
+        destLatitude: Double? = null,
+        destLongitude: Double? = null,
+        destName: String? = null,
+        mapsLink: String? = null,
         onFinished: (created: Boolean) -> Unit = {},
     ) = viewModelScope.launch {
         if (
@@ -1372,11 +1458,22 @@ class AdminViewModel(
                 quantity = quantity,
                 deliveryDate = deliveryDate,
                 deliveryTime = deliveryTime,
+                destLatitude = destLatitude,
+                destLongitude = destLongitude,
+                destName = destName,
+                mapsLink = mapsLink,
             )
         }.onSuccess { task ->
             _state.value = _state.value.copy(
                 tasks = listOf(task) + _state.value.tasks,
                 loading = false,
+            )
+            notifyEmployee(
+                employeeId = employeeId,
+                title = "New delivery assigned",
+                body = "$customerName · $productName × $quantity",
+                kind = "delivery",
+                relatedId = task.id,
             )
             onFinished(true)
         }.onFailure {
@@ -1396,6 +1493,13 @@ class AdminViewModel(
                 if (saved != null) {
                     _state.value = _state.value.copy(
                         tasks = _state.value.tasks.map { if (it.id == taskId) saved else it }
+                    )
+                    notifyEmployee(
+                        employeeId = saved.employeeId.orEmpty(),
+                        title = "Delivery updated",
+                        body = "${saved.customerName} · ${saved.status.replaceFirstChar { it.uppercase() }}",
+                        kind = "delivery",
+                        relatedId = saved.id,
                     )
                 } else {
                     _state.value = _state.value.copy(

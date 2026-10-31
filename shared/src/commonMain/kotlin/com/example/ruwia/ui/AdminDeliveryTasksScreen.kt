@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.ShoppingBag
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
@@ -58,7 +59,14 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TimePickerDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.rounded.Navigation
+import com.example.ruwia.ui.components.DeliveryTimelineView
+import com.example.ruwia.util.LocationUtils
+import com.example.ruwia.util.openMapNavigation
+import com.example.ruwia.data.getLocationService
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +78,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,6 +90,7 @@ import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
+import com.example.ruwia.ui.components.formKeyboardActions
 import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.displayDateToDb
 import kotlinx.datetime.LocalDate
@@ -110,6 +120,10 @@ data class CreateDeliveryTaskInput(
     val employeeName: String,
     val deliveryDate: String,
     val deliveryTime: String,
+    val destLatitude: Double? = null,
+    val destLongitude: Double? = null,
+    val destName: String? = null,
+    val mapsLink: String? = null,
 )
 
 // ── Delivery task board ───────────────────────────────────────────────────────
@@ -120,11 +134,20 @@ fun AdminDeliveryTasksScreen(
     onBack: () -> Unit,
     onCreateTask: () -> Unit,
     onUpdateStatus: (taskId: String, status: String) -> Unit,
+    onRefresh: () -> Unit = {},
     errorMessage: String? = null,
     onClearError: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     SystemBackHandler(onBack)
+
+    // Auto-refresh tasks every 4 seconds so admin sees live location, checkpoints, and ETA dynamically
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(4000L)
+            onRefresh()
+        }
+    }
 
     var taskToCancel by remember { mutableStateOf<DeliveryTask?>(null) }
 
@@ -364,12 +387,14 @@ private fun AdminDeliveryTaskCard(
         "completed" -> NTColors.Success
         "cancelled" -> NTColors.Error
         "pending" -> NTColors.Warning
+        "in_transit", "accepted" -> NTColors.Primary
         else -> NTColors.Info
     }
     val statusBackground = when (status) {
         "completed" -> NTColors.SuccessLight
         "cancelled" -> NTColors.ErrorLight
         "pending" -> NTColors.WarningLight
+        "in_transit", "accepted" -> NTColors.PrimaryLight
         else -> NTColors.InfoLight
     }
 
@@ -440,6 +465,123 @@ private fun AdminDeliveryTaskCard(
             Spacer(Modifier.height(6.dp))
             TaskInfoRow(Icons.Rounded.LocationOn, address, maxLines = 2)
         }
+
+        val destLabel = task.destName?.takeIf { it.isNotBlank() } ?: "Destination Shop"
+        if (task.destLatitude != null && task.destLongitude != null) {
+            Spacer(Modifier.height(6.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable {
+                        openMapNavigation(task.destLatitude, task.destLongitude, destLabel)
+                    }
+                    .padding(vertical = 2.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.Navigation,
+                    contentDescription = null,
+                    tint = NTColors.Primary,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "$destLabel (Open Navigation)",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = NTColors.Primary,
+                )
+            }
+        }
+
+        // Live tracking & ETA badge
+        val isTrackingActive = task.status in listOf("in_transit", "accepted", "arrived") || task.currentLatitude != null
+        if (isTrackingActive) {
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                color = if (task.status == "arrived") NTColors.SuccessLight else NTColors.PrimaryLight.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, if (task.status == "arrived") NTColors.Success.copy(alpha = 0.5f) else NTColors.Primary.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (task.status == "arrived") NTColors.Success else NTColors.Primary)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (task.status == "arrived") "ARRIVED AT DESTINATION" else "LIVE JOURNEY TRACKING",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.5.sp,
+                                color = if (task.status == "arrived") NTColors.Success else NTColors.Primary
+                            )
+                        }
+
+                        val etaDisplay = when {
+                            task.status == "arrived" -> "Arrived ${task.arrivalTime ?: ""}".trim()
+                            !task.liveEta.isNullOrBlank() -> "ETA: ${task.liveEta}"
+                            else -> null
+                        }
+                        if (etaDisplay != null) {
+                            Text(
+                                text = etaDisplay,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (task.status == "arrived") NTColors.Success else NTColors.Primary
+                            )
+                        }
+                    }
+
+                    if (task.currentLocationName != null || task.currentLatitude != null) {
+                        Text(
+                            text = "Current: ${task.currentLocationName ?: "${task.currentLatitude}, ${task.currentLongitude}"}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = NTColors.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        if (task.distanceRemainingMeters != null && task.status != "arrived") {
+                            Text(
+                                text = "Remaining: ${LocationUtils.formatDistance(task.distanceRemainingMeters)}",
+                                fontSize = 11.sp,
+                                color = NTColors.TextTertiary
+                            )
+                        }
+                        if (task.lastLocationUpdateTime != null) {
+                            Text(
+                                text = "Updated: ${task.lastLocationUpdateTime}",
+                                fontSize = 10.sp,
+                                color = NTColors.TextTertiary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        DeliveryTimelineView(
+            timeline = task.timeline,
+            status = task.status,
+            initialExpanded = task.timeline.isNotEmpty(),
+        )
 
         if (!closed) {
             Spacer(Modifier.height(10.dp))
@@ -515,6 +657,50 @@ fun AdminCreateDeliveryTaskScreen(
     }
 
     var selectedCustomer by remember { mutableStateOf<Customer?>(null) }
+    var destShopName by remember { mutableStateOf("") }
+    var mapsLocationInput by remember { mutableStateOf("") }
+    var resolvedCoordinates by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var isResolvingLocation by remember { mutableStateOf(false) }
+    var locationResolveError by remember { mutableStateOf<String?>(null) }
+    val locationService = remember { getLocationService() }
+
+    val effectiveCoordinates = resolvedCoordinates ?: remember(mapsLocationInput) {
+        LocationUtils.parseGoogleMapsCoordinates(mapsLocationInput)
+    }
+
+    LaunchedEffect(mapsLocationInput) {
+        if (mapsLocationInput.isBlank()) {
+            resolvedCoordinates = null
+            locationResolveError = null
+            return@LaunchedEffect
+        }
+        val direct = LocationUtils.parseGoogleMapsCoordinates(mapsLocationInput)
+        if (direct != null) {
+            resolvedCoordinates = direct
+            locationResolveError = null
+        } else if (LocationUtils.isGoogleMapsUrl(mapsLocationInput) || mapsLocationInput.contains("http")) {
+            isResolvingLocation = true
+            locationResolveError = null
+            try {
+                val resolved = locationService.resolveCoordinatesFromInput(mapsLocationInput)
+                if (resolved != null) {
+                    resolvedCoordinates = resolved
+                    if (destShopName.isBlank()) {
+                        val addr = locationService.reverseGeocode(resolved.first, resolved.second)
+                        if (addr.isNotBlank() && !addr.startsWith("Point")) {
+                            destShopName = addr
+                        }
+                    }
+                } else {
+                    locationResolveError = "Could not extract GPS coordinates from this link."
+                }
+            } catch (e: Exception) {
+                locationResolveError = "Failed to resolve link: ${e.message}"
+            } finally {
+                isResolvingLocation = false
+            }
+        }
+    }
     var selectedProduct by remember { mutableStateOf<ProductCategory?>(null) }
     var selectedEmployee by remember { mutableStateOf<EmployeeInfo?>(null) }
     var quantityText by remember { mutableStateOf("1") }
@@ -547,6 +733,35 @@ fun AdminCreateDeliveryTaskScreen(
     // failure so a failed save never disappears silently.
     val formError = validationError?.takeIf { attemptedSave }
         ?: errorMessage?.takeIf { it.isNotBlank() }
+
+    fun saveTask() {
+        attemptedSave = true
+        val customer = selectedCustomer
+        val product = selectedProduct
+        val employee = selectedEmployee
+        val date = deliveryDateDb
+        if (validationError == null && customer != null && product != null && employee != null && date != null) {
+            onSave(
+                CreateDeliveryTaskInput(
+                    customerId = customer.id.orEmpty(),
+                    customerName = customer.name,
+                    customerAddress = customer.address.orEmpty(),
+                    customerPhone = customer.phone.orEmpty(),
+                    productId = product.id,
+                    productName = product.displayName.ifBlank { product.name },
+                    quantity = quantity,
+                    employeeId = employee.id,
+                    employeeName = employee.name,
+                    deliveryDate = date,
+                    deliveryTime = deliveryTimeDisplay,
+                    destLatitude = effectiveCoordinates?.first,
+                    destLongitude = effectiveCoordinates?.second,
+                    destName = destShopName.ifBlank { customer.name },
+                    mapsLink = mapsLocationInput.ifBlank { null },
+                )
+            )
+        }
+    }
 
     SystemBackHandler { if (!isSaving) onBack() }
 
@@ -581,6 +796,112 @@ fun AdminCreateDeliveryTaskScreen(
                             placeholder = "Select customer",
                             onClick = { showCustomerPicker = true },
                         )
+                    }
+                }
+
+                item {
+                    FormSection(title = "SHOP / DESTINATION LOCATION") {
+                        OutlinedTextField(
+                            value = destShopName,
+                            onValueChange = { destShopName = it },
+                            label = { Text("Shop Name") },
+                            placeholder = { Text(selectedCustomer?.name?.ifBlank { "e.g. City Mart" } ?: "Shop Name") },
+                            singleLine = true,
+                            enabled = !isSaving,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = taskFieldColors(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = mapsLocationInput,
+                            onValueChange = { mapsLocationInput = it },
+                            label = { Text("Google Maps Link or GPS Coordinates") },
+                            placeholder = { Text("Paste Maps link or 12.9716, 77.5946") },
+                            singleLine = true,
+                            enabled = !isSaving,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = taskFieldColors(),
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                if (isResolvingLocation) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = NTColors.Primary
+                                    )
+                                } else if (effectiveCoordinates != null) {
+                                    Icon(
+                                        Icons.Rounded.CheckCircle,
+                                        contentDescription = "Location detected",
+                                        tint = NTColors.Success
+                                    )
+                                }
+                            }
+                        )
+
+                        if (isResolvingLocation) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(NTColors.Primary.copy(alpha = 0.08f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = NTColors.Primary
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Resolving Google Maps share link…",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = NTColors.Primary
+                                )
+                            }
+                        } else if (effectiveCoordinates != null) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(NTColors.SuccessLight)
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.LocationOn,
+                                    contentDescription = null,
+                                    tint = NTColors.Success,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Location detected: ${effectiveCoordinates.first}, ${effectiveCoordinates.second}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NTColors.Success
+                                )
+                            }
+                        } else if (locationResolveError != null) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = locationResolveError!!,
+                                fontSize = 11.sp,
+                                color = NTColors.Error
+                            )
+                        } else if (mapsLocationInput.isNotBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = "Could not detect GPS coordinates. You can enter 'lat, lng' directly.",
+                                fontSize = 11.sp,
+                                color = NTColors.Warning
+                            )
+                        }
                     }
                 }
 
@@ -663,7 +984,11 @@ fun AdminCreateDeliveryTaskScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = NTColors.TextPrimary,
                                 ),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Done,
+                                ),
+                                keyboardActions = formKeyboardActions(onDone = ::saveTask),
                                 shape = RoundedCornerShape(14.dp),
                                 colors = taskFieldColors(),
                                 modifier = Modifier.weight(1f),
@@ -807,30 +1132,7 @@ fun AdminCreateDeliveryTaskScreen(
 
                 item {
                     Button(
-                        onClick = {
-                            attemptedSave = true
-                            val customer = selectedCustomer
-                            val product = selectedProduct
-                            val employee = selectedEmployee
-                            val date = deliveryDateDb
-                            if (validationError == null && customer != null && product != null && employee != null && date != null) {
-                                onSave(
-                                    CreateDeliveryTaskInput(
-                                        customerId = customer.id.orEmpty(),
-                                        customerName = customer.name,
-                                        customerAddress = customer.address.orEmpty(),
-                                        customerPhone = customer.phone.orEmpty(),
-                                        productId = product.id,
-                                        productName = product.displayName.ifBlank { product.name },
-                                        quantity = quantity,
-                                        employeeId = employee.id,
-                                        employeeName = employee.name,
-                                        deliveryDate = date,
-                                        deliveryTime = deliveryTimeDisplay,
-                                    )
-                                )
-                            }
-                        },
+                        onClick = ::saveTask,
                         enabled = !isSaving,
                         modifier = Modifier.fillMaxWidth().height(54.dp),
                         shape = RoundedCornerShape(16.dp),
