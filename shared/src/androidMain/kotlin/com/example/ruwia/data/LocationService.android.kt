@@ -144,9 +144,118 @@ class AndroidLocationService(private val explicitContext: Context? = null) : Loc
             } catch (_: Exception) {}
         }
 
+        // Fallback to client reverse geocoding API
+        try {
+            val url = URL("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=$latitude&longitude=$longitude&localityLanguage=en")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 4000
+                readTimeout = 4000
+                setRequestProperty("Accept", "application/json")
+            }
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val obj = org.json.JSONObject(body)
+                val locality = obj.optString("locality", "")
+                val city = obj.optString("city", "").ifBlank { obj.optString("principalSubdivision", "") }
+                val country = obj.optString("countryName", "")
+                val parts = listOfNotNull(locality.ifBlank { null }, city.ifBlank { null }, country.ifBlank { null }).distinct()
+                if (parts.isNotEmpty()) return@withContext parts.joinToString(", ")
+            }
+        } catch (_: Exception) {}
+
         val latStr = ((latitude * 10000).toLong() / 10000.0).toString()
         val lonStr = ((longitude * 10000).toLong() / 10000.0).toString()
         "Point ($latStr, $lonStr)"
+    }
+
+    override suspend fun searchAddressSuggestions(query: String): List<AddressSuggestion> = withContext(Dispatchers.IO) {
+        val cleanQuery = query.trim()
+        if (cleanQuery.length < 2) return@withContext emptyList()
+        val results = mutableListOf<AddressSuggestion>()
+
+        // 1. Android native Geocoder
+        val context = getContext()
+        if (context != null) {
+            try {
+                if (Geocoder.isPresent()) {
+                    val geocoder = Geocoder(context, Locale.getDefault())
+                    @Suppress("DEPRECATION")
+                    val list = geocoder.getFromLocationName(cleanQuery, 6)
+                    if (!list.isNullOrEmpty()) {
+                        for (addr in list) {
+                            val line = addr.getAddressLine(0)
+                            val title = addr.featureName ?: addr.subLocality ?: addr.locality ?: cleanQuery
+                            val parts = listOfNotNull(addr.thoroughfare, addr.subLocality, addr.locality, addr.adminArea)
+                                .distinct()
+                                .filter { it.isNotBlank() && it != title }
+                            val subtitle = parts.joinToString(", ")
+                            val full = line ?: listOfNotNull(title, subtitle).filter { it.isNotBlank() }.joinToString(", ")
+                            results.add(
+                                AddressSuggestion(
+                                    title = title,
+                                    subtitle = subtitle,
+                                    fullAddress = full,
+                                    latitude = addr.latitude,
+                                    longitude = addr.longitude,
+                                )
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        if (results.isNotEmpty()) {
+            return@withContext results
+        }
+
+        // 2. Fallback to Photon geocoding search (OpenStreetMap data, unblocked open API)
+        try {
+            val encoded = java.net.URLEncoder.encode(cleanQuery, "UTF-8")
+            val url = URL("https://photon.komoot.io/api/?q=$encoded&limit=6")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 4000
+                readTimeout = 4000
+                setRequestProperty("Accept", "application/json")
+            }
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = org.json.JSONObject(body)
+                val features = root.optJSONArray("features") ?: org.json.JSONArray()
+                for (i in 0 until features.length()) {
+                    val feature = features.getJSONObject(i)
+                    val geom = feature.optJSONObject("geometry")
+                    val coords = geom?.optJSONArray("coordinates")
+                    val lon = coords?.optDouble(0, 0.0) ?: 0.0
+                    val lat = coords?.optDouble(1, 0.0) ?: 0.0
+                    val props = feature.optJSONObject("properties")
+                    val name = props?.optString("name", "")?.ifBlank { null }
+                        ?: props?.optString("street", "")?.ifBlank { null }
+                        ?: cleanQuery
+                    val subtitleParts = listOfNotNull(
+                        props?.optString("street", "")?.takeIf { it.isNotBlank() && it != name },
+                        props?.optString("district", "")?.takeIf { it.isNotBlank() },
+                        props?.optString("city", "")?.takeIf { it.isNotBlank() },
+                        props?.optString("state", "")?.takeIf { it.isNotBlank() },
+                    ).distinct()
+                    val subtitle = subtitleParts.joinToString(", ")
+                    val full = listOfNotNull(name, subtitle.takeIf { it.isNotBlank() }).joinToString(", ")
+                    if (lat != 0.0 && lon != 0.0) {
+                        results.add(
+                            AddressSuggestion(
+                                title = name,
+                                subtitle = subtitle,
+                                fullAddress = full,
+                                latitude = lat,
+                                longitude = lon,
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        results
     }
 
     override suspend fun resolveCoordinatesFromInput(input: String): Pair<Double, Double>? = withContext(Dispatchers.IO) {

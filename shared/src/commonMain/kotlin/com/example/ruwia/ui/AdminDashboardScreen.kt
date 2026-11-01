@@ -1,5 +1,6 @@
 package com.example.ruwia.ui
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -860,85 +861,110 @@ private fun DeliveryTasksOverviewCard(
 ) {
     val openTasks = remember(tasks) { tasks.filter { !it.isTaskClosed() } }
     val nextTask = remember(tasks) { tasks.nextScheduledTask() }
-    val title = when {
-        tasks.isEmpty() -> "Plan your first delivery"
-        openTasks.isEmpty() -> "All deliveries completed"
-        openTasks.size == 1 -> "1 delivery in progress"
-        else -> "${openTasks.size} deliveries in progress"
+    val completedCount = remember(tasks) {
+        tasks.count { it.normalizedStatus() == "completed" }
     }
-    val supporting = nextTask?.let {
-        "Next: ${it.customerName} · ${deliveryTaskScheduleLabel(it)}"
-    } ?: "Assign a delivery to a customer."
 
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
-            .shadow(3.dp, RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
+            .shadow(1.dp, RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(22.dp))
             .background(NTColors.Surface)
-            .border(1.dp, NTColors.Border, RoundedCornerShape(24.dp))
+            .border(1.dp, NTColors.Border, RoundedCornerShape(22.dp))
             .clickable(onClickLabel = "Open delivery tasks", onClick = onOpen)
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .animateContentSize()
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(NTColors.PrimaryLight),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.AutoMirrored.Rounded.Assignment,
-                contentDescription = null,
-                tint = NTColors.Primary,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "DELIVERY TASKS",
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.8.sp,
-                color = NTColors.TextTertiary,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = title,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = (-0.2).sp,
-                color = NTColors.TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = supporting,
-                fontSize = 11.sp,
-                color = NTColors.TextSecondary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(NTColors.SurfaceVar)
-                .border(1.dp, NTColors.Border, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(NTColors.SurfaceVar),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.LocationOn,
+                    contentDescription = null,
+                    tint = NTColors.PrimaryDeep,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Delivery routes",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = NTColors.TextPrimary,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    when {
+                        tasks.isEmpty() -> "Plan and assign customer deliveries"
+                        openTasks.isEmpty() -> "$completedCount deliveries completed"
+                        openTasks.size == 1 -> "1 delivery still open"
+                        else -> "${openTasks.size} deliveries still open"
+                    },
+                    fontSize = 12.sp,
+                    color = NTColors.TextSecondary,
+                )
+            }
             Icon(
                 Icons.Rounded.ChevronRight,
-                contentDescription = null,
-                tint = NTColors.Primary,
-                modifier = Modifier.size(20.dp),
+                contentDescription = "View delivery routes",
+                tint = NTColors.TextTertiary,
+                modifier = Modifier.size(21.dp),
             )
+        }
+
+        HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.7f))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    if (nextTask != null) "NEXT DELIVERY" else "ROUTE SUMMARY",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.7.sp,
+                    color = NTColors.TextTertiary,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    nextTask?.customerName?.ifBlank { "Customer delivery" }
+                        ?: if (tasks.isEmpty()) "Nothing scheduled yet" else "No upcoming deliveries",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = NTColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    nextTask?.let { deliveryTaskScheduleLabel(it) }
+                        ?: if (tasks.isEmpty()) "Create a route when you're ready" else "Check completed and cancelled routes",
+                    fontSize = 12.sp,
+                    color = NTColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    openTasks.size.toString(),
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = NTColors.TextPrimary,
+                )
+                Text("open", fontSize = 11.sp, color = NTColors.TextSecondary)
+            }
         }
     }
 }

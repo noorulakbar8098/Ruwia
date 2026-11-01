@@ -35,10 +35,13 @@ import com.example.ruwia.theme.RuwiaColor
 import com.example.ruwia.util.LocationPermissionRationaleDialog
 import com.example.ruwia.util.LocationPermissionStatus
 import com.example.ruwia.util.LocationUtils
+import com.example.ruwia.util.rememberLocationPermissionController
+import com.example.ruwia.ui.components.AddressAutoCompleteField
+import com.example.ruwia.ui.components.InteractiveMapLocationDialog
+import com.example.ruwia.ui.components.InteractiveMapPickerCard
+import com.example.ruwia.ui.components.formKeyboardActions
 import com.example.ruwia.util.capitalizeWords
 import com.example.ruwia.util.isTextField
-import com.example.ruwia.util.rememberLocationPermissionController
-import com.example.ruwia.ui.components.formKeyboardActions
 import kotlinx.coroutines.launch
 
 // ── Two modes inside the sheet ────────────────────────────────────────────────
@@ -442,6 +445,7 @@ private fun ColumnScope.AddNewContent(
     var isLocating by remember { mutableStateOf(false) }
     var locationError by remember { mutableStateOf<String?>(null) }
     var showRationaleDialog by remember { mutableStateOf(false) }
+    var showMapPicker by remember { mutableStateOf(false) }
 
     fun fetchCurrentLocation() {
         isLocating = true
@@ -481,6 +485,20 @@ private fun ColumnScope.AddNewContent(
             onDismiss = { showRationaleDialog = false },
             onRequestPermission = { permissionController.requestPermission() },
             onOpenSettings = { permissionController.openAppSettings() },
+        )
+    }
+
+    if (showMapPicker) {
+        val detected = LocationUtils.parseGoogleMapsCoordinates(location)
+        InteractiveMapLocationDialog(
+            initialLatitude = detected?.first,
+            initialLongitude = detected?.second,
+            initialAddress = location,
+            onConfirmLocation = { lat, lng, addr ->
+                onLocChange(addr)
+                showMapPicker = false
+            },
+            onDismiss = { showMapPicker = false }
         )
     }
 
@@ -551,43 +569,63 @@ private fun ColumnScope.AddNewContent(
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable(enabled = !isLocating) {
-                            if (permissionController.status == LocationPermissionStatus.GRANTED) {
-                                fetchCurrentLocation()
-                            } else {
-                                permissionController.requestPermission()
-                            }
-                        }
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    if (isLocating) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(12.dp),
-                            strokeWidth = 1.5.dp,
-                            color = RuwiaColor.TealPrimary,
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Locating…", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TealPrimary)
-                    } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { showMapPicker = true }
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                    ) {
                         Icon(
-                            imageVector = Icons.Rounded.MyLocation,
+                            imageVector = Icons.Rounded.Map,
                             contentDescription = null,
                             tint = RuwiaColor.TealPrimary,
                             modifier = Modifier.size(13.dp),
                         )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Use Current Location", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TealPrimary)
+                        Spacer(Modifier.width(3.dp))
+                        Text("Pick on Map", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TealPrimary)
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(enabled = !isLocating) {
+                                if (permissionController.status == LocationPermissionStatus.GRANTED) {
+                                    fetchCurrentLocation()
+                                } else {
+                                    permissionController.requestPermission()
+                                }
+                            }
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                    ) {
+                        if (isLocating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 1.5.dp,
+                                color = RuwiaColor.TealPrimary,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Locating…", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TealPrimary)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Rounded.MyLocation,
+                                contentDescription = null,
+                                tint = RuwiaColor.TealPrimary,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text("Current GPS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TealPrimary)
+                        }
                     }
                 }
             }
             Spacer(Modifier.height(6.dp))
-            AddCustomerField(
-                label       = "",
-                required    = false,
+            AddressAutoCompleteField(
                 value       = location,
-                onChange    = { newLoc ->
+                onValueChange = { newLoc ->
                     onLocChange(newLoc)
                     val isMapsLinkOrCoords = LocationUtils.isGoogleMapsUrl(newLoc) ||
                             LocationUtils.parseGoogleMapsCoordinates(newLoc) != null
@@ -614,11 +652,34 @@ private fun ColumnScope.AddNewContent(
                     }
                 },
                 placeholder = "Area / street / landmark or paste Maps link",
-                icon        = Icons.Rounded.LocationOn,
+                onSuggestionSelected = { suggestion ->
+                    onLocChange(suggestion.fullAddress)
+                    locationError = null
+                },
                 keyboardType = KeyboardType.Text,
                 imeAction = ImeAction.Next,
             )
+
+            Spacer(Modifier.height(8.dp))
+
             val detected = LocationUtils.parseGoogleMapsCoordinates(location)
+            val sheetMapLat = detected?.first ?: 12.9716
+            val sheetMapLng = detected?.second ?: 77.5946
+
+            InteractiveMapPickerCard(
+                latitude = sheetMapLat,
+                longitude = sheetMapLng,
+                address = location,
+                height = 180.dp,
+                onLocationChanged = { lat, lng, addr ->
+                    onLocChange(addr)
+                    locationError = null
+                },
+                onExpandFullScreen = {
+                    showMapPicker = true
+                }
+            )
+
             if (detected != null) {
                 Spacer(Modifier.height(4.dp))
                 val (lat, lon) = detected

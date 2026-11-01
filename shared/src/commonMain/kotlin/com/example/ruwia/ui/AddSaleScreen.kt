@@ -184,8 +184,8 @@ fun AddSaleScreen(
                 ?: customers.firstOrNull { it.name.equals(sale.customerName, ignoreCase = true) }
         }
     }
-    var selectedCustomer   by remember(editingSale?.id) {
-        mutableStateOf(editingCustomer ?: selectedCustomer)
+    var selectedCustomer   by remember(editingSale?.id, customerProp) {
+        mutableStateOf(editingCustomer ?: customerProp)
     }
     var showCustomerPicker by remember { mutableStateOf(false) }
     var editingLineIdx     by remember { mutableStateOf<Int?>(null) }
@@ -197,6 +197,13 @@ fun AddSaleScreen(
     var emptyCansText      by remember { mutableStateOf("") }
     var paymentReceivedText by remember { mutableStateOf("") }
     var paymentMode        by remember { mutableStateOf("cash") }
+
+    // When customerProp is supplied (e.g. from delivery task navigation), apply it immediately
+    LaunchedEffect(customerProp) {
+        if (!isEditing && customerProp != null) {
+            selectedCustomer = customerProp
+        }
+    }
 
     // The picker optimistically selects a freshly created customer with a
     // local id. Replace it with the real DB row as soon as it arrives so the

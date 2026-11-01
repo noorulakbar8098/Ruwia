@@ -141,6 +141,7 @@ fun EmployeeDashboardScreen(
         }
     }
     var screen by remember { mutableStateOf<EmpScreen>(EmpScreen.Home) }
+    var previousScreen by remember { mutableStateOf<EmpScreen>(EmpScreen.Home) }
     var selectedTab by remember { mutableStateOf(0) }
     // Pull-to-refresh indicator: set on swipe, cleared when the reload
     // finishes (or fails) so the spinner never sticks.
@@ -161,7 +162,8 @@ fun EmployeeDashboardScreen(
                     showReceiveEmptyCansDialog = false
                     snackbarHostState.showSnackbar("Empty cans recorded")
                 } else {
-                    screen = EmpScreen.Home
+                    screen = previousScreen
+                    previousScreen = EmpScreen.Home
                 }
                 isSubmittingAction = false
             } else {
@@ -285,7 +287,10 @@ fun EmployeeDashboardScreen(
                     errorMessage  = state.error,
                     onNewCustomer = { vm.addCustomer(it) { saved -> selectedCustomerForSale = saved } },
                     onClearError  = vm::clearError,
-                    onBack        = { screen = EmpScreen.Home },
+                    onBack        = {
+                        screen = previousScreen
+                        previousScreen = EmpScreen.Home
+                    },
                     shopName      = shopPart,
                     shops         = saleShops,
                     isSaving      = isSubmittingAction,
@@ -393,6 +398,22 @@ fun EmployeeDashboardScreen(
                     onRecordCheckpoint = { taskId -> vm.recordTaskCheckpoint(taskId) },
                     onMarkDone = { taskId -> vm.completeTask(taskId) },
                     onRefresh = { vm.refreshTasks() },
+                    onNavigateToAddSale = { task ->
+                        val matchingCustomer = state.customers.find {
+                            it.id == task.customerId || (it.name.isNotBlank() && it.name.equals(task.customerName, ignoreCase = true))
+                        } ?: Customer(
+                            id = task.customerId?.ifBlank { null },
+                            name = task.customerName,
+                            phone = task.phone.ifBlank { null },
+                            address = task.customerAddress ?: task.address
+                        )
+                        selectedCustomerForSale = matchingCustomer
+                        if (!matchingCustomer.id.isNullOrBlank()) {
+                            vm.loadCustomPrices(matchingCustomer.id)
+                        }
+                        previousScreen = EmpScreen.Tasks
+                        screen = EmpScreen.AddSale
+                    },
                     contentPadding = PaddingValues(0.dp),
                 )
             }

@@ -172,7 +172,7 @@ class DeliveryTrackingService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(content)
-            .setSmallIcon(R.drawable.app_icon)
+            .setSmallIcon(R.drawable.ic_stat_neerthuli)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)

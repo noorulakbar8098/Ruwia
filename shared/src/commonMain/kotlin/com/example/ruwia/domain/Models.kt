@@ -176,6 +176,7 @@ data class DeliveryTask(
     val status: String = "pending",
     val timeline: List<TaskTimelinePoint> = emptyList(),
     @SerialName("dest_latitude") val destLatitude: Double? = null,
+
     @SerialName("dest_longitude") val destLongitude: Double? = null,
     @SerialName("dest_name") val destName: String? = null,
     @SerialName("maps_link") val mapsLink: String? = null,

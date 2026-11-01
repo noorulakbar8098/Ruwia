@@ -2,13 +2,18 @@
 //
 // Turns an in-app notification row into outside-the-app FCM pushes.
 // Trigger: Database Webhook on notifications INSERT (see
-// PUSH_NOTIFICATIONS_SETUP.md), or POST {"notification_id": "<uuid>"}.
+// PUSH_NOTIFICATIONS_SETUP.md), or POST {"notification_id": "<uuid>"} with
+// header x-webhook-secret: <PUSH_WEBHOOK_SECRET>.
 //
 // Env (Dashboard → Edge Functions → Secrets):
-//   FCM_PROJECT_ID      Firebase project id
-//   FCM_SERVICE_ACCOUNT full service-account JSON (Firebase → Project
-//                       settings → Service accounts → Generate new key)
+//   FCM_PROJECT_ID       Firebase project id (must match google-services.json)
+//   FCM_SERVICE_ACCOUNT  full service-account JSON (Firebase → Project
+//                        settings → Service accounts → Generate new key)
+//   PUSH_WEBHOOK_SECRET  random shared secret sent by the database webhook
 // SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are injected automatically.
+//
+// Deploy with `--no-verify-jwt`: the public app key also passes the gateway's
+// JWT check, so authentication is enforced here with PUSH_WEBHOOK_SECRET.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { SignJWT, importPKCS8 } from "npm:jose@5.10.0";
@@ -42,12 +47,30 @@ async function googleAccessToken(serviceAccount: {
 
 Deno.serve(async (req: Request) => {
   try {
+    // The app's publishable key also satisfies the gateway's JWT check, so a
+    // dedicated shared secret is what actually restricts this endpoint to the
+    // database webhook (or another trusted server-side caller).
+    const webhookSecret = Deno.env.get("PUSH_WEBHOOK_SECRET");
+    if (!webhookSecret || req.headers.get("x-webhook-secret") !== webhookSecret) {
+      return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    }
+
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
-    const projectId = Deno.env.get("FCM_PROJECT_ID")!;
-    const serviceAccount = JSON.parse(Deno.env.get("FCM_SERVICE_ACCOUNT")!);
+    const projectId = Deno.env.get("FCM_PROJECT_ID");
+    if (!projectId) {
+      return Response.json({ ok: false, error: "Missing FCM_PROJECT_ID secret" }, { status: 500 });
+    }
+    const serviceAccountRaw = Deno.env.get("FCM_SERVICE_ACCOUNT");
+    if (!serviceAccountRaw) {
+      return Response.json(
+        { ok: false, error: "Missing FCM_SERVICE_ACCOUNT secret" },
+        { status: 500 },
+      );
+    }
+    const serviceAccount = JSON.parse(serviceAccountRaw);
 
     // Accept a direct id or a Database-Webhook envelope.
     const payload = await req.json().catch(() => ({}));

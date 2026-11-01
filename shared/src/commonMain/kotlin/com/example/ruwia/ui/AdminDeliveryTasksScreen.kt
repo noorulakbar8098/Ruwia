@@ -1,8 +1,10 @@
 package com.example.ruwia.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,9 +22,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Assignment
 import androidx.compose.material.icons.rounded.Add
@@ -32,12 +36,16 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Map
+import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.ShoppingBag
+import com.example.ruwia.ui.components.AddressAutoCompleteField
+import com.example.ruwia.ui.components.InteractiveMapLocationDialog
+import com.example.ruwia.ui.components.InteractiveMapPickerCard
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -46,11 +54,14 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -59,9 +70,8 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TimePickerDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.material.icons.rounded.Navigation
 import com.example.ruwia.ui.components.DeliveryTimelineView
+import com.example.ruwia.ui.components.DeliveryPrimaryButton
 import com.example.ruwia.util.LocationUtils
 import com.example.ruwia.util.openMapNavigation
 import com.example.ruwia.data.getLocationService
@@ -70,6 +80,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,6 +104,10 @@ import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
 import com.example.ruwia.ui.components.formKeyboardActions
 import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.displayDateToDb
+import com.example.ruwia.util.LocationPermissionStatus
+import com.example.ruwia.util.rememberLocationPermissionController
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
@@ -150,11 +165,18 @@ fun AdminDeliveryTasksScreen(
     }
 
     var taskToCancel by remember { mutableStateOf<DeliveryTask?>(null) }
+    var selectedFilter by remember { mutableStateOf("Open") }
 
     val sorted = remember(tasks) { tasks.sortedWith(deliveryTaskComparator) }
     val openTasks = sorted.filter { !it.isTaskClosed() }
-    val closedTasks = sorted.filter { it.isTaskClosed() }
     val completedCount = tasks.count { it.normalizedStatus() == "completed" }
+    val cancelledCount = tasks.count { it.normalizedStatus() == "cancelled" }
+    val visibleTasks = when (selectedFilter) {
+        "Completed" -> sorted.filter { it.normalizedStatus() == "completed" }
+        "Cancelled" -> sorted.filter { it.normalizedStatus() == "cancelled" }
+        "All" -> sorted
+        else -> openTasks
+    }
 
     if (taskToCancel != null) {
         AlertDialog(
@@ -206,19 +228,84 @@ fun AdminDeliveryTasksScreen(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize().navigationBarsPadding(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    color = NTColors.Surface,
+                    border = BorderStroke(1.dp, NTColors.Border),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "DELIVERY OVERVIEW",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp,
+                                    color = NTColors.PrimaryDeep,
+                                )
+                                Spacer(Modifier.height(5.dp))
+                                Text(
+                                    when {
+                                        openTasks.isEmpty() -> "All deliveries are closed"
+                                        openTasks.size == 1 -> "1 delivery still open"
+                                        else -> "${openTasks.size} deliveries still open"
+                                    },
+                                    fontSize = 21.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = NTColors.TextPrimary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "$completedCount completed · ${tasks.size} scheduled",
+                                    fontSize = 12.sp,
+                                    color = NTColors.TextSecondary,
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(NTColors.PrimaryLight),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.Assignment,
+                                    contentDescription = null,
+                                    tint = NTColors.PrimaryDeep,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        DeliveryPrimaryButton(
+                            text = "New delivery",
+                            icon = Icons.Rounded.Add,
+                            onClick = onCreateTask,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TaskMetric(
-                        label = "OPEN",
+                        label = "Open",
                         value = openTasks.size.toString(),
-                        color = NTColors.Warning,
+                        color = NTColors.PrimaryDeep,
                         modifier = Modifier.weight(1f),
                     )
                     TaskMetric(
-                        label = "COMPLETED",
+                        label = "Completed",
                         value = completedCount.toString(),
                         color = NTColors.Success,
                         modifier = Modifier.weight(1f),
@@ -227,20 +314,28 @@ fun AdminDeliveryTasksScreen(
             }
 
             item {
-                Button(
-                    onClick = onCreateTask,
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Rounded.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "New delivery task",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
+                    listOf("Open", "Completed", "Cancelled", "All").forEach { filter ->
+                        val count = when (filter) {
+                            "Open" -> openTasks.size
+                            "Completed" -> completedCount
+                            "Cancelled" -> cancelledCount
+                            else -> tasks.size
+                        }
+                        FilterChip(
+                            selected = selectedFilter == filter,
+                            onClick = { selectedFilter = filter },
+                            label = { Text("$filter  $count", fontWeight = FontWeight.SemiBold) },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = NTColors.PrimaryDeep,
+                                selectedLabelColor = Color.White,
+                            ),
+                        )
+                    }
                 }
             }
 
@@ -275,28 +370,33 @@ fun AdminDeliveryTasksScreen(
                 }
             }
 
-            if (tasks.isEmpty()) {
-                item { EmptyDeliveryTasks() }
-            } else {
-                if (openTasks.isNotEmpty()) {
-                    item { TaskSectionLabel("OPEN DELIVERIES") }
-                    items(openTasks) { task ->
-                        AdminDeliveryTaskCard(
-                            task = task,
-                            onComplete = { onUpdateStatus(task.id, "completed") },
-                            onCancel = { taskToCancel = task },
-                        )
-                    }
+            if (visibleTasks.isEmpty()) {
+                item {
+                    EmptyDeliveryTasks(
+                        title = if (tasks.isEmpty()) "No delivery tasks yet" else "No $selectedFilter deliveries",
+                        message = if (tasks.isEmpty()) {
+                            "Create a task to assign a product delivery to a customer."
+                        } else {
+                            "Tasks matching this status will appear here."
+                        },
+                    )
                 }
-                if (closedTasks.isNotEmpty()) {
-                    item { TaskSectionLabel("CLOSED") }
-                    items(closedTasks) { task ->
-                        AdminDeliveryTaskCard(
-                            task = task,
-                            onComplete = {},
-                            onCancel = {},
-                        )
-                    }
+            } else {
+                item {
+                    TaskSectionLabel(
+                        when (selectedFilter) {
+                            "All" -> "All deliveries"
+                            "Open" -> "Active deliveries"
+                            else -> "${selectedFilter} deliveries"
+                        },
+                    )
+                }
+                items(visibleTasks, key = { it.id }) { task ->
+                    AdminDeliveryTaskCard(
+                        task = task,
+                        onComplete = { onUpdateStatus(task.id, "completed") },
+                        onCancel = { taskToCancel = task },
+                    )
                 }
             }
         }
@@ -313,15 +413,15 @@ private fun TaskMetric(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
+            .animateContentSize()
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(18.dp))
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Text(
             text = label,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
             color = NTColors.TextTertiary,
         )
         Spacer(Modifier.height(4.dp))
@@ -338,16 +438,18 @@ private fun TaskMetric(
 private fun TaskSectionLabel(text: String) {
     Text(
         text = text,
-        fontSize = 11.sp,
+        fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
-        letterSpacing = 0.8.sp,
         color = NTColors.TextTertiary,
-        modifier = Modifier.padding(top = 10.dp, start = 2.dp),
+        modifier = Modifier.padding(top = 8.dp, start = 2.dp),
     )
 }
 
 @Composable
-private fun EmptyDeliveryTasks() {
+private fun EmptyDeliveryTasks(
+    title: String = "No delivery tasks yet",
+    message: String = "Create a task to assign a product delivery to a customer.",
+) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -364,10 +466,10 @@ private fun EmptyDeliveryTasks() {
             )
         }
         Spacer(Modifier.height(14.dp))
-        Text("No delivery tasks yet", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
         Spacer(Modifier.height(6.dp))
         Text(
-            "Create a task to assign a product delivery to a customer.",
+            message,
             fontSize = 13.sp,
             color = NTColors.TextTertiary,
             textAlign = TextAlign.Center,
@@ -401,6 +503,7 @@ private fun AdminDeliveryTaskCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize()
             .clip(RoundedCornerShape(18.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(18.dp))
@@ -442,7 +545,8 @@ private fun AdminDeliveryTaskCard(
             }
             Spacer(Modifier.width(8.dp))
             Text(
-                text = deliveryTaskStatusLabel(task),
+                text = deliveryTaskStatusLabel(task).lowercase()
+                    .replaceFirstChar { it.uppercase() },
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 color = statusColor,
@@ -486,7 +590,7 @@ private fun AdminDeliveryTaskCard(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "$destLabel (Open Navigation)",
+                    text = "Open directions to $destLabel",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = NTColors.Primary,
@@ -519,7 +623,7 @@ private fun AdminDeliveryTaskCard(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = if (task.status == "arrived") "ARRIVED AT DESTINATION" else "LIVE JOURNEY TRACKING",
+                                text = if (task.status == "arrived") "Arrived at destination" else "Live route updates",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 0.5.sp,
@@ -578,8 +682,7 @@ private fun AdminDeliveryTaskCard(
 
         Spacer(Modifier.height(10.dp))
         DeliveryTimelineView(
-            timeline = task.timeline,
-            status = task.status,
+            task = task,
             initialExpanded = task.timeline.isNotEmpty(),
         )
 
@@ -590,13 +693,21 @@ private fun AdminDeliveryTaskCard(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onCancel) {
-                    Text("Cancel", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = NTColors.Error)
+                OutlinedButton(
+                    onClick = onCancel,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, NTColors.Border),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                ) {
+                    Text("Cancel delivery", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.width(4.dp))
-                TextButton(onClick = onComplete) {
-                    Text("Mark completed", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = NTColors.Success)
-                }
+                DeliveryPrimaryButton(
+                    text = "Complete",
+                    icon = Icons.Rounded.CheckCircle,
+                    onClick = onComplete,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
@@ -662,11 +773,14 @@ fun AdminCreateDeliveryTaskScreen(
     var resolvedCoordinates by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var isResolvingLocation by remember { mutableStateOf(false) }
     var locationResolveError by remember { mutableStateOf<String?>(null) }
+    var isUsingCurrentLocation by remember { mutableStateOf(false) }
+    var currentLocationError by remember { mutableStateOf<String?>(null) }
+    var showLocationRationale by remember { mutableStateOf(false) }
+    var showInteractiveMapDialog by remember { mutableStateOf(false) }
     val locationService = remember { getLocationService() }
+    val locationScope = rememberCoroutineScope()
 
-    val effectiveCoordinates = resolvedCoordinates ?: remember(mapsLocationInput) {
-        LocationUtils.parseGoogleMapsCoordinates(mapsLocationInput)
-    }
+    val effectiveCoordinates = LocationUtils.parseGoogleMapsCoordinates(mapsLocationInput) ?: resolvedCoordinates
 
     LaunchedEffect(mapsLocationInput) {
         if (mapsLocationInput.isBlank()) {
@@ -694,12 +808,97 @@ fun AdminCreateDeliveryTaskScreen(
                 } else {
                     locationResolveError = "Could not extract GPS coordinates from this link."
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 locationResolveError = "Failed to resolve link: ${e.message}"
             } finally {
                 isResolvingLocation = false
             }
         }
+    }
+
+    suspend fun useCurrentLocation() {
+        isUsingCurrentLocation = true
+        currentLocationError = null
+        locationResolveError = null
+        try {
+            val point = locationService.getCurrentLocation()
+            if (point == null) {
+                currentLocationError = "Location unavailable. Check GPS and try again."
+            } else {
+                val coordinateText = "${point.latitude}, ${point.longitude}"
+                mapsLocationInput = coordinateText
+                resolvedCoordinates = point.latitude to point.longitude
+                val address = locationService.reverseGeocode(point.latitude, point.longitude)
+                if (address.isNotBlank() && !address.startsWith("Point")) {
+                    destShopName = address
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            currentLocationError = e.message ?: "Could not read the device location."
+        } finally {
+            isUsingCurrentLocation = false
+        }
+    }
+
+    val locationPermissionController = rememberLocationPermissionController { granted ->
+        if (granted) {
+            locationScope.launch { useCurrentLocation() }
+        } else {
+            currentLocationError = "Location permission is needed to use the device's current position."
+        }
+    }
+
+    if (showLocationRationale) {
+        val permanentlyDenied = locationPermissionController.status == LocationPermissionStatus.PERMANENTLY_DENIED
+        AlertDialog(
+            onDismissRequest = { showLocationRationale = false },
+            title = {
+                Text(
+                    if (permanentlyDenied) "Location access is off" else "Set destination from this device?",
+                    fontWeight = FontWeight.Bold,
+                    color = NTColors.TextPrimary,
+                )
+            },
+            text = {
+                Text(
+                    if (permanentlyDenied) {
+                        "Allow location access in Settings to use this device's position as the delivery destination."
+                    } else {
+                        "Ruwia will use your current position only to set the delivery destination."
+                    },
+                    color = NTColors.TextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLocationRationale = false
+                        if (permanentlyDenied) {
+                            locationPermissionController.openAppSettings()
+                        } else {
+                            locationPermissionController.requestPermission()
+                        }
+                    },
+                ) {
+                    Text(
+                        if (permanentlyDenied) "Open settings" else "Continue",
+                        color = NTColors.Primary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLocationRationale = false }) {
+                    Text("Not now", color = NTColors.TextSecondary)
+                }
+            },
+            containerColor = NTColors.Surface,
+            shape = RoundedCornerShape(20.dp),
+        )
     }
     var selectedProduct by remember { mutableStateOf<ProductCategory?>(null) }
     var selectedEmployee by remember { mutableStateOf<EmployeeInfo?>(null) }
@@ -723,6 +922,9 @@ fun AdminCreateDeliveryTaskScreen(
         selectedProduct == null -> "Select the product to deliver."
         quantity <= 0 -> "Enter a quantity of at least one case."
         selectedEmployee == null -> "Assign an employee to the route."
+        isResolvingLocation || isUsingCurrentLocation -> "Wait for the destination location to finish resolving."
+        mapsLocationInput.isNotBlank() && effectiveCoordinates == null ->
+            "Resolve the destination link or enter valid GPS coordinates."
         deliveryDateDb == null -> "Choose a valid delivery date."
         deliveryTimeDisplay.isBlank() -> "Choose a delivery time."
         isDeliveryScheduleInPast(deliveryDateDisplay, deliveryTimeDisplay) ->
@@ -773,19 +975,19 @@ fun AdminCreateDeliveryTaskScreen(
                 .padding(contentPadding),
         ) {
             NTPrimaryTopBar(
-                title = "New delivery task",
-                subtitle = "Customer · product · schedule · route",
+                title = "New delivery",
+                subtitle = "Set up a customer drop-off",
                 onBack = { if (!isSaving) onBack() },
                 horizontalPadding = 16.dp,
             )
 
             LazyColumn(
-                modifier = Modifier.fillMaxSize().navigationBarsPadding(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 32.dp),
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
-                    FormSection(title = "CUSTOMER") {
+                    FormSection(title = "Customer") {
                         DeliverySelectionField(
                             icon = Icons.Rounded.Person,
                             label = "Deliver to",
@@ -800,7 +1002,7 @@ fun AdminCreateDeliveryTaskScreen(
                 }
 
                 item {
-                    FormSection(title = "SHOP / DESTINATION LOCATION") {
+                    FormSection(title = "Delivery destination") {
                         OutlinedTextField(
                             value = destShopName,
                             onValueChange = { destShopName = it },
@@ -815,18 +1017,26 @@ fun AdminCreateDeliveryTaskScreen(
 
                         Spacer(Modifier.height(10.dp))
 
-                        OutlinedTextField(
+                        AddressAutoCompleteField(
                             value = mapsLocationInput,
-                            onValueChange = { mapsLocationInput = it },
-                            label = { Text("Google Maps Link or GPS Coordinates") },
-                            placeholder = { Text("Paste Maps link or 12.9716, 77.5946") },
-                            singleLine = true,
+                            onValueChange = {
+                                mapsLocationInput = it
+                                currentLocationError = null
+                                locationResolveError = null
+                            },
+                            label = "Delivery Address or GPS Location",
+                            placeholder = "Type area, street, or paste Maps link…",
                             enabled = !isSaving,
-                            shape = RoundedCornerShape(14.dp),
-                            colors = taskFieldColors(),
-                            modifier = Modifier.fillMaxWidth(),
-                            trailingIcon = {
-                                if (isResolvingLocation) {
+                            onSuggestionSelected = { suggestion ->
+                                mapsLocationInput = suggestion.fullAddress
+                                resolvedCoordinates = Pair(suggestion.latitude, suggestion.longitude)
+                                if (destShopName.isBlank()) {
+                                    destShopName = suggestion.title
+                                }
+                                locationResolveError = null
+                            },
+                            trailingContent = {
+                                if (isResolvingLocation || isUsingCurrentLocation) {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(16.dp),
                                         strokeWidth = 2.dp,
@@ -836,11 +1046,123 @@ fun AdminCreateDeliveryTaskScreen(
                                     Icon(
                                         Icons.Rounded.CheckCircle,
                                         contentDescription = "Location detected",
-                                        tint = NTColors.Success
+                                        tint = NTColors.Success,
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
                         )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Directly visible interactive map layout on screen with red point
+                        val mapLat = effectiveCoordinates?.first ?: 12.9716
+                        val mapLng = effectiveCoordinates?.second ?: 77.5946
+
+                        InteractiveMapPickerCard(
+                            latitude = mapLat,
+                            longitude = mapLng,
+                            address = mapsLocationInput.ifBlank { destShopName },
+                            height = 240.dp,
+                            onLocationChanged = { lat, lng, addr ->
+                                resolvedCoordinates = Pair(lat, lng)
+                                mapsLocationInput = addr
+                                if (destShopName.isBlank()) {
+                                    destShopName = addr.substringBefore(",").ifBlank { selectedCustomer?.name.orEmpty() }
+                                }
+                                locationResolveError = null
+                            },
+                            onExpandFullScreen = {
+                                showInteractiveMapDialog = true
+                            }
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { showInteractiveMapDialog = true },
+                                enabled = !isSaving,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, NTColors.Primary.copy(alpha = 0.6f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.PrimaryDeep),
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Map,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(17.dp),
+                                    tint = NTColors.Primary,
+                                )
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    "Expand Map",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    if (locationPermissionController.status == LocationPermissionStatus.GRANTED) {
+                                        locationScope.launch { useCurrentLocation() }
+                                    } else {
+                                        showLocationRationale = true
+                                    }
+                                },
+                                enabled = !isSaving && !isUsingCurrentLocation,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, NTColors.Border),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                            ) {
+                                if (isUsingCurrentLocation) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = NTColors.Primary,
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Rounded.LocationOn,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(17.dp),
+                                        tint = NTColors.Primary,
+                                    )
+                                }
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    if (isUsingCurrentLocation) "Locating…" else "GPS Location",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+
+                            if (effectiveCoordinates != null) {
+                                OutlinedButton(
+                                    onClick = {
+                                        openMapNavigation(
+                                            effectiveCoordinates.first,
+                                            effectiveCoordinates.second,
+                                            destShopName.ifBlank { selectedCustomer?.name ?: "Delivery destination" },
+                                        )
+                                    },
+                                    enabled = !isSaving,
+                                    modifier = Modifier.height(44.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, NTColors.Border),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NTColors.TextSecondary),
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Navigation,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(17.dp),
+                                        tint = NTColors.Primary,
+                                    )
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("Preview", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
 
                         if (isResolvingLocation) {
                             Spacer(Modifier.height(6.dp))
@@ -858,7 +1180,7 @@ fun AdminCreateDeliveryTaskScreen(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    text = "Resolving Google Maps share link…",
+                                    text = "Resolving location details…",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = NTColors.Primary
@@ -880,33 +1202,28 @@ fun AdminCreateDeliveryTaskScreen(
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(Modifier.width(4.dp))
+                                val latFormatted = ((effectiveCoordinates.first * 10000).toLong() / 10000.0).toString()
+                                val lonFormatted = ((effectiveCoordinates.second * 10000).toLong() / 10000.0).toString()
                                 Text(
-                                    text = "Location detected: ${effectiveCoordinates.first}, ${effectiveCoordinates.second}",
+                                    text = "Location set: $latFormatted, $lonFormatted",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = NTColors.Success
                                 )
                             }
-                        } else if (locationResolveError != null) {
+                        } else if (locationResolveError != null || currentLocationError != null) {
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                text = locationResolveError!!,
+                                text = locationResolveError ?: currentLocationError.orEmpty(),
                                 fontSize = 11.sp,
                                 color = NTColors.Error
-                            )
-                        } else if (mapsLocationInput.isNotBlank()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                text = "Could not detect GPS coordinates. You can enter 'lat, lng' directly.",
-                                fontSize = 11.sp,
-                                color = NTColors.Warning
                             )
                         }
                     }
                 }
 
                 item {
-                    FormSection(title = "PRODUCT") {
+                    FormSection(title = "Product and quantity") {
                         Box {
                             DeliverySelectionField(
                                 icon = Icons.Rounded.ShoppingBag,
@@ -1014,7 +1331,7 @@ fun AdminCreateDeliveryTaskScreen(
                 }
 
                 item {
-                    FormSection(title = "SCHEDULE") {
+                    FormSection(title = "Schedule") {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             ScheduleButton(
                                 icon = Icons.Rounded.CalendarToday,
@@ -1041,7 +1358,7 @@ fun AdminCreateDeliveryTaskScreen(
                 }
 
                 item {
-                    FormSection(title = "ASSIGN TO") {
+                    FormSection(title = "Assign delivery to") {
                         Box {
                             DeliverySelectionField(
                                 icon = Icons.Rounded.Person,
@@ -1109,11 +1426,28 @@ fun AdminCreateDeliveryTaskScreen(
                         employeeName = selectedEmployee?.name.orEmpty(),
                         deliveryDate = deliveryDateDisplay,
                         deliveryTime = deliveryTimeDisplay,
+                        destination = when {
+                            effectiveCoordinates != null ->
+                                destShopName.ifBlank { "GPS destination selected" }
+                            selectedCustomer?.address.orEmpty().isNotBlank() -> "Customer address"
+                            else -> "No destination pin"
+                        },
                     )
                 }
 
-                if (formError != null) {
-                    item {
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+                color = NTColors.Surface,
+                shadowElevation = 10.dp,
+                border = BorderStroke(1.dp, NTColors.Border),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (formError != null) {
                         Surface(
                             color = NTColors.ErrorLight,
                             shape = RoundedCornerShape(14.dp),
@@ -1121,31 +1455,21 @@ fun AdminCreateDeliveryTaskScreen(
                         ) {
                             Text(
                                 text = formError,
-                                modifier = Modifier.padding(14.dp),
+                                modifier = Modifier.padding(12.dp),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = NTColors.ErrorText,
                             )
                         }
                     }
-                }
-
-                item {
-                    Button(
+                    DeliveryPrimaryButton(
+                        text = if (isSaving) "Creating delivery…" else "Create delivery",
+                        icon = if (isSaving) null else Icons.AutoMirrored.Rounded.Assignment,
                         onClick = ::saveTask,
-                        enabled = !isSaving,
-                        modifier = Modifier.fillMaxWidth().height(54.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
-                    ) {
-                        if (isSaving) {
-                            Text("Saving task…", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        } else {
-                            Icon(Icons.AutoMirrored.Rounded.Assignment, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Create delivery task", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        }
-                    }
+                        enabled = !isSaving && !isResolvingLocation && !isUsingCurrentLocation,
+                        isLoading = isSaving,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
@@ -1155,8 +1479,34 @@ fun AdminCreateDeliveryTaskScreen(
                 initialCustomers = savedCustomers,
                 selectedCustomer = selectedCustomer,
                 onDismiss = { showCustomerPicker = false },
-                onSelect = { selectedCustomer = it },
+                onSelect = { customer ->
+                    selectedCustomer = customer
+                    if (destShopName.isBlank()) {
+                        destShopName = customer.name
+                    }
+                    if (mapsLocationInput.isBlank() && !customer.address.isNullOrBlank()) {
+                        mapsLocationInput = customer.address
+                    }
+                },
                 allowAddNew = false,
+            )
+        }
+
+        if (showInteractiveMapDialog) {
+            InteractiveMapLocationDialog(
+                initialLatitude = effectiveCoordinates?.first,
+                initialLongitude = effectiveCoordinates?.second,
+                initialAddress = mapsLocationInput.ifBlank { destShopName },
+                onConfirmLocation = { lat, lng, addr ->
+                    resolvedCoordinates = Pair(lat, lng)
+                    mapsLocationInput = addr
+                    if (destShopName.isBlank()) {
+                        destShopName = addr.substringBefore(",").ifBlank { selectedCustomer?.name.orEmpty() }
+                    }
+                    locationResolveError = null
+                    showInteractiveMapDialog = false
+                },
+                onDismiss = { showInteractiveMapDialog = false }
             )
         }
 
@@ -1267,9 +1617,8 @@ private fun FormSection(
     ) {
         Text(
             text = title,
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp,
             color = NTColors.TextTertiary,
         )
         Spacer(Modifier.height(10.dp))
@@ -1370,6 +1719,7 @@ private fun DeliveryTaskSummary(
     employeeName: String,
     deliveryDate: String,
     deliveryTime: String,
+    destination: String,
 ) {
     Column(
         modifier = Modifier
@@ -1407,6 +1757,24 @@ private fun DeliveryTaskSummary(
             fontSize = 12.sp,
             color = NTColors.TextSecondary,
         )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Rounded.LocationOn,
+                contentDescription = null,
+                tint = NTColors.Primary,
+                modifier = Modifier.size(15.dp),
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                destination,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = NTColors.Primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

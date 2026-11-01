@@ -43,6 +43,9 @@ import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.isTextField
 import com.example.ruwia.ui.components.formKeyboardActions
 import com.example.ruwia.data.getLocationService
+import com.example.ruwia.ui.components.AddressAutoCompleteField
+import com.example.ruwia.ui.components.InteractiveMapLocationDialog
+import com.example.ruwia.ui.components.InteractiveMapPickerCard
 import com.example.ruwia.util.LocationPermissionRationaleDialog
 import com.example.ruwia.util.LocationPermissionStatus
 import com.example.ruwia.util.LocationUtils
@@ -704,14 +707,12 @@ private fun CustomerFormDialog(
     }
 
     if (showMapPicker) {
-        CustomerMapLocationDialog(
-            currentAddress = address,
-            isLocating = isLocating,
-            onUseCurrentLocation = {
-                showMapPicker = false
-                fetchCurrentLocation()
-            },
-            onConfirmLocation = { newAddr ->
+        val detected = LocationUtils.parseGoogleMapsCoordinates(address)
+        InteractiveMapLocationDialog(
+            initialLatitude = detected?.first,
+            initialLongitude = detected?.second,
+            initialAddress = address,
+            onConfirmLocation = { lat, lng, newAddr ->
                 address = newAddr
                 showMapPicker = false
             },
@@ -814,7 +815,7 @@ private fun CustomerFormDialog(
                 }
             }
 
-            CustomerFormInput(
+            AddressAutoCompleteField(
                 value = address,
                 onValueChange = { newText ->
                     address = newText
@@ -843,8 +844,32 @@ private fun CustomerFormDialog(
                     }
                 },
                 placeholder = "Area / street / landmark or paste Maps link",
+                onSuggestionSelected = { suggestion ->
+                    address = suggestion.fullAddress
+                    locationError = null
+                },
                 keyboardType = KeyboardType.Text,
                 imeAction = ImeAction.Next,
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            val detected = LocationUtils.parseGoogleMapsCoordinates(address)
+            val custMapLat = detected?.first ?: 12.9716
+            val custMapLng = detected?.second ?: 77.5946
+
+            InteractiveMapPickerCard(
+                latitude = custMapLat,
+                longitude = custMapLng,
+                address = address,
+                height = 200.dp,
+                onLocationChanged = { lat, lng, addr ->
+                    address = addr
+                    locationError = null
+                },
+                onExpandFullScreen = {
+                    showMapPicker = true
+                }
             )
 
             // Map and location actions bar (Swiggy / Zomato style)
@@ -868,7 +893,7 @@ private fun CustomerFormDialog(
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        text = "Pick on Map / Paste Link",
+                        text = "Expand Map",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = NTColors.Primary,

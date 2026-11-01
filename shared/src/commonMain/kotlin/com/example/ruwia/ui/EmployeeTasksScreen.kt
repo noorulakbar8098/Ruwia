@@ -1,7 +1,9 @@
 package com.example.ruwia.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,24 +15,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Assignment
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Phone
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.rounded.ShoppingCart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,12 +46,13 @@ import com.example.ruwia.domain.DeliveryTask
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.rounded.AddLocationAlt
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.ui.graphics.Color
 import com.example.ruwia.ui.components.DeliveryTimelineView
-import com.example.ruwia.ui.dashboard.NTColors
-import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
+import com.example.ruwia.ui.components.DeliveryPrimaryButton
 
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.rounded.Navigation
@@ -78,17 +85,29 @@ fun EmployeeTasksScreen(
     onRecordCheckpoint: (String) -> Unit = {},
     onMarkDone: (String) -> Unit,
     onRefresh: () -> Unit = {},
+    onNavigateToAddSale: (DeliveryTask) -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     SystemBackHandler(onBack)
 
-    val openTasks = tasks.count { !it.isCompleted() }
+    val openTasks = tasks.count { !it.isClosedForEmployee() }
+    val completedCount = tasks.count { it.isCompleted() }
+    val cancelledCount = tasks.count { it.status.equals("cancelled", ignoreCase = true) || it.status.equals("canceled", ignoreCase = true) }
     val trackingManager = remember { getDeliveryTrackingManager() }
     val isTracking by trackingManager.isTracking.collectAsState()
     val activeTaskId by trackingManager.activeTaskId.collectAsState()
 
     var taskPendingPermission by remember { mutableStateOf<DeliveryTask?>(null) }
     var showRationaleDialog by remember { mutableStateOf(false) }
+    var selectedFilter by remember { mutableStateOf("Active") }
+    val visibleTasks = when (selectedFilter) {
+        "Completed" -> tasks.filter { it.isCompleted() }
+        "Cancelled" -> tasks.filter {
+            it.status.equals("cancelled", ignoreCase = true) || it.status.equals("canceled", ignoreCase = true)
+        }
+        "All" -> tasks
+        else -> tasks.filterNot { it.isClosedForEmployee() }
+    }
 
     // Auto-refresh tasks every 4 seconds while active so dynamic log points and live ETA refresh automatically
     androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -130,6 +149,8 @@ fun EmployeeTasksScreen(
                 navigateToTaskDestination(pending)
                 taskPendingPermission = null
             }
+        } else {
+            showRationaleDialog = true
         }
     }
 
@@ -168,40 +189,136 @@ fun EmployeeTasksScreen(
         if (activeTaskId == task.id) {
             trackingManager.stopTracking()
         }
+        onNavigateToAddSale(task)
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(NTColors.Background)
+            .background(DeliveryTrackingPalette.Canvas)
             .padding(contentPadding),
     ) {
-        NTPrimaryTopBar(
-            title = "My Tasks",
+        DeliveryTrackingHeader(
             subtitle = when {
                 tasks.isEmpty() -> "No deliveries scheduled"
+                openTasks == 0 && cancelledCount > 0 -> "$completedCount completed · $cancelledCount cancelled"
                 openTasks == 0 -> "All ${tasks.size} deliveries completed"
                 else -> "$openTasks open · ${tasks.size} scheduled"
             },
             onBack = onBack,
-            horizontalPadding = 16.dp,
         )
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (tasks.isEmpty()) {
-                item { EmptyTasksState() }
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = DeliveryTrackingPalette.Surface,
+                    border = BorderStroke(1.dp, DeliveryTrackingPalette.Border),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "YOUR ROUTE",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp,
+                                color = DeliveryTrackingPalette.Orange,
+                            )
+                            Spacer(Modifier.height(5.dp))
+                            Text(
+                                when {
+                                    isTracking -> "You're on the way"
+                                    openTasks == 0 -> "All caught up"
+                                    openTasks == 1 -> "1 delivery to go"
+                                    else -> "$openTasks deliveries to go"
+                                },
+                                fontSize = 21.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = DeliveryTrackingPalette.Ink,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "$completedCount completed · ${tasks.size} assigned",
+                                fontSize = 12.sp,
+                                color = DeliveryTrackingPalette.SecondaryInk,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(DeliveryTrackingPalette.SoftOrange),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Navigation,
+                                contentDescription = null,
+                                tint = DeliveryTrackingPalette.Orange,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf("Active", "Completed", "Cancelled", "All").forEach { filter ->
+                        val count = when (filter) {
+                            "Active" -> openTasks
+                            "Completed" -> completedCount
+                            "Cancelled" -> cancelledCount
+                            else -> tasks.size
+                        }
+                        FilterChip(
+                            selected = selectedFilter == filter,
+                            onClick = { selectedFilter = filter },
+                            label = { Text("$filter  $count", fontWeight = FontWeight.SemiBold) },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = DeliveryTrackingPalette.Orange,
+                                selectedLabelColor = Color.White,
+                                containerColor = DeliveryTrackingPalette.Surface,
+                                labelColor = DeliveryTrackingPalette.SecondaryInk,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            if (visibleTasks.isEmpty()) {
+                item {
+                    EmptyTasksState(
+                        title = if (tasks.isEmpty()) "No tasks for today" else "No $selectedFilter tasks",
+                        message = if (tasks.isEmpty()) {
+                            "Deliveries assigned to you will appear here."
+                        } else {
+                            "Tasks matching this status will appear here."
+                        },
+                    )
+                }
             } else {
-                items(tasks) { task ->
+                items(visibleTasks, key = { it.id }) { task ->
                     DeliveryTaskCard(
                         task = task,
                         isActivelyTracking = isTracking && activeTaskId == task.id,
                         onAccept = { handleAcceptTask(task) },
                         onRecordCheckpoint = { onRecordCheckpoint(task.id) },
                         onMarkDone = { handleCompleteTask(task) },
+                        onNavigateToAddSale = { onNavigateToAddSale(task) },
                     )
                 }
             }
@@ -210,7 +327,50 @@ fun EmployeeTasksScreen(
 }
 
 @Composable
-private fun EmptyTasksState() {
+private fun DeliveryTrackingHeader(
+    subtitle: String,
+    onBack: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DeliveryTrackingPalette.Surface)
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = "Back",
+                tint = DeliveryTrackingPalette.Ink,
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "My deliveries",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = DeliveryTrackingPalette.Ink,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    subtitle,
+                    fontSize = 12.sp,
+                    color = DeliveryTrackingPalette.SecondaryInk,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyTasksState(
+    title: String = "No tasks for today",
+    message: String = "Deliveries assigned to you will appear here.",
+) {
     Box(
         modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
         contentAlignment = Alignment.Center,
@@ -220,28 +380,28 @@ private fun EmptyTasksState() {
                 modifier = Modifier
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(NTColors.PrimaryLight),
+                    .background(DeliveryTrackingPalette.SoftOrange),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.AutoMirrored.Rounded.Assignment,
                     contentDescription = null,
-                    tint = NTColors.Primary,
+                    tint = DeliveryTrackingPalette.Orange,
                     modifier = Modifier.size(34.dp),
                 )
             }
             Spacer(Modifier.height(14.dp))
             Text(
-                "No tasks for today",
+                title,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                color = NTColors.TextPrimary,
+                color = DeliveryTrackingPalette.Ink,
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                "Deliveries assigned to you will appear here.",
+                message,
                 fontSize = 13.sp,
-                color = NTColors.TextTertiary,
+                color = DeliveryTrackingPalette.SecondaryInk,
             )
         }
     }
@@ -254,44 +414,56 @@ private fun DeliveryTaskCard(
     onAccept: () -> Unit,
     onRecordCheckpoint: () -> Unit,
     onMarkDone: () -> Unit,
+    onNavigateToAddSale: () -> Unit = {},
 ) {
     val completed = task.isCompleted()
+    val cancelled = task.status.equals("cancelled", ignoreCase = true) ||
+        task.status.equals("canceled", ignoreCase = true)
     val isPending = task.status.equals("pending", ignoreCase = true)
     val isInTransit = task.status.equals("in_transit", ignoreCase = true) || task.status.equals("accepted", ignoreCase = true)
 
     val statusColor = when {
-        completed -> NTColors.Success
-        isPending -> NTColors.Warning
-        isInTransit -> NTColors.Primary
-        else -> NTColors.Info
+        completed -> DeliveryTrackingPalette.Green
+        cancelled -> DeliveryTrackingPalette.Red
+        isPending -> DeliveryTrackingPalette.Orange
+        isInTransit -> DeliveryTrackingPalette.Orange
+        else -> DeliveryTrackingPalette.SecondaryInk
     }
     val statusBackground = when {
-        completed -> NTColors.SuccessLight
-        isPending -> NTColors.WarningLight
-        isInTransit -> NTColors.PrimaryLight
-        else -> NTColors.InfoLight
+        completed -> DeliveryTrackingPalette.SoftGreen
+        cancelled -> DeliveryTrackingPalette.SoftRed
+        isPending -> DeliveryTrackingPalette.SoftOrange
+        isInTransit -> DeliveryTrackingPalette.SoftOrange
+        else -> DeliveryTrackingPalette.SoftNeutral
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize()
             .clip(RoundedCornerShape(18.dp))
-            .background(NTColors.Surface)
-            .border(1.dp, NTColors.Border, RoundedCornerShape(18.dp))
-            .padding(14.dp),
+            .background(DeliveryTrackingPalette.Surface)
+            .border(1.dp, DeliveryTrackingPalette.Border, RoundedCornerShape(18.dp))
+            .padding(16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { onNavigateToAddSale() }
+        ) {
             Box(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(if (completed) NTColors.SuccessLight else NTColors.PrimaryLight),
+                    .background(if (completed) DeliveryTrackingPalette.SoftGreen else DeliveryTrackingPalette.SoftOrange),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = if (completed) Icons.Rounded.CheckCircle else Icons.AutoMirrored.Rounded.Assignment,
                     contentDescription = null,
-                    tint = if (completed) NTColors.Success else NTColors.Primary,
+                    tint = if (completed) DeliveryTrackingPalette.Green else DeliveryTrackingPalette.Orange,
                     modifier = Modifier.size(22.dp),
                 )
             }
@@ -301,25 +473,40 @@ private fun DeliveryTaskCard(
                     text = task.customerName.ifBlank { "Delivery" },
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = NTColors.TextPrimary,
+                    color = DeliveryTrackingPalette.Ink,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = taskDetail(task),
-                    fontSize = 12.sp,
-                    color = NTColors.TextSecondary,
+                    text = taskProductSummary(task),
+                    fontSize = 13.sp,
+                    color = DeliveryTrackingPalette.SecondaryInk,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
+            IconButton(
+                onClick = onNavigateToAddSale,
+                modifier = Modifier.size(34.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.ShoppingCart,
+                    contentDescription = "Record sale for customer",
+                    tint = DeliveryTrackingPalette.Orange,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+            Spacer(Modifier.width(2.dp))
             Text(
-                text = if (isInTransit) {
-                    "IN TRANSIT (${task.timeline.size}/10)"
-                } else {
-                    task.status.replace("_", " ").uppercase().ifBlank { "PENDING" }
+                text = when {
+                    completed -> "Completed"
+                    cancelled -> "Cancelled"
+                    isInTransit -> "In transit"
+                    isPending -> "Pending"
+                    else -> task.status.replace("_", " ").lowercase()
+                        .replaceFirstChar { it.uppercase() }.ifBlank { "Pending" }
                 },
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
@@ -331,49 +518,61 @@ private fun DeliveryTaskCard(
             )
         }
 
-        val destName = task.destName?.takeIf { it.isNotBlank() } ?: "Destination Shop"
-        if (task.destLatitude != null && task.destLongitude != null) {
-            Spacer(Modifier.height(8.dp))
+        val destinationName = task.destName?.takeIf { it.isNotBlank() } ?: "Destination shop"
+        val hasDestination = task.destLatitude != null && task.destLongitude != null
+        if (hasDestination) {
+            Spacer(Modifier.height(14.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .clickable {
-                        openMapNavigation(task.destLatitude, task.destLongitude, destName)
+                        openMapNavigation(task.destLatitude!!, task.destLongitude!!, destinationName)
                     }
-                    .background(NTColors.PrimaryLight.copy(alpha = 0.5f))
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .background(DeliveryTrackingPalette.Surface)
+                    .border(1.dp, DeliveryTrackingPalette.Border, RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 11.dp)
                     .fillMaxWidth()
             ) {
                 Icon(
-                    Icons.Rounded.Navigation,
-                    contentDescription = "Navigate to shop",
-                    tint = NTColors.Primary,
-                    modifier = Modifier.size(16.dp),
+                    Icons.Rounded.LocationOn,
+                    contentDescription = "Open destination in Maps",
+                    tint = DeliveryTrackingPalette.Orange,
+                    modifier = Modifier.size(20.dp),
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Shop: $destName",
-                        fontSize = 12.sp,
+                        text = "Shop: $destinationName",
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = NTColors.Primary,
+                        color = DeliveryTrackingPalette.Ink,
                     )
                     Text(
-                        text = "Tap to open Google Maps navigation",
+                        text = "Tap to open in Maps",
                         fontSize = 10.sp,
-                        color = NTColors.TextSecondary,
+                        color = DeliveryTrackingPalette.SecondaryInk,
                     )
                 }
+                Icon(
+                    Icons.Rounded.ChevronRight,
+                    contentDescription = null,
+                    tint = DeliveryTrackingPalette.SecondaryInk,
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
 
         if (isActivelyTracking || isInTransit) {
             Spacer(Modifier.height(8.dp))
             Surface(
-                color = if (isActivelyTracking) NTColors.PrimaryLight else NTColors.SurfaceVar,
+                color = if (isActivelyTracking) DeliveryTrackingPalette.SoftOrange else DeliveryTrackingPalette.SoftNeutral,
                 shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, if (isActivelyTracking) NTColors.Primary.copy(alpha = 0.5f) else NTColors.Border),
+                border = BorderStroke(
+                    1.dp,
+                    if (isActivelyTracking) DeliveryTrackingPalette.Orange.copy(alpha = 0.3f)
+                    else DeliveryTrackingPalette.Border,
+                ),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -386,14 +585,18 @@ private fun DeliveryTaskCard(
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(if (isActivelyTracking) NTColors.Primary else NTColors.Warning)
+                                .background(if (isActivelyTracking) DeliveryTrackingPalette.Orange else DeliveryTrackingPalette.SecondaryInk)
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (isActivelyTracking) "Background GPS Tracking Active" else "Journey In Transit",
+                            text = if (isActivelyTracking) {
+                                "Location sharing is on"
+                            } else {
+                                "Delivery in progress"
+                            },
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (isActivelyTracking) NTColors.Primary else NTColors.TextSecondary
+                            color = if (isActivelyTracking) DeliveryTrackingPalette.Orange else DeliveryTrackingPalette.SecondaryInk
                         )
                     }
 
@@ -402,75 +605,95 @@ private fun DeliveryTaskCard(
                             text = "${LocationUtils.formatDistance(task.distanceRemainingMeters)} remaining",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = NTColors.Primary
+                            color = DeliveryTrackingPalette.Orange
                         )
                     }
                 }
             }
         }
 
-        if (task.address.isNotBlank()) {
+        val contactAddress = task.address.ifBlank { task.customerAddress.orEmpty() }
+        if (contactAddress.isNotBlank() || task.phone.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (contactAddress.isNotBlank()) {
+                    ContactDetail(
+                        icon = Icons.Rounded.LocationOn,
+                        text = contactAddress.substringBefore(',').ifBlank { contactAddress },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (task.phone.isNotBlank()) {
+                    ContactDetail(
+                        icon = Icons.Rounded.Phone,
+                        text = task.phone,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+
+        if (completed) {
+            Spacer(Modifier.height(14.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = DeliveryTrackingPalette.SoftGreen,
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        tint = DeliveryTrackingPalette.Green,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(9.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Delivery completed",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = DeliveryTrackingPalette.Green,
+                        )
+                        Text(
+                            "Order delivered successfully",
+                            fontSize = 11.sp,
+                            color = DeliveryTrackingPalette.SecondaryInk,
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.Top) {
-                Icon(
-                    Icons.Rounded.LocationOn,
-                    contentDescription = null,
-                    tint = NTColors.TextTertiary,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = task.address,
-                    fontSize = 12.sp,
-                    color = NTColors.TextSecondary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            DeliveryPrimaryButton(
+                text = "Record sale for this customer",
+                icon = Icons.Rounded.ShoppingCart,
+                onClick = onNavigateToAddSale,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
-        if (task.phone.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Rounded.Phone,
-                    contentDescription = null,
-                    tint = NTColors.TextTertiary,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = task.phone,
-                    fontSize = 12.sp,
-                    color = NTColors.TextSecondary,
-                )
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(14.dp))
         DeliveryTimelineView(
-            timeline = task.timeline,
-            status = task.status,
+            task = task,
             initialExpanded = task.timeline.isNotEmpty(),
         )
 
         if (isPending) {
             Spacer(Modifier.height(12.dp))
-            Button(
+            DeliveryPrimaryButton(
+                text = "Start delivery",
+                icon = Icons.Rounded.PlayArrow,
                 onClick = onAccept,
-                modifier = Modifier.fillMaxWidth().height(46.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
-            ) {
-                Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Accept Task & Start Route",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                )
-            }
+                modifier = Modifier.fillMaxWidth(),
+            )
         } else if (isInTransit) {
             Spacer(Modifier.height(12.dp))
             Row(
@@ -479,47 +702,86 @@ private fun DeliveryTaskCard(
             ) {
                 OutlinedButton(
                     onClick = onRecordCheckpoint,
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.weight(1f).height(52.dp),
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, NTColors.Primary),
+                    border = BorderStroke(1.dp, DeliveryTrackingPalette.Orange.copy(alpha = 0.55f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = DeliveryTrackingPalette.Orange),
                 ) {
-                    Icon(Icons.Rounded.AddLocationAlt, contentDescription = null, tint = NTColors.Primary, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Rounded.AddLocationAlt, contentDescription = null, tint = DeliveryTrackingPalette.Orange, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = if (task.timeline.size < 10) "Log Point ${task.timeline.size + 1}" else "Log Checkpoint",
+                        text = "Log checkpoint",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = NTColors.Primary,
+                        color = DeliveryTrackingPalette.Orange,
                     )
                 }
-                Button(
+                DeliveryPrimaryButton(
+                    text = "Complete & Sale",
+                    icon = Icons.Rounded.CheckCircle,
                     onClick = onMarkDone,
-                    modifier = Modifier.weight(1f).height(44.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = NTColors.Success),
-                ) {
-                    Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "Mark Delivered",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                }
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
 }
 
-private fun taskDetail(task: DeliveryTask): String {
-    val cases = "${task.canQty} Case${if (task.canQty == 1) "" else "s"}"
-    val product = task.productName?.takeIf { it.isNotBlank() }
+@Composable
+private fun ContactDetail(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = DeliveryTrackingPalette.SecondaryInk,
+            modifier = Modifier.size(15.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = text,
+            fontSize = 11.sp,
+            color = DeliveryTrackingPalette.SecondaryInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private fun taskProductSummary(task: DeliveryTask): String {
+    val product = task.productName?.takeIf { it.isNotBlank() } ?: "Delivery"
+    val cases = "${task.canQty} ${if (task.canQty == 1) "Case" else "Cases"}"
     val eta = task.etaText.takeIf { it.isNotBlank() }
     return listOfNotNull(product, cases, eta).joinToString(" · ")
+}
+
+private object DeliveryTrackingPalette {
+    val Canvas = Color(0xFFFAF9F7)
+    val Surface = Color.White
+    val Ink = Color(0xFF252321)
+    val SecondaryInk = Color(0xFF77716B)
+    val Border = Color(0xFFECE8E3)
+    val SoftNeutral = Color(0xFFF4F2EF)
+    val Orange = Color(0xFFE86D2F)
+    val SoftOrange = Color(0xFFFFF1E8)
+    val Green = Color(0xFF26834A)
+    val SoftGreen = Color(0xFFEAF6ED)
+    val Red = Color(0xFFB5473C)
+    val SoftRed = Color(0xFFFCEDEA)
 }
 
 private fun DeliveryTask.isCompleted(): Boolean =
     status.equals("completed", ignoreCase = true) ||
     status.equals("done", ignoreCase = true) ||
     status.equals("delivered", ignoreCase = true)
+
+private fun DeliveryTask.isClosedForEmployee(): Boolean =
+    isCompleted() ||
+    status.equals("cancelled", ignoreCase = true) ||
+    status.equals("canceled", ignoreCase = true)

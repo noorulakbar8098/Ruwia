@@ -28,29 +28,57 @@ Two layers ship in this repo:
 4. Rebuild the APK. Without that file the app builds and runs normally, just without outside-the-app push.
 
 ### 2. Service account (you, one time)
-1. Firebase console → Project settings → Service accounts → **Generate new private key** → saves a JSON file.
+> The service account **must** come from the same Firebase project as
+> `androidApp/google-services.json`. Check `project_id` in that file; a key
+> from another project fails with `403 PERMISSION_DENIED — SenderId mismatch`.
+
+1. Firebase console → open the project whose id matches `google-services.json` → Project settings → Service accounts → **Generate new private key** → saves a JSON file.
 2. Supabase Dashboard → Edge Functions → Secrets → add:
-   - `FCM_PROJECT_ID` = your Firebase project id
+   - `FCM_PROJECT_ID` = that same project id (e.g. `neerthuli-c8e59`)
    - `FCM_SERVICE_ACCOUNT` = the **entire JSON** from step 1 (single line)
+   - `PUSH_WEBHOOK_SECRET` = a long random value (`openssl rand -hex 32`)
 
 ### 3. Deploy the sender (terminal, needs Supabase CLI + a personal access token)
 ```bash
 supabase login
 supabase link --project-ref <your-project-ref>
-supabase functions deploy send-push
+supabase secrets set \
+  FCM_PROJECT_ID=<project-id> \
+  FCM_SERVICE_ACCOUNT="$(cat /path/to/service-account.json)" \
+  PUSH_WEBHOOK_SECRET="$(openssl rand -hex 32)"
+supabase functions deploy send-push --no-verify-jwt
 ```
+
+`--no-verify-jwt` is deliberate: the app's public key also passes the
+gateway's JWT check, so the function authenticates the webhook with
+`PUSH_WEBHOOK_SECRET` instead.
 
 ### 4. Fire it on every notification (you, in the Supabase Dashboard)
 1. Database → Webhooks → Create webhook:
    - Table: `notifications`, Events: **Insert**
    - Type: **Supabase Edge Functions**, Function: `send-push`
+   - HTTP header: `x-webhook-secret: <the same random value>`
 2. Save. From now on, every notification row (sale, stock update) fans out to the recipients' devices automatically.
 
 ### 5. Test
 1. Install the release APK on two phones; log one in as **admin**, one as **employee**.
 2. Accept the notification permission prompt (Android 13+).
-3. Employee records a sale → admin phone buzzes **with the app closed**.
-4. Admin adds stock → employee phone buzzes.
+3. Confirm each device registered after login:
+   ```sql
+   select user_id, platform, updated_at from device_tokens order by updated_at desc;
+   ```
+   A signed-in account with no row here will never receive a push — reinstall
+   the current build and sign in again.
+4. Employee records a sale → admin phone buzzes **with the app closed**.
+5. Admin adds stock → employee phone buzzes.
+
+### Troubleshooting
+| Symptom | Cause | Fix |
+|---|---|---|
+| `401 UNAUTHORIZED_NO_AUTH_HEADER` in `net._http_response` | Webhook has no `x-webhook-secret` header | Recreate the webhook with the header (step 4). |
+| `Missing FCM_PROJECT_ID or FCM_SERVICE_ACCOUNT secret` | Secrets not set on the function | Add both secrets (step 2). |
+| `403 PERMISSION_DENIED — SenderId mismatch` | Service account belongs to a different Firebase project than the app | Generate the key from the project in `google-services.json`. |
+| Notification row exists but no push | Recipient has no `device_tokens` row | Sign in on that device with the current build and accept notifications. |
 
 ### How it fits together
 `RuwiaMessagingService` (system tray) ← FCM ← `send-push` edge function ← `notifications` table ← app writes. Device tokens register after login and session restoration, refresh on FCM rotation, and are removed on logout. The migration supports multiple devices per account. Tapping a banner opens the app, where the same item waits in the bell center.
