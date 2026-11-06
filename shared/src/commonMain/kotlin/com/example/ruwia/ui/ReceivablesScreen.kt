@@ -6,10 +6,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -17,23 +19,48 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.example.ruwia.SystemBackHandler
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.CustomerLedgerEntry
+import com.example.ruwia.domain.Payment
 import com.example.ruwia.presentation.AdminState
-import com.example.ruwia.ui.dashboard.NTColors
-import com.example.ruwia.util.isoToDisplayDate
 import com.example.ruwia.ui.components.formKeyboardActions
+import com.example.ruwia.ui.dashboard.GlossyTealBox
+import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
+import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
+import com.example.ruwia.ui.dashboard.NTSectionHeader
+import com.example.ruwia.util.isoToDisplayDate
+import kotlin.math.roundToInt
+
+private val HeroMint = Color(0xFF5EEAD4)
+
+private enum class ReceivablesListTab { OUTSTANDING, ALL }
+
+private enum class PaymentMode(
+    val key: String,
+    val label: String,
+    val icon: ImageVector,
+) {
+    CASH("cash", "Cash", Icons.Rounded.Payments),
+    UPI("upi", "UPI", Icons.Rounded.QrCodeScanner),
+    CARD("card", "Card", Icons.Rounded.CreditCard),
+    BANK("bank", "Bank", Icons.Rounded.AccountBalance),
+}
 
 @Composable
 fun ReceivablesScreen(
@@ -47,12 +74,12 @@ fun ReceivablesScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var paymentCustomer by remember { mutableStateOf<Customer?>(null) }
-    val ledgerCustomer = state.customers.firstOrNull { it.id == state.ledgerCustomerId }
-        ?: state.ledger?.let { ledger ->
-            state.customers.firstOrNull { customer ->
-                ledger.entries.any { it.customerId == customer.id }
+    val ledgerCustomer = remember(state.customers, state.ledgerCustomerId, state.ledger) {
+        state.customers.firstOrNull { it.id == state.ledgerCustomerId }
+            ?: state.ledger?.entries?.firstOrNull()?.let { entry ->
+                state.customers.firstOrNull { it.id == entry.customerId }
             }
-        }
+    }
 
     LaunchedEffect(Unit) { onLoadPayments() }
 
@@ -70,34 +97,40 @@ fun ReceivablesScreen(
 
     Scaffold(
         containerColor = NTColors.Background,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.navigationBarsPadding(),
+            )
+        },
     ) { padding ->
-        if (state.ledgerCustomerId != null) {
-            CustomerLedgerContent(
-                state = state,
-                customer = ledgerCustomer,
-                modifier = Modifier.padding(padding),
-                onBack = onCloseLedger,
-                onCollect = { paymentCustomer = it },
-            )
-        } else {
-            ReceivablesContent(
-                state = state,
-                modifier = Modifier.padding(padding),
-                onBack = onBack,
-                onOpenCustomer = onOpenCustomer,
-                onCollect = { paymentCustomer = it },
-            )
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (state.ledgerCustomerId != null) {
+                CustomerLedgerContent(
+                    state = state,
+                    customer = ledgerCustomer,
+                    onBack = onCloseLedger,
+                    onCollect = { paymentCustomer = it },
+                )
+            } else {
+                ReceivablesContent(
+                    state = state,
+                    onBack = onBack,
+                    onOpenCustomer = onOpenCustomer,
+                    onCollect = { paymentCustomer = it },
+                )
+            }
         }
     }
 
     paymentCustomer?.let { customer ->
-        RecordPaymentDialog(
+        RecordPaymentSheet(
             customer = customer,
             isSaving = state.paymentSaving,
             onDismiss = { if (!state.paymentSaving) paymentCustomer = null },
             onConfirm = { amount, mode, note ->
-                val id = customer.id ?: return@RecordPaymentDialog
+                val id = customer.id ?: return@RecordPaymentSheet
                 onRecordPayment(id, amount, mode, note)
             },
         )
@@ -107,93 +140,164 @@ fun ReceivablesScreen(
 @Composable
 private fun ReceivablesContent(
     state: AdminState,
-    modifier: Modifier,
     onBack: () -> Unit,
     onOpenCustomer: (String) -> Unit,
     onCollect: (Customer) -> Unit,
 ) {
-    var search by remember { mutableStateOf("") }
-    var showAll by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var selectedTab by remember { mutableStateOf(ReceivablesListTab.OUTSTANDING) }
+
+    val totals = remember(state.customers, state.payments) {
+        computeReceivableTotals(state.customers, state.payments)
+    }
     val outstanding = remember(state.customers) {
         state.customers
             .filter { it.balance > 0.001 }
             .sortedByDescending { it.balance }
     }
-    val visible = remember(outstanding, state.customers, search, showAll) {
-        val source = if (showAll) state.customers.sortedByDescending { it.balance } else outstanding
-        if (search.isBlank()) source else source.filter {
-            it.name.contains(search, ignoreCase = true) ||
-                it.phone.orEmpty().contains(search, ignoreCase = true)
+    val allCustomers = remember(state.customers) {
+        state.customers.sortedWith(
+            compareByDescending<Customer> { it.balance > 0.001 }
+                .thenByDescending { it.balance }
+                .thenBy { it.name.lowercase() },
+        )
+    }
+    val recentPayments = remember(state.payments) {
+        state.payments
+            .filter { !it.referenceKey.isNullOrBlank() }
+            .sortedByDescending { it.createdAt.orEmpty() }
+            .take(6)
+    }
+    val customerNames = remember(state.customers) {
+        state.customers.mapNotNull { customer ->
+            customer.id?.let { it to customer.name }
+        }.toMap()
+    }
+
+    val source = if (selectedTab == ReceivablesListTab.OUTSTANDING) outstanding else allCustomers
+    val visible = remember(source, query) {
+        if (query.isBlank()) {
+            source
+        } else {
+            source.filter {
+                it.name.contains(query, ignoreCase = true) ||
+                    it.phone.orEmpty().contains(query, ignoreCase = true)
+            }
         }
     }
-    val ledgerPayments = remember(state.payments) {
-        state.payments.filter { !it.referenceKey.isNullOrBlank() }
-    }
-    val totalOutstanding = state.customers.sumOf { it.balance.coerceAtLeast(0.0) }
-    val totalCollected = ledgerPayments.sumOf { it.amount }
-    val totalBilled = totalOutstanding + totalCollected
 
-    Column(modifier = modifier.fillMaxSize()) {
-        ReceivablesTopBar(onBack = onBack)
+    Column(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
+        NTPrimaryTopBar(
+            title = "Payments & Dues",
+            subtitle = "Collections and customer balances",
+            onBack = onBack,
+            trailingText = if (outstanding.isEmpty()) "All clear" else "${outstanding.size} due",
+        )
+
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 28.dp),
+            modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+            contentPadding = PaddingValues(
+                start = NTDp.screenPad,
+                end = NTDp.screenPad,
+                top = NTDp.md,
+                bottom = NTDp.lg,
+            ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MoneySummaryCard("Billed", totalBilled, NTColors.TextPrimary, Modifier.weight(1f))
-                    MoneySummaryCard("Collected", totalCollected, NTColors.Success, Modifier.weight(1f))
-                    MoneySummaryCard("Outstanding", totalOutstanding, NTColors.Error, Modifier.weight(1f))
-                }
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ReceivablesTab("Outstanding", !showAll) { showAll = false }
-                    ReceivablesTab("All customers", showAll) { showAll = true }
-                }
-            }
-            item {
-                SearchField(value = search, onValueChange = { search = it })
-            }
-            item {
-                Text(
-                    if (showAll) "All customers" else "Customers with dues",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = NTColors.TextSecondary,
+                MoneyHeroCard(
+                    outstanding = totals.outstanding,
+                    collected = totals.collected,
+                    billed = totals.billed,
+                    label = "TOTAL OUTSTANDING",
+                    caption = when {
+                        outstanding.isEmpty() -> "Every customer is fully settled"
+                        outstanding.size == 1 -> "Across 1 customer account"
+                        else -> "Across ${outstanding.size} customer accounts"
+                    },
                 )
             }
+
+            item {
+                ReceivablesSegmentedTabs(
+                    selected = selectedTab,
+                    outstandingCount = outstanding.size,
+                    allCount = allCustomers.size,
+                    onSelect = { selectedTab = it },
+                )
+            }
+
+            item {
+                ReceivablesSearchField(
+                    query = query,
+                    onQueryChange = { query = it },
+                )
+            }
+
+            item {
+                NTSectionHeader(
+                    label = "RECEIVABLES",
+                    title = if (selectedTab == ReceivablesListTab.OUTSTANDING) {
+                        "Customers with dues"
+                    } else {
+                        "All customers"
+                    },
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+
             if (visible.isEmpty()) {
                 item {
-                    EmptyState(
-                        icon = Icons.Rounded.CheckCircle,
-                        title = if (showAll) "No customers yet" else "No outstanding dues",
-                        subtitle = if (showAll) "Add a customer from Settings to start billing." else "Every customer is fully paid.",
-                    )
+                    when {
+                        query.isNotBlank() -> ReceivablesEmptyState(
+                            icon = Icons.Rounded.SearchOff,
+                            title = "No customers match",
+                            subtitle = "Try a different name or phone number.",
+                            actionLabel = "Clear search",
+                            onAction = { query = "" },
+                        )
+
+                        selectedTab == ReceivablesListTab.OUTSTANDING -> ReceivablesEmptyState(
+                            icon = Icons.Rounded.TaskAlt,
+                            title = "All settled up",
+                            subtitle = "No outstanding dues right now. Every account is clear.",
+                            actionLabel = "View all customers",
+                            onAction = { selectedTab = ReceivablesListTab.ALL },
+                        )
+
+                        else -> ReceivablesEmptyState(
+                            icon = Icons.Rounded.PeopleOutline,
+                            title = "No customers yet",
+                            subtitle = "Customers added from Settings will appear here.",
+                        )
+                    }
                 }
             } else {
                 items(items = visible, key = { it.id ?: it.name }) { customer ->
-                    CustomerDueRow(
+                    CustomerDueCard(
                         customer = customer,
-                        onClick = { customer.id?.let(onOpenCustomer) },
+                        onOpen = { customer.id?.let(onOpenCustomer) },
                         onCollect = { onCollect(customer) },
                     )
                 }
             }
-            if (ledgerPayments.isNotEmpty()) {
+
+            if (recentPayments.isNotEmpty()) {
                 item {
-                    Text(
-                        "Recent payments",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = NTColors.TextSecondary,
+                    NTSectionHeader(
+                        label = "ACTIVITY",
+                        title = "Recent payments",
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
-                items(items = ledgerPayments.take(8), key = { it.id ?: it.hashCode().toString() }) { payment ->
-                    val name = state.customers.firstOrNull { it.id == payment.customerId }?.name ?: "Customer"
-                    PaymentRow(name = name, amount = payment.amount, mode = payment.mode, date = payment.createdAt)
+                items(
+                    items = recentPayments,
+                    key = { it.id ?: it.hashCode().toString() },
+                ) { payment ->
+                    PaymentFeedRow(
+                        customerName = payment.customerId?.let { customerNames[it] } ?: "Customer",
+                        payment = payment,
+                    )
                 }
             }
         }
@@ -204,67 +308,105 @@ private fun ReceivablesContent(
 private fun CustomerLedgerContent(
     state: AdminState,
     customer: Customer?,
-    modifier: Modifier,
     onBack: () -> Unit,
     onCollect: (Customer) -> Unit,
 ) {
     val ledger = state.ledger
-    val name = customer?.name ?: ledger?.entries?.firstOrNull()?.customerName.orEmpty().ifBlank { "Customer" }
+    val name = customer?.name
+        ?: ledger?.entries?.firstOrNull()?.customerName.orEmpty().ifBlank { "Customer" }
+    val billed = ledger?.billed ?: customer?.balance ?: 0.0
+    val collected = ledger?.collected ?: 0.0
+    val outstanding = ledger?.outstanding ?: customer?.balance ?: 0.0
+    val entries = remember(ledger?.entries) { ledger?.entries?.asReversed().orEmpty() }
+    val canCollect = customer != null && outstanding > 0.001 && !state.paymentSaving
 
-    Column(modifier = modifier.fillMaxSize()) {
-        ReceivablesTopBar(title = name, onBack = onBack)
+    Column(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
+        NTPrimaryTopBar(
+            title = name,
+            subtitle = "Customer statement",
+            onBack = onBack,
+            trailingText = if (outstanding > 0.001) "Due" else "Paid",
+        )
+
         if (state.ledgerLoading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
                 CircularProgressIndicator(color = NTColors.Primary)
             }
             return@Column
         }
-        val billed = ledger?.billed ?: customer?.balance ?: 0.0
-        val collected = ledger?.collected ?: 0.0
-        val outstanding = ledger?.outstanding ?: customer?.balance ?: 0.0
+
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 28.dp),
+            modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+            contentPadding = PaddingValues(
+                start = NTDp.screenPad,
+                end = NTDp.screenPad,
+                top = NTDp.md,
+                bottom = NTDp.lg,
+            ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MoneySummaryCard("Billed", billed, NTColors.TextPrimary, Modifier.weight(1f))
-                    MoneySummaryCard("Collected", collected, NTColors.Success, Modifier.weight(1f))
-                    MoneySummaryCard("Remaining", outstanding, NTColors.Error, Modifier.weight(1f))
-                }
-            }
-            item {
-                Button(
-                    onClick = { customer?.let(onCollect) },
-                    enabled = customer != null && outstanding > 0.001 && !state.paymentSaving,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
-                ) {
-                    Icon(Icons.Rounded.Payments, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Record payment", fontWeight = FontWeight.SemiBold)
-                }
-            }
-            item {
-                Text(
-                    "Statement",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = NTColors.TextSecondary,
+                MoneyHeroCard(
+                    outstanding = outstanding,
+                    collected = collected,
+                    billed = billed,
+                    label = "OUTSTANDING BALANCE",
+                    caption = customer?.phone?.takeIf { it.isNotBlank() }
+                        ?: "Sales and payments in one place",
                 )
             }
-            if (ledger == null || ledger.entries.isEmpty()) {
+
+            item {
+                GlossyTealBox(
+                    shape = RoundedCornerShape(16.dp),
+                    enabled = canCollect,
+                    onClick = { customer?.let(onCollect) },
+                    onClickLabel = "Record payment",
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Rounded.Payments,
+                            contentDescription = null,
+                            tint = if (canCollect) HeroMint else NTColors.TextTertiary,
+                            modifier = Modifier.size(19.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (outstanding > 0.001) "Record payment" else "Account settled",
+                            color = if (canCollect) Color.White else NTColors.TextTertiary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+
+            item {
+                NTSectionHeader(
+                    label = "STATEMENT",
+                    title = "Money statement",
+                    trailingText = if (entries.isEmpty()) "" else "${entries.size} entries",
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+
+            if (entries.isEmpty()) {
                 item {
-                    EmptyState(
+                    ReceivablesEmptyState(
                         icon = Icons.Rounded.ReceiptLong,
                         title = "No entries yet",
-                        subtitle = "Sales and payments will appear here.",
+                        subtitle = "Sales and payments for this customer will appear here.",
                     )
                 }
             } else {
-                items(items = ledger.entries, key = { it.id ?: it.referenceKey }) { entry ->
+                items(
+                    items = entries,
+                    key = { it.id ?: it.referenceKey },
+                ) { entry ->
                     LedgerEntryRow(entry)
                 }
             }
@@ -272,230 +414,284 @@ private fun CustomerLedgerContent(
     }
 }
 
-@Composable
-private fun ReceivablesTopBar(title: String = "Payments & Dues", onBack: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(NTColors.Surface)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(NTColors.SurfaceVar)
-                .clickable(onClick = onBack),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.ArrowBack, "Back", tint = NTColors.TextPrimary, modifier = Modifier.size(19.dp)) }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("Sales, payments and outstanding", fontSize = 11.sp, color = NTColors.TextTertiary)
-        }
-    }
-}
+// ── Summary hero ──────────────────────────────────────────────
 
 @Composable
-private fun CustomerDueRow(customer: Customer, onClick: () -> Unit, onCollect: () -> Unit) {
-    Row(
-        modifier = Modifier
+private fun MoneyHeroCard(
+    outstanding: Double,
+    collected: Double,
+    billed: Double,
+    label: String,
+    caption: String,
+    modifier: Modifier = Modifier,
+) {
+    val progress = collectionProgress(collected, billed)
+    val shape = RoundedCornerShape(24.dp)
+
+    Column(
+        modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(NTColors.Surface)
-            .clickable(onClick = onClick)
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .shadow(8.dp, shape, clip = false)
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    listOf(NTColors.PrimaryDeep, NTColors.PrimaryDark),
+                ),
+            )
+            .padding(20.dp),
     ) {
-        Box(
-            modifier = Modifier.size(42.dp).clip(CircleShape).background(NTColors.PrimaryLight),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                customer.name.take(1).uppercase(),
-                color = NTColors.PrimaryDark,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(customer.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextPrimary)
-            Text(
-                listOfNotNull(
-                    customer.phone?.takeIf { it.isNotBlank() },
-                    "${customer.cansHeld} cans".takeIf { customer.cansHeld > 0 },
-                ).joinToString(" · ").ifBlank { "No contact details" },
-                fontSize = 11.sp,
-                color = NTColors.TextTertiary,
-            )
-        }
-        Column(horizontalAlignment = Alignment.End) {
-            Text(money(customer.balance), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (customer.balance > 0.0) NTColors.Error else NTColors.Success)
-            Text(if (customer.balance > 0.0) "Due" else "Paid", fontSize = 10.sp, color = NTColors.TextTertiary)
-        }
-        if (customer.balance > 0.001) {
-            Spacer(Modifier.width(8.dp))
+        Row(verticalAlignment = Alignment.Top) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    label,
+                    color = Color.White.copy(alpha = 0.62f),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    formatReceivableAmount(outstanding),
+                    color = Color.White,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.5).sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    caption,
+                    color = Color.White.copy(alpha = 0.66f),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(NTColors.Primary)
-                    .clickable(onClick = onCollect)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(alpha = 0.10f))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center,
             ) {
-                Text("Collect", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NTColors.TextOnPrimary)
+                Icon(
+                    Icons.Rounded.AccountBalanceWallet,
+                    contentDescription = null,
+                    tint = HeroMint,
+                    modifier = Modifier.size(24.dp),
+                )
             }
         }
-    }
-}
 
-@Composable
-private fun LedgerEntryRow(entry: CustomerLedgerEntry) {
-    val isPayment = entry.credit > 0.0
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(NTColors.Surface)
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+        Spacer(Modifier.height(18.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Collection rate",
+                color = Color.White.copy(alpha = 0.62f),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "${(progress * 100).roundToInt()}%",
+                color = HeroMint,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Spacer(Modifier.height(7.dp))
         Box(
             modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(if (isPayment) NTColors.SuccessLight else NTColors.ErrorLight),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color.White.copy(alpha = 0.12f)),
         ) {
-            Icon(
-                if (isPayment) Icons.Rounded.Payments else Icons.Rounded.ReceiptLong,
-                null,
-                tint = if (isPayment) NTColors.SuccessText else NTColors.ErrorText,
-                modifier = Modifier.size(18.dp),
-            )
+            if (progress > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(50))
+                        .background(HeroMint),
+                )
+            }
         }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                if (isPayment) "Payment received" else "Sale billed",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = NTColors.TextPrimary,
+
+        Spacer(Modifier.height(18.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HeroMetric(
+                label = "Collected",
+                value = formatReceivableAmount(collected),
+                valueColor = HeroMint,
+                modifier = Modifier.weight(1f),
             )
-            Text(
-                listOfNotNull(
-                    entry.createdAt?.let { isoToDisplayDate(it) },
-                    entry.mode?.replaceFirstChar { it.uppercaseChar() },
-                    entry.note?.takeIf { it.isNotBlank() },
-                ).joinToString(" · ").ifBlank { entry.referenceKey },
-                fontSize = 10.sp,
-                color = NTColors.TextTertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(32.dp)
+                    .background(Color.White.copy(alpha = 0.14f)),
             )
-        }
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                (if (isPayment) "+" else "-") + money(if (isPayment) entry.credit else entry.debit),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (isPayment) NTColors.Success else NTColors.TextPrimary,
+            Spacer(Modifier.width(16.dp))
+            HeroMetric(
+                label = "Billed",
+                value = formatReceivableAmount(billed),
+                valueColor = Color.White,
+                modifier = Modifier.weight(1f),
             )
-            Text("Bal ${money(entry.balanceAfter)}", fontSize = 10.sp, color = NTColors.TextTertiary)
         }
     }
 }
 
 @Composable
-private fun PaymentRow(name: String, amount: Double, mode: String, date: String?) {
+private fun HeroMetric(
+    label: String,
+    value: String,
+    valueColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Text(
+            label,
+            color = Color.White.copy(alpha = 0.60f),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            value,
+            color = valueColor,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+// ── List controls ─────────────────────────────────────────────
+
+@Composable
+private fun ReceivablesSegmentedTabs(
+    selected: ReceivablesListTab,
+    outstandingCount: Int,
+    allCount: Int,
+    onSelect: (ReceivablesListTab) -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(NTColors.Surface)
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(NTColors.SurfaceVar)
+            .border(1.dp, NTColors.Border, RoundedCornerShape(14.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Icon(Icons.Rounded.Payments, null, tint = NTColors.Success, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextPrimary)
-            Text(
-                listOfNotNull(date?.let { isoToDisplayDate(it) }, mode.replaceFirstChar { it.uppercaseChar() }).joinToString(" · "),
-                fontSize = 10.sp,
-                color = NTColors.TextTertiary,
-            )
-        }
-        Text(money(amount), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.Success)
-    }
-}
-
-@Composable
-private fun MoneySummaryCard(label: String, value: Double, color: Color, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(NTColors.Surface)
-            .padding(horizontal = 10.dp, vertical = 12.dp),
-    ) {
-        Text(label, fontSize = 10.sp, color = NTColors.TextTertiary, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(4.dp))
-        Text(money(value), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1)
-    }
-}
-
-@Composable
-private fun CountSummaryCard(label: String, value: Int, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(NTColors.Surface)
-            .padding(horizontal = 10.dp, vertical = 12.dp),
-    ) {
-        Text(label, fontSize = 10.sp, color = NTColors.TextTertiary, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(4.dp))
-        Text("$value", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
-    }
-}
-
-@Composable
-private fun ReceivablesTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (selected) NTColors.Primary else NTColors.Surface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Text(
-            label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (selected) NTColors.TextOnPrimary else NTColors.TextSecondary,
+        SegmentTab(
+            label = "Outstanding",
+            count = outstandingCount,
+            selected = selected == ReceivablesListTab.OUTSTANDING,
+            modifier = Modifier.weight(1f),
+            onClick = { onSelect(ReceivablesListTab.OUTSTANDING) },
+        )
+        SegmentTab(
+            label = "All customers",
+            count = allCount,
+            selected = selected == ReceivablesListTab.ALL,
+            modifier = Modifier.weight(1f),
+            onClick = { onSelect(ReceivablesListTab.ALL) },
         )
     }
 }
 
 @Composable
-private fun SearchField(value: String, onValueChange: (String) -> Unit) {
+private fun SegmentTab(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(if (selected) NTColors.Surface else Color.Transparent)
+            .border(
+                width = 1.dp,
+                color = if (selected) NTColors.PrimaryLight else Color.Transparent,
+                shape = shape,
+            )
+            .clickable(onClickLabel = label, onClick = onClick)
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            color = if (selected) NTColors.TextPrimary else NTColors.TextSecondary,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.width(6.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(if (selected) NTColors.PrimaryLight else NTColors.Surface)
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+        ) {
+            Text(
+                "$count",
+                color = if (selected) NTColors.PrimaryDark else NTColors.TextTertiary,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReceivablesSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(50.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(NTColors.Surface)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .border(1.dp, NTColors.Border, RoundedCornerShape(14.dp))
+            .padding(start = 14.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.Search, null, tint = NTColors.TextTertiary, modifier = Modifier.size(18.dp))
+        Icon(
+            Icons.Rounded.Search,
+            contentDescription = null,
+            tint = NTColors.TextTertiary,
+            modifier = Modifier.size(19.dp),
+        )
         Spacer(Modifier.width(10.dp))
         Box(modifier = Modifier.weight(1f)) {
-            if (value.isEmpty()) {
-                Text("Search customer or phone", fontSize = 13.sp, color = NTColors.TextTertiary)
+            if (query.isEmpty()) {
+                Text(
+                    "Search by name or phone",
+                    fontSize = 13.sp,
+                    color = NTColors.TextTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
+                value = query,
+                onValueChange = onQueryChange,
                 textStyle = TextStyle(fontSize = 13.sp, color = NTColors.TextPrimary),
                 cursorBrush = SolidColor(NTColors.Primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -504,90 +700,608 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        if (query.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .clickable(onClickLabel = "Clear search", onClick = { onQueryChange("") }),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = "Clear search",
+                    tint = NTColors.TextSecondary,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+        }
     }
 }
 
+// ── Customer rows ─────────────────────────────────────────────
+
 @Composable
-private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String) {
+private fun CustomerDueCard(
+    customer: Customer,
+    onOpen: () -> Unit,
+    onCollect: () -> Unit,
+) {
+    val due = customer.balance > 0.001
+    val accent = avatarAccent(customer.name)
+    val shape = RoundedCornerShape(18.dp)
+    val meta = listOfNotNull(
+        customer.phone?.takeIf { it.isNotBlank() }
+            ?: customer.address?.takeIf { it.isNotBlank() }?.let { it.take(28) },
+        customer.cansHeld.takeIf { it > 0 }?.let { "$it cans" },
+    ).joinToString(" · ")
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(NTColors.Surface)
-            .padding(vertical = 28.dp, horizontal = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .receivableCard(shape)
+            .clickable(onClickLabel = "Open ${customer.name}'s statement", onClick = onOpen),
     ) {
-        Icon(icon, null, tint = NTColors.Primary, modifier = Modifier.size(30.dp))
-        Spacer(Modifier.height(8.dp))
-        Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextPrimary)
-        Text(subtitle, fontSize = 11.sp, color = NTColors.TextTertiary)
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    customer.name.trim().take(1).uppercase().ifBlank { "?" },
+                    color = accent,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    customer.name,
+                    color = NTColors.TextPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    meta.ifBlank { "No contact details" },
+                    color = NTColors.TextTertiary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    formatReceivableAmount(customer.balance),
+                    color = if (due) NTColors.Error else NTColors.Success,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    if (due) "Outstanding" else "Settled",
+                    color = NTColors.TextTertiary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+
+        HorizontalDivider(color = NTColors.Divider.copy(alpha = 0.7f))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(NTDp.radSm))
+                    .clickable(
+                        onClickLabel = "View ${customer.name}'s statement",
+                        onClick = onOpen,
+                    )
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Rounded.ReceiptLong,
+                    contentDescription = null,
+                    tint = NTColors.Primary,
+                    modifier = Modifier.size(15.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "View statement",
+                    color = NTColors.Primary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            if (due) {
+                GlossyTealBox(
+                    shape = RoundedCornerShape(50),
+                    onClick = onCollect,
+                    onClickLabel = "Collect payment from ${customer.name}",
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Payments,
+                            contentDescription = null,
+                            tint = HeroMint,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            "Collect",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(NTColors.SuccessLight)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        tint = NTColors.SuccessText,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "Paid",
+                        color = NTColors.SuccessText,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            Spacer(Modifier.width(4.dp))
+        }
     }
 }
 
 @Composable
-private fun RecordPaymentDialog(
+private fun avatarAccent(name: String): Color {
+    val palette = listOf(
+        NTColors.AvatarTeal,
+        NTColors.AvatarGold,
+        NTColors.AvatarPurple,
+        NTColors.AvatarBlue,
+    )
+    return palette[(name.hashCode() and Int.MAX_VALUE) % palette.size]
+}
+
+// ── Payment feed ──────────────────────────────────────────────
+
+@Composable
+private fun PaymentFeedRow(customerName: String, payment: Payment) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .receivableCard(RoundedCornerShape(16.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(NTColors.SuccessLight),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.Payments,
+                contentDescription = null,
+                tint = NTColors.SuccessText,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                customerName,
+                color = NTColors.TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                listOfNotNull(
+                    payment.createdAt?.let { isoToDisplayDate(it) },
+                    payment.mode.replaceFirstChar { it.uppercaseChar() },
+                    payment.note?.takeIf { it.isNotBlank() },
+                ).joinToString(" · "),
+                color = NTColors.TextTertiary,
+                fontSize = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                "+${formatReceivableAmount(payment.amount)}",
+                color = NTColors.Success,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Received",
+                color = NTColors.TextTertiary,
+                fontSize = 9.sp,
+            )
+        }
+    }
+}
+
+// ── Ledger rows ───────────────────────────────────────────────
+
+@Composable
+private fun LedgerEntryRow(entry: CustomerLedgerEntry) {
+    val isPayment = entry.credit > 0.0
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .receivableCard(RoundedCornerShape(16.dp))
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (isPayment) NTColors.SuccessLight else NTColors.PrimaryLight),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (isPayment) Icons.Rounded.Payments else Icons.Rounded.ReceiptLong,
+                contentDescription = null,
+                tint = if (isPayment) NTColors.SuccessText else NTColors.PrimaryDark,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                if (isPayment) "Payment received" else "Sale billed",
+                color = NTColors.TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                listOfNotNull(
+                    entry.createdAt?.let { isoToDisplayDate(it) },
+                    entry.mode?.replaceFirstChar { it.uppercaseChar() },
+                    entry.note?.takeIf { it.isNotBlank() },
+                ).joinToString(" · ").ifBlank { entry.referenceKey },
+                color = NTColors.TextTertiary,
+                fontSize = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                (if (isPayment) "+" else "-") +
+                    formatReceivableAmount(if (isPayment) entry.credit else entry.debit),
+                color = if (isPayment) NTColors.Success else NTColors.TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Bal ${formatReceivableAmount(entry.balanceAfter)}",
+                color = NTColors.TextTertiary,
+                fontSize = 10.sp,
+            )
+        }
+    }
+}
+
+// ── Empty state ───────────────────────────────────────────────
+
+@Composable
+private fun ReceivablesEmptyState(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(NTColors.Surface)
+            .border(1.dp, NTColors.Border, RoundedCornerShape(20.dp))
+            .padding(horizontal = 24.dp, vertical = 30.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(NTColors.PrimaryLight),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = NTColors.PrimaryDark,
+                modifier = Modifier.size(26.dp),
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            title,
+            color = NTColors.TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            subtitle,
+            color = NTColors.TextTertiary,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+        )
+        if (actionLabel != null && onAction != null) {
+            Spacer(Modifier.height(14.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(NTColors.PrimaryLight)
+                    .clickable(onClickLabel = actionLabel, onClick = onAction)
+                    .padding(horizontal = 16.dp, vertical = 9.dp),
+            ) {
+                Text(
+                    actionLabel,
+                    color = NTColors.PrimaryDark,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+}
+
+// ── Record payment sheet ──────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RecordPaymentSheet(
     customer: Customer,
     isSaving: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (amount: String, mode: String, note: String) -> Unit,
 ) {
-    var amount by remember { mutableStateOf("") }
-    var mode by remember { mutableStateOf("cash") }
-    var note by remember { mutableStateOf("") }
-    val parsed = amount.toDoubleOrNull() ?: 0.0
-    val invalid = parsed <= 0.0 || parsed > customer.balance + 0.001
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var amount by remember(customer.id) { mutableStateOf("") }
+    var mode by remember(customer.id) { mutableStateOf(PaymentMode.CASH) }
+    var note by remember(customer.id) { mutableStateOf("") }
+
+    val parsed = parsePaymentAmount(amount)
+    val valid = isValidPaymentAmount(parsed, customer.balance)
+    val showError = amount.isNotBlank() && !valid
+
     fun savePayment() {
-        if (!isSaving && !invalid) onConfirm(amount, mode, note)
+        if (!isSaving && valid) onConfirm(amount, mode.key, note)
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = { if (!isSaving) onDismiss() },
+        sheetState = sheetState,
+        containerColor = NTColors.Surface,
+        contentColor = NTColors.TextPrimary,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(22.dp))
-                .background(NTColors.Surface)
-                .padding(20.dp),
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = NTDp.screenPad)
+                .padding(bottom = NTDp.lg),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Record payment", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
-                    Text(customer.name, fontSize = 12.sp, color = NTColors.TextTertiary)
-                }
                 Box(
-                    modifier = Modifier.size(32.dp).clip(CircleShape).background(NTColors.SurfaceVar).clickable(onClick = onDismiss),
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(NTColors.PrimaryLight),
                     contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Rounded.Close, "Close", tint = NTColors.TextSecondary, modifier = Modifier.size(17.dp)) }
+                ) {
+                    Icon(
+                        Icons.Rounded.Payments,
+                        contentDescription = null,
+                        tint = NTColors.PrimaryDark,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Record payment",
+                        color = NTColors.TextPrimary,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.3).sp,
+                    )
+                    Text(
+                        customer.name,
+                        color = NTColors.TextTertiary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(NTColors.SurfaceVar)
+                        .border(1.dp, NTColors.Border, CircleShape)
+                        .clickable(enabled = !isSaving, onClickLabel = "Close", onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.Close,
+                        contentDescription = "Close",
+                        tint = NTColors.TextSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MoneySummaryCard("Outstanding", customer.balance, NTColors.Error, Modifier.weight(1f))
-                CountSummaryCard("Cans held", customer.cansHeld, Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(14.dp))
-            Text("Amount", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NTColors.TextSecondary)
-            Spacer(Modifier.height(6.dp))
+
+            Spacer(Modifier.height(18.dp))
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(NTColors.SurfaceVar)
-                    .border(1.dp, NTColors.Divider, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(NTColors.PrimaryLight)
+                    .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("₹", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Outstanding balance",
+                        color = NTColors.PrimaryDark.copy(alpha = 0.72f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        formatReceivableAmount(customer.balance),
+                        color = NTColors.PrimaryDark,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+                if (customer.cansHeld > 0) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            "Cans held",
+                            color = NTColors.PrimaryDark.copy(alpha = 0.72f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "${customer.cansHeld}",
+                            color = NTColors.PrimaryDark,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Amount",
+                    color = NTColors.TextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.weight(1f))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(NTColors.SurfaceVar)
+                        .border(1.dp, NTColors.Border, RoundedCornerShape(50))
+                        .clickable(onClickLabel = "Pay full balance") {
+                            amount = paymentAmountInput(customer.balance)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        "Pay full",
+                        color = NTColors.Primary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(NTColors.SurfaceVar)
+                    .border(
+                        width = 1.dp,
+                        color = when {
+                            showError -> NTColors.Error
+                            amount.isNotBlank() -> NTColors.Primary
+                            else -> NTColors.Border
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                    )
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "₹",
+                    color = NTColors.TextSecondary,
+                    fontSize = 23.sp,
+                    fontWeight = FontWeight.Bold,
+                )
                 Spacer(Modifier.width(8.dp))
                 Box(modifier = Modifier.weight(1f)) {
                     if (amount.isEmpty()) {
-                        Text("0", fontSize = 15.sp, color = NTColors.TextTertiary)
+                        Text(
+                            "0",
+                            color = NTColors.TextTertiary,
+                            fontSize = 23.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
                     }
                     BasicTextField(
                         value = amount,
-                        onValueChange = { value -> if (value.all { it.isDigit() } || value.isEmpty()) amount = value },
-                        textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = NTColors.TextPrimary),
+                        onValueChange = { amount = sanitizePaymentAmountInput(it) },
+                        textStyle = TextStyle(
+                            fontSize = 23.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = NTColors.TextPrimary,
+                        ),
                         cursorBrush = SolidColor(NTColors.Primary),
                         keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
+                            keyboardType = KeyboardType.Decimal,
                             imeAction = ImeAction.Next,
                         ),
                         keyboardActions = formKeyboardActions(),
@@ -595,44 +1309,107 @@ private fun RecordPaymentDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Text("Max ${money(customer.balance)}", fontSize = 10.sp, color = NTColors.TextTertiary)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Max ${formatReceivableAmount(customer.balance)}",
+                    color = NTColors.TextTertiary,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                )
             }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("cash" to "Cash", "upi" to "UPI", "card" to "Card", "bank" to "Bank").forEach { (key, label) ->
-                    ReceivablesTab(label, mode == key) { mode = key }
+            if (showError) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (parsed > customer.balance) {
+                        "Amount exceeds the outstanding balance."
+                    } else {
+                        "Enter an amount greater than zero."
+                    },
+                    color = NTColors.Error,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            Text(
+                "Payment mode",
+                color = NTColors.TextSecondary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PaymentMode.entries.forEach { option ->
+                    PaymentModeChip(
+                        option = option,
+                        selected = mode == option,
+                        modifier = Modifier.weight(1f),
+                        onClick = { mode = option },
+                    )
                 }
             }
-            Spacer(Modifier.height(12.dp))
+
+            Spacer(Modifier.height(18.dp))
+
             OutlinedTextField(
                 value = note,
                 onValueChange = { note = it },
-                label = { Text("Note (optional)", fontSize = 11.sp) },
+                placeholder = {
+                    Text("Add a note (optional)", fontSize = 13.sp, color = NTColors.TextTertiary)
+                },
+                textStyle = TextStyle(fontSize = 13.sp, color = NTColors.TextPrimary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = formKeyboardActions(onDone = ::savePayment),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = NTColors.Primary,
+                    unfocusedBorderColor = NTColors.Border,
+                    focusedContainerColor = NTColors.SurfaceVar,
+                    unfocusedContainerColor = NTColors.SurfaceVar,
+                ),
             )
-            Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onDismiss,
-                    enabled = !isSaving,
-                    modifier = Modifier.weight(1f).height(46.dp),
-                    shape = RoundedCornerShape(13.dp),
-                ) { Text("Cancel") }
-                Button(
-                    onClick = ::savePayment,
-                    enabled = !isSaving && !invalid,
-                    modifier = Modifier.weight(1f).height(46.dp),
-                    shape = RoundedCornerShape(13.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = NTColors.Primary),
-                ) {
-                    if (isSaving) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = NTColors.TextOnPrimary)
-                    } else {
-                        Text("Save payment", fontWeight = FontWeight.SemiBold)
+
+            Spacer(Modifier.height(20.dp))
+
+            GlossyTealBox(
+                shape = RoundedCornerShape(16.dp),
+                enabled = valid,
+                onClick = ::savePayment,
+                onClickLabel = "Record payment",
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                if (isSaving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = HeroMint,
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Rounded.Payments,
+                            contentDescription = null,
+                            tint = if (valid) HeroMint else NTColors.TextTertiary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (valid) {
+                                "Record ${formatReceivableAmount(parsed)}"
+                            } else {
+                                "Record payment"
+                            },
+                            color = if (valid) Color.White else NTColors.TextTertiary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
             }
@@ -640,7 +1417,50 @@ private fun RecordPaymentDialog(
     }
 }
 
-private fun money(value: Double): String {
-    val rounded = (value * 100).toLong() / 100.0
-    return if (rounded % 1.0 == 0.0) "₹${rounded.toInt()}" else "₹$rounded"
+@Composable
+private fun PaymentModeChip(
+    option: PaymentMode,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(if (selected) NTColors.Primary else NTColors.SurfaceVar)
+            .border(
+                width = 1.dp,
+                color = if (selected) NTColors.Primary else NTColors.Border,
+                shape = shape,
+            )
+            .clickable(onClickLabel = option.label, onClick = onClick)
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            option.icon,
+            contentDescription = null,
+            tint = if (selected) NTColors.TextOnPrimary else NTColors.TextSecondary,
+            modifier = Modifier.size(15.dp),
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            option.label,
+            color = if (selected) NTColors.TextOnPrimary else NTColors.TextSecondary,
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+        )
+    }
 }
+
+// ── Shared card surface ───────────────────────────────────────
+
+@Composable
+private fun Modifier.receivableCard(shape: Shape): Modifier = this
+    .shadow(NTDp.cardElevation, shape, clip = false)
+    .clip(shape)
+    .background(NTColors.Surface)
+    .border(1.dp, NTColors.Border.copy(alpha = 0.8f), shape)
