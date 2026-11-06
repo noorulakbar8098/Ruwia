@@ -166,7 +166,11 @@ export default function ReleaseHistory() {
 
                     {/* Checksum & release status footer */}
                     <div className="pt-4 border-t border-[#E2E5DD] dark:border-[#26372F] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono text-[#777D76] dark:text-[#8E9B93]">
-                      <span>SHA-256: {rel.sha256.substring(0, 24)}...</span>
+                      {rel.sha256 ? (
+                        <span>SHA-256: {rel.sha256.substring(0, 24)}...</span>
+                      ) : (
+                        <span>Checksum not retained for archived builds</span>
+                      )}
                       <span className="inline-flex items-center gap-1 text-[#173D32] dark:text-[#C8D8B9]">
                         {rel.isLatest ? "Signed production release" : "Superseded"}
                       </span>
