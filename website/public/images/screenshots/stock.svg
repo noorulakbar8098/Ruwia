@@ -1,0 +1,128 @@
+<svg width="390" height="844" viewBox="0 0 390 844" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="390" height="844" fill="#090D16"/>
+  
+  <!-- Status Bar -->
+  <text x="32" y="38" fill="#F8FAFC" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600">09:41</text>
+  <g transform="translate(320, 26)">
+    <rect x="0" y="8" width="3" height="4" rx="1" fill="#F8FAFC"/>
+    <rect x="5" y="6" width="3" height="6" rx="1" fill="#F8FAFC"/>
+    <rect x="10" y="4" width="3" height="8" rx="1" fill="#F8FAFC"/>
+    <rect x="15" y="1" width="3" height="11" rx="1" fill="#F8FAFC"/>
+    <rect x="24" y="2" width="20" height="10" rx="3" stroke="#F8FAFC" stroke-width="1.5" fill="none"/>
+    <rect x="26" y="4" width="14" height="6" rx="1.5" fill="#10B981"/>
+  </g>
+
+  <!-- Top Bar -->
+  <g transform="translate(20, 60)">
+    <rect width="350" height="54" rx="16" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+    <text x="20" y="33" fill="#FFFFFF" font-family="sans-serif" font-size="16" font-weight="700">Stock & Can Ledger</text>
+    <rect x="250" y="12" width="85" height="30" rx="10" fill="#1F2937" stroke="#374151" stroke-width="1"/>
+    <text x="292" y="31" text-anchor="middle" fill="#34D399" font-family="sans-serif" font-size="11" font-weight="700">Audit Log</text>
+  </g>
+
+  <!-- Shop selector chips -->
+  <g transform="translate(20, 126)">
+    <rect x="0" y="0" width="124" height="36" rx="18" fill="#10B981" fill-opacity="0.18" stroke="#10B981" stroke-width="1.2"/>
+    <text x="62" y="22" text-anchor="middle" fill="#34D399" font-family="sans-serif" font-size="12" font-weight="700">Main Hub (210)</text>
+
+    <rect x="134" y="0" width="112" height="36" rx="18" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+    <text x="190" y="22" text-anchor="middle" fill="#9CA3AF" font-family="sans-serif" font-size="12" font-weight="600">North Depot (85)</text>
+
+    <rect x="256" y="0" width="94" height="36" rx="18" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+    <text x="303" y="22" text-anchor="middle" fill="#9CA3AF" font-family="sans-serif" font-size="12" font-weight="600">East Point</text>
+  </g>
+
+  <!-- Headline Stock Metrics -->
+  <g transform="translate(20, 174)">
+    <rect width="170" height="114" rx="20" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+    <text x="18" y="28" fill="#9CA3AF" font-family="sans-serif" font-size="10" font-weight="700">FILLED 20L CANS</text>
+    <text x="18" y="74" fill="#34D399" font-family="sans-serif" font-size="38" font-weight="800">210</text>
+    <text x="18" y="98" fill="#6B7280" font-family="sans-serif" font-size="11">Ready for Delivery</text>
+
+    <rect x="180" y="0" width="170" height="114" rx="20" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+    <text x="198" y="28" fill="#9CA3AF" font-family="sans-serif" font-size="10" font-weight="700">EMPTY CAN BASES</text>
+    <text x="198" y="74" fill="#F59E0B" font-family="sans-serif" font-size="38" font-weight="800">54</text>
+    <text x="198" y="98" fill="#6B7280" font-family="sans-serif" font-size="11">Awaiting Refill Truck</text>
+  </g>
+
+  <!-- Baseline Persistence Banner -->
+  <g transform="translate(20, 300)">
+    <rect width="350" height="48" rx="14" fill="#111827" stroke="#374151" stroke-width="1"/>
+    <text x="18" y="29" fill="#E5E7EB" font-family="sans-serif" font-size="12" font-weight="600">Zero-Drift Baseline: Synced</text>
+    <rect x="238" y="10" width="100" height="28" rx="8" fill="#1F2937" stroke="#4B5563" stroke-width="1"/>
+    <text x="288" y="28" text-anchor="middle" fill="#FFFFFF" font-family="sans-serif" font-size="11" font-weight="600">Reset Baseline</text>
+  </g>
+
+  <!-- Movement Feed -->
+  <g transform="translate(20, 362)">
+    <text x="2" y="14" fill="#F8FAFC" font-family="sans-serif" font-size="14" font-weight="700">Live Movement History</text>
+    
+    <!-- Item 1 -->
+    <g transform="translate(0, 24)">
+      <rect width="350" height="70" rx="16" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <rect x="14" y="16" width="38" height="38" rx="10" fill="#10B981" fill-opacity="0.15"/>
+      <path d="M26 38 L33 30 L40 38" stroke="#10B981" stroke-width="2" stroke-linecap="round"/>
+      <text x="62" y="30" fill="#F9FAFB" font-family="sans-serif" font-size="13" font-weight="700">Inward Factory Batch #881</text>
+      <text x="62" y="48" fill="#9CA3AF" font-family="sans-serif" font-size="11">Main Hub · Verified by Admin</text>
+      <text x="334" y="32" text-anchor="end" fill="#34D399" font-family="sans-serif" font-size="15" font-weight="800">+100</text>
+      <text x="334" y="50" text-anchor="end" fill="#6B7280" font-family="sans-serif" font-size="10">10:14 AM</text>
+    </g>
+
+    <!-- Item 2 -->
+    <g transform="translate(0, 104)">
+      <rect width="350" height="70" rx="16" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <rect x="14" y="16" width="38" height="38" rx="10" fill="#EF4444" fill-opacity="0.15"/>
+      <path d="M26 32 L33 40 L40 32" stroke="#EF4444" stroke-width="2" stroke-linecap="round"/>
+      <text x="62" y="30" fill="#F9FAFB" font-family="sans-serif" font-size="13" font-weight="700">Van Loading · Route 4B</text>
+      <text x="62" y="48" fill="#9CA3AF" font-family="sans-serif" font-size="11">Driver: Suresh · 40 Filled Cans</text>
+      <text x="334" y="32" text-anchor="end" fill="#F87171" font-family="sans-serif" font-size="15" font-weight="800">-40</text>
+      <text x="334" y="50" text-anchor="end" fill="#6B7280" font-family="sans-serif" font-size="10">09:30 AM</text>
+    </g>
+
+    <!-- Item 3 -->
+    <g transform="translate(0, 184)">
+      <rect width="350" height="70" rx="16" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <rect x="14" y="16" width="38" height="38" rx="10" fill="#F59E0B" fill-opacity="0.15"/>
+      <path d="M27 35 H39" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
+      <text x="62" y="30" fill="#F9FAFB" font-family="sans-serif" font-size="13" font-weight="700">Customer Empties Collected</text>
+      <text x="62" y="48" fill="#9CA3AF" font-family="sans-serif" font-size="11">Green Meadows Apts · Deposited</text>
+      <text x="334" y="32" text-anchor="end" fill="#FBBF24" font-family="sans-serif" font-size="15" font-weight="800">+25</text>
+      <text x="334" y="50" text-anchor="end" fill="#6B7280" font-family="sans-serif" font-size="10">08:50 AM</text>
+    </g>
+
+    <!-- Item 4 -->
+    <g transform="translate(0, 264)">
+      <rect width="350" height="70" rx="16" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <rect x="14" y="16" width="38" height="38" rx="10" fill="#3B82F6" fill-opacity="0.15"/>
+      <path d="M27 35 H39 M33 29 V41" stroke="#3B82F6" stroke-width="2" stroke-linecap="round"/>
+      <text x="62" y="30" fill="#F9FAFB" font-family="sans-serif" font-size="13" font-weight="700">Inter-Shop Transfer</text>
+      <text x="62" y="48" fill="#9CA3AF" font-family="sans-serif" font-size="11">North Depot → Main Hub</text>
+      <text x="334" y="32" text-anchor="end" fill="#60A5FA" font-family="sans-serif" font-size="15" font-weight="800">+30</text>
+      <text x="334" y="50" text-anchor="end" fill="#6B7280" font-family="sans-serif" font-size="10">Yesterday</text>
+    </g>
+  </g>
+
+  <!-- Bottom App Navigation Bar -->
+  <g transform="translate(16, 750)">
+    <rect width="358" height="66" rx="24" fill="#0B101B" stroke="#1F2937" stroke-width="1.5"/>
+    <g transform="translate(36, 12)">
+      <circle cx="13" cy="14" r="5" fill="#6B7280"/>
+      <text x="13" y="42" text-anchor="middle" fill="#9CA3AF" font-family="sans-serif" font-size="10" font-weight="600">Home</text>
+    </g>
+    <g transform="translate(112, 12)">
+      <rect x="-8" y="2" width="46" height="30" rx="15" fill="#10B981" fill-opacity="0.15"/>
+      <path d="M7 10 L15 6 L23 10 L15 14 Z" stroke="#10B981" stroke-width="1.8"/>
+      <text x="15" y="42" text-anchor="middle" fill="#10B981" font-family="sans-serif" font-size="10" font-weight="700">Stock</text>
+    </g>
+    <g transform="translate(196, 12)">
+      <rect x="7" y="10" width="16" height="12" rx="3" stroke="#6B7280" stroke-width="1.5"/>
+      <text x="15" y="42" text-anchor="middle" fill="#9CA3AF" font-family="sans-serif" font-size="10" font-weight="600">Routes</text>
+    </g>
+    <g transform="translate(280, 12)">
+      <rect x="7" y="8" width="16" height="15" rx="3" stroke="#6B7280" stroke-width="1.5"/>
+      <text x="15" y="42" text-anchor="middle" fill="#9CA3AF" font-family="sans-serif" font-size="10" font-weight="600">Billing</text>
+    </g>
+  </g>
+
+  <rect x="135" y="830" width="120" height="4" rx="2" fill="#4B5563"/>
+</svg>
