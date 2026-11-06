@@ -7,23 +7,17 @@ import {
   Copy,
   Check,
   ShieldCheck,
-  AlertTriangle,
-  ExternalLink,
+  ArrowRight,
   Info,
-  Sparkles,
-  Smartphone,
-  HardDrive,
-  Calendar,
-  Layers,
-  Cpu,
-  FileCode2,
+  CheckCircle2,
+  Play,
 } from "lucide-react";
 import { APP_CONFIG } from "@/config/app.config";
+import { useDownload } from "@/context/DownloadContext";
 
 export default function DownloadCard() {
   const [copiedSha, setCopiedSha] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [downloadTriggered, setDownloadTriggered] = useState(false);
+  const { downloadState, progress, startDownload, openInstallDialog } = useDownload();
 
   const handleCopySha = () => {
     navigator.clipboard.writeText(APP_CONFIG.release.sha256);
@@ -31,245 +25,216 @@ export default function DownloadCard() {
     setTimeout(() => setCopiedSha(false), 2500);
   };
 
-  const handleDownload = () => {
-    setDownloading(true);
-    window.location.href = APP_CONFIG.release.downloadUrl;
-    setTimeout(() => {
-      setDownloading(false);
-      setDownloadTriggered(true);
-    }, 1200);
+  const handlePrimaryClick = () => {
+    if (downloadState === "downloaded") {
+      openInstallDialog();
+    } else {
+      startDownload();
+    }
   };
 
-  return (
-    <section id="download" className="py-20 sm:py-28 relative overflow-hidden">
-      {/* Background Radial Glow */}
-      <div className="absolute inset-0 radial-glow pointer-events-none -z-10" />
+  const specs = [
+    { label: "Application Name", value: APP_CONFIG.app.name },
+    { label: "Package Identifier", value: APP_CONFIG.app.packageName, isMono: true },
+    { label: "Release Version", value: `v${APP_CONFIG.release.version} (Code ${APP_CONFIG.release.versionCode})`, isMono: true },
+    { label: "APK Package Size", value: APP_CONFIG.release.apkSize, isMono: true },
+    { label: "Publication Date", value: APP_CONFIG.release.releaseDate },
+    { label: "Minimum Compatibility", value: APP_CONFIG.release.minAndroid },
+    { label: "Target Compatibility", value: APP_CONFIG.release.targetAndroid },
+    { label: "CPU Architecture", value: APP_CONFIG.release.architecture },
+    { label: "Distribution Method", value: "Signed Production APK (Direct Download)" },
+  ];
 
+  return (
+    <section id="download" className="py-20 sm:py-28 border-b border-[#E2E5DD] dark:border-[#26372F] transition-colors">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* Section Header */}
-        <div className="text-center max-w-3xl mx-auto mb-12 sm:mb-16">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 mb-4">
-            <Download className="w-3.5 h-3.5" />
-            <span>Official Distribution Channel</span>
+        {/* Eyebrow & Header (No slashes) */}
+        <div className="flex items-center gap-2 mb-6">
+          <span className="text-xs font-mono tracking-widest text-[#777D76] dark:text-[#8E9B93] uppercase">
+            Technical Specifications &amp; Direct Download
+          </span>
+        </div>
+
+        <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 pb-6 border-b border-[#E2E5DD] dark:border-[#26372F] gap-6">
+          <div>
+            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-normal tracking-tight text-[#202521] dark:text-[#F3F6F1]">
+              Verified Production <br />
+              <span className="font-semibold text-[#173D32] dark:text-[#C8D8B9]">Android Package.</span>
+            </h2>
           </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            Download Ruwia APK
-          </h2>
-          <p className="mt-4 text-base sm:text-lg text-slate-600 dark:text-slate-400">
-            Get the authentic, signed Android package directly from our GitHub Releases deployment. No app store lock-in or forced updates.
+          <p className="text-sm sm:text-base text-[#777D76] dark:text-[#8E9B93] max-w-sm leading-relaxed">
+            Download the official signed release binary directly. No telemetry, no intermediate stores, no delayed approval queues.
           </p>
         </div>
 
-        {/* Master Download Card */}
-        <div className="relative rounded-3xl sm:rounded-[32px] border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 shadow-2xl shadow-emerald-950/10 p-6 sm:p-10 lg:p-12 overflow-hidden backdrop-blur-xl">
+        {/* Technical Specification Ledger Container */}
+        <div className="border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D] rounded overflow-hidden shadow-sm transition-colors">
           
-          {/* Subtle Top Accent Bar */}
-          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-600" />
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
-            
-            {/* Left: App Identity & Specifications */}
-            <div className="lg:col-span-7 space-y-6">
-              
-              {/* Brand Header inside card */}
-              <div className="flex items-center gap-4">
-                <div className="relative w-16 h-16 rounded-2xl overflow-hidden shadow-lg border border-emerald-500/30 bg-slate-900 shrink-0">
-                  <Image
-                    src={APP_CONFIG.app.logoPath}
-                    alt={APP_CONFIG.app.name}
-                    width={64}
-                    height={64}
-                    className="object-cover"
-                  />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                      {APP_CONFIG.app.name}
-                    </h3>
-                    <span className="px-2 py-0.5 rounded-md text-xs font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                      v{APP_CONFIG.release.version}
-                    </span>
-                  </div>
-                  <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-                    Package: <code className="font-mono text-emerald-600 dark:text-emerald-400">{APP_CONFIG.app.packageName}</code>
-                  </p>
-                </div>
+          {/* Header Bar */}
+          <div className="px-6 py-5 bg-[#F7F7F2] dark:bg-[#151E1A] border-b border-[#E2E5DD] dark:border-[#26372F] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="relative w-8 h-8 rounded border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D] overflow-hidden flex items-center justify-center shrink-0">
+                <Image
+                  src={APP_CONFIG.app.logoPath}
+                  alt={APP_CONFIG.app.name}
+                  width={32}
+                  height={32}
+                  className="object-cover"
+                />
               </div>
-
-              {/* Technical Specifications Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase">
-                    <HardDrive className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>APK Size</span>
-                  </div>
-                  <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">
-                    {APP_CONFIG.release.apkSize}
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase">
-                    <Calendar className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Released</span>
-                  </div>
-                  <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">
-                    {APP_CONFIG.release.releaseDate}
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase">
-                    <Smartphone className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Min Android</span>
-                  </div>
-                  <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">
-                    7.0+ (API 24)
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase">
-                    <Layers className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Target SDK</span>
-                  </div>
-                  <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">
-                    API 36 (Android 16)
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase">
-                    <Cpu className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Architecture</span>
-                  </div>
-                  <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">
-                    Universal (All)
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase">
-                    <FileCode2 className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Build Type</span>
-                  </div>
-                  <div className="mt-1 text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                    Signed Production
-                  </div>
-                </div>
-              </div>
-
-              {/* SHA-256 Checksum Verification Box */}
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                    <span>SHA-256 Checksum</span>
-                  </div>
-                  <button
-                    onClick={handleCopySha}
-                    type="button"
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
-                  >
-                    {copiedSha ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy Checksum</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-                <div className="font-mono text-[11px] sm:text-xs text-slate-600 dark:text-slate-400 break-all bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80 select-all">
-                  {APP_CONFIG.release.sha256}
-                </div>
-                <p className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
-                  <Info className="w-3 h-3 text-slate-400" />
-                  <span>Verify with: <code>sha256sum ruwia-v2.3-release.apk</code></span>
-                </p>
-              </div>
-
-            </div>
-
-            {/* Right: Primary Download Action & Instructions */}
-            <div className="lg:col-span-5 flex flex-col justify-center space-y-6 lg:border-l lg:border-slate-200 lg:dark:border-slate-800 lg:pl-10">
-              
-              {/* Big CTA Button */}
               <div>
-                <button
-                  onClick={handleDownload}
-                  disabled={downloading}
-                  type="button"
-                  className="w-full group relative flex items-center justify-center gap-3 px-8 py-5 rounded-2xl text-lg font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 active:bg-emerald-500 shadow-xl shadow-emerald-500/25 transition-all duration-300 hover:shadow-emerald-500/40 hover:-translate-y-1 focus:outline-none"
-                >
-                  {downloading ? (
-                    <>
-                      <div className="w-6 h-6 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                      <span>Connecting CDN...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-6 h-6 transition-transform group-hover:scale-110" />
-                      <span>Download APK</span>
-                      <span className="text-xs px-2 py-0.5 rounded-md bg-slate-950/15 font-mono">
-                        v{APP_CONFIG.release.version}
-                      </span>
-                    </>
-                  )}
-                </button>
-
-                {downloadTriggered && (
-                  <div className="mt-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2 animate-in fade-in">
-                    <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-500" />
-                    <span>Your download has started! Check your browser's download tray.</span>
-                  </div>
-                )}
+                <span className="text-sm font-semibold text-[#202521] dark:text-[#F3F6F1]">
+                  {APP_CONFIG.app.name} Distribution Ledger
+                </span>
+                <span className="ml-2 text-xs font-mono text-[#777D76] dark:text-[#8E9B93]">
+                  STATUS: VERIFIED STABLE
+                </span>
               </div>
-
-              {/* GitHub Releases and Mirrors */}
-              <div className="space-y-2">
-                <a
-                  href={APP_CONFIG.release.githubReleaseUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/60 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 transition-colors"
-                >
-                  <span className="flex items-center gap-2">
-                    <ExternalLink className="w-4 h-4 text-emerald-500" />
-                    View Release on GitHub
-                  </span>
-                  <span className="text-xs text-slate-400">Tagged v{APP_CONFIG.release.version}</span>
-                </a>
-
-                <a
-                  href="#releases"
-                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/60 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 transition-colors"
-                >
-                  <span>Previous Releases & Changelogs</span>
-                  <span className="text-xs text-emerald-600 dark:text-emerald-400">v2.2, v2.0 →</span>
-                </a>
-              </div>
-
-              {/* Security Advisory / Notice */}
-              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-slate-800 dark:text-slate-200 text-xs leading-relaxed">
-                <div className="flex items-center gap-2 font-bold text-amber-700 dark:text-amber-400 mb-1.5">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>Android Security Notice</span>
-                </div>
-                <p className="text-slate-600 dark:text-slate-400">
-                  When downloading directly, Android or Chrome may show a standard prompt: <em>&ldquo;File might be harmful&rdquo;</em> or request <em>&ldquo;Allow from this source&rdquo;</em>. This is normal for all direct APK downloads outside Google Play. Our releases are 100% verified, clean, and malware-free.
-                </p>
-              </div>
-
             </div>
 
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-[#315E4C] dark:bg-[#C8D8B9]" />
+              <span className="text-xs font-mono text-[#173D32] dark:text-[#C8D8B9] uppercase">
+                Production Signed APK
+              </span>
+            </div>
           </div>
+
+          {/* Specifications Table */}
+          <div className="divide-y divide-[#E2E5DD] dark:divide-[#26372F]">
+            {specs.map((item) => (
+              <div
+                key={item.label}
+                className="grid grid-cols-1 sm:grid-cols-12 px-6 py-3.5 hover:bg-[#F7F7F2]/60 dark:hover:bg-[#151E1A]/60 transition-colors text-xs sm:text-sm"
+              >
+                <div className="sm:col-span-4 font-mono text-xs uppercase tracking-wider text-[#777D76] dark:text-[#8E9B93]">
+                  {item.label}
+                </div>
+                <div className={`sm:col-span-8 font-medium text-[#202521] dark:text-[#F3F6F1] ${item.isMono ? "font-mono" : ""}`}>
+                  {item.value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Cryptographic SHA-256 Checksum Row */}
+          <div className="p-6 bg-[#F7F7F2] dark:bg-[#151E1A] border-t border-[#E2E5DD] dark:border-[#26372F] space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#173D32] dark:text-[#C8D8B9]" />
+                <span className="text-xs font-mono uppercase tracking-wider text-[#202521] dark:text-[#F3F6F1] font-semibold">
+                  SHA-256 Cryptographic Checksum
+                </span>
+              </div>
+              <button
+                onClick={handleCopySha}
+                type="button"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D] text-xs font-mono text-[#202521] dark:text-[#F3F6F1] hover:bg-[#EBF0E6] dark:hover:bg-[#202E28] transition-colors"
+              >
+                {copiedSha ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-[#173D32] dark:text-[#C8D8B9]" />
+                    <span>Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-[#777D76] dark:text-[#8E9B93]" />
+                    <span>Copy Hash</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="font-mono text-xs text-[#202521] dark:text-[#F3F6F1] bg-white dark:bg-[#111714] p-3 rounded border border-[#E2E5DD] dark:border-[#26372F] select-all break-all">
+              {APP_CONFIG.release.sha256}
+            </div>
+
+            <div className="flex items-center gap-1.5 text-xs text-[#777D76] dark:text-[#8E9B93]">
+              <Info className="w-3.5 h-3.5 shrink-0" />
+              <span>Verify terminal integrity: <code className="font-mono text-[#202521] dark:text-[#F3F6F1]">sha256sum ruwia-v{APP_CONFIG.release.version}-release.apk</code></span>
+            </div>
+          </div>
+
+          {/* Primary Action Button & Mirrors */}
+          <div className="p-6 sm:p-8 border-t border-[#E2E5DD] dark:border-[#26372F] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+            <button
+              onClick={handlePrimaryClick}
+              disabled={downloadState === "downloading"}
+              type="button"
+              className={`inline-flex items-center justify-center gap-3 px-8 py-4 rounded text-sm font-semibold uppercase tracking-wider transition-all focus:outline-none ${
+                downloadState === "downloaded"
+                  ? "text-[#F7F7F2] bg-[#173D32] hover:bg-[#315E4C] dark:bg-[#C8D8B9] dark:text-[#111714] dark:hover:bg-[#DCE7D1] shadow-md ring-2 ring-[#C8D8B9]/60"
+                  : downloadState === "downloading"
+                  ? "text-[#F7F7F2] bg-[#315E4C] dark:bg-[#C8D8B9]/80 dark:text-[#111714] cursor-wait"
+                  : "text-[#F7F7F2] bg-[#173D32] hover:bg-[#315E4C] dark:bg-[#C8D8B9] dark:text-[#111714] dark:hover:bg-[#DCE7D1]"
+              }`}
+            >
+              {downloadState === "downloading" ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  <span>Downloading... {progress}%</span>
+                </>
+              ) : downloadState === "downloaded" ? (
+                <>
+                  <Play className="w-4 h-4 fill-current text-[#C8D8B9] dark:text-[#111714]" />
+                  <span>Install APK</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4 text-[#C8D8B9] dark:text-[#111714]" />
+                  <span>Download APK (v{APP_CONFIG.release.version})</span>
+                </>
+              )}
+            </button>
+
+            <a
+              href="#installation"
+              className="inline-flex items-center justify-center gap-2 px-6 py-4 rounded text-sm font-semibold uppercase tracking-wider text-[#202521] dark:text-[#F3F6F1] hover:text-[#173D32] dark:hover:text-[#C8D8B9] border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D] hover:bg-[#F7F7F2] dark:hover:bg-[#202E28] transition-colors"
+            >
+              <span>How to install</span>
+              <ArrowRight className="w-4 h-4 text-[#777D76] dark:text-[#8E9B93]" />
+            </a>
+          </div>
+
+          {downloadState === "downloading" && (
+            <div className="px-6 py-3 bg-[#EBF0E6] dark:bg-[#202E28] border-t border-[#E2E5DD] dark:border-[#26372F] text-xs font-mono text-[#173D32] dark:text-[#C8D8B9] flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#173D32] dark:bg-[#C8D8B9] animate-ping" />
+                <span>Downloading APK...</span>
+              </span>
+              <span>{progress}%</span>
+            </div>
+          )}
+
+          {downloadState === "downloaded" && (
+            <div className="px-6 py-3 bg-[#EBF0E6] dark:bg-[#202E28] border-t border-[#E2E5DD] dark:border-[#26372F] text-xs font-mono text-[#173D32] dark:text-[#C8D8B9] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>Download completed ({APP_CONFIG.release.apkSize}). Tap the download notification to install.</span>
+              </span>
+              <button
+                onClick={openInstallDialog}
+                className="underline hover:opacity-80 text-left"
+              >
+                Show install steps
+              </button>
+            </div>
+          )}
+
+        </div>
+
+        {/* Reassuring Android Permission Notice */}
+        <div className="mt-8 p-6 bg-white dark:bg-[#18221D] border border-[#E2E5DD] dark:border-[#26372F] rounded transition-colors">
+          <div className="text-xs font-mono uppercase tracking-wider text-[#173D32] dark:text-[#C8D8B9] font-semibold mb-2">
+            Installation Notice for Android
+          </div>
+          <p className="text-xs sm:text-sm text-[#777D76] dark:text-[#8E9B93] leading-relaxed">
+            When installing directly from a browser for the first time, Android displays a standard prompt: <em>&ldquo;For your security, your phone is not allowed to install unknown apps from this source.&rdquo;</em> This is standard behavior for all direct installations outside Google Play. Tap the completed download notification to open the APK, then tap <strong>Settings</strong>, toggle <strong>Allow from this source</strong>, and tap <strong>Install</strong>.
+          </p>
+          <p className="mt-3 text-xs sm:text-sm text-[#777D76] dark:text-[#8E9B93] leading-relaxed">
+            Upgrading from v2.3? This release uses a new signing certificate, so Android may ask you to uninstall the older build once before installing v2.4.
+          </p>
         </div>
 
       </div>

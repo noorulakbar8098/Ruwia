@@ -2,13 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
-import {
-  Maximize2,
-  X,
-  ChevronLeft,
-  ChevronRight,
-  Layers,
-} from "lucide-react";
+import { Maximize2, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { APP_CONFIG, ScreenshotItem } from "@/config/app.config";
 
 export default function ScreenshotsGallery() {
@@ -62,33 +56,35 @@ export default function ScreenshotsGallery() {
   }, [activeLightboxIndex]);
 
   return (
-    <section id="screenshots" className="py-20 sm:py-28 relative bg-slate-50/50 dark:bg-slate-900/20 border-y border-slate-200/60 dark:border-slate-800/60">
+    <section id="screenshots" className="py-20 sm:py-28 border-b border-[#E2E5DD] dark:border-[#26372F] transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* Section Header */}
-        <div className="text-center max-w-3xl mx-auto mb-12 sm:mb-16">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 mb-4">
-            <Layers className="w-3.5 h-3.5" />
-            <span>Interactive Mobile Previews</span>
-          </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            See Ruwia in Action
-          </h2>
-          <p className="mt-4 text-base sm:text-lg text-slate-600 dark:text-slate-400">
-            A fluid, native Android application built for warehouse operators, delivery drivers, and distributors. Tap any preview to inspect full size.
-          </p>
+        {/* Eyebrow & Header (No slashes) */}
+        <div className="flex items-center gap-2 mb-6">
+          <span className="text-xs font-mono tracking-widest text-[#777D76] dark:text-[#8E9B93] uppercase">
+            Interface &amp; Workflows
+          </span>
+        </div>
 
-          {/* Category Filter Tabs */}
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+        <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 pb-6 border-b border-[#E2E5DD] dark:border-[#26372F] gap-6">
+          <div>
+            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-normal tracking-tight text-[#202521] dark:text-[#F3F6F1]">
+              Designed for tactile <br />
+              <span className="font-semibold text-[#173D32] dark:text-[#C8D8B9]">efficiency in the field.</span>
+            </h2>
+          </div>
+
+          {/* Minimalist Category Filter Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
             {categories.map((cat) => (
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
                 type="button"
-                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
+                className={`px-3 py-1.5 rounded text-xs font-mono uppercase tracking-wider transition-colors ${
                   selectedCategory === cat
-                    ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
-                    : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-emerald-500"
+                    ? "bg-[#173D32] text-[#F7F7F2] dark:bg-[#C8D8B9] dark:text-[#111714]"
+                    : "bg-white dark:bg-[#18221D] border border-[#E2E5DD] dark:border-[#26372F] text-[#777D76] dark:text-[#8E9B93] hover:text-[#202521] dark:hover:text-[#F3F6F1] hover:border-[#777D76] dark:hover:border-[#8E9B93]"
                 }`}
               >
                 {cat}
@@ -97,7 +93,7 @@ export default function ScreenshotsGallery() {
           </div>
         </div>
 
-        {/* Screenshots Grid with Seamless Phone Bezels */}
+        {/* Product Gallery Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
           {filteredScreenshots.map((screen: ScreenshotItem) => {
             const originalIndex = APP_CONFIG.screenshots.findIndex(
@@ -106,41 +102,39 @@ export default function ScreenshotsGallery() {
             return (
               <div
                 key={screen.id}
-                className="group flex flex-col items-center"
+                className="group flex flex-col"
               >
-                {/* Phone Container */}
+                {/* Clean Realistic Smartphone Presentation */}
                 <div
                   onClick={() => setActiveLightboxIndex(originalIndex)}
-                  className="cursor-pointer relative w-full max-w-[270px] aspect-[390/844] rounded-[44px] p-2 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 shadow-xl shadow-slate-950/40 border border-slate-700/80 transition-all duration-300 group-hover:-translate-y-2 group-hover:border-emerald-500/50 group-hover:shadow-2xl group-hover:shadow-emerald-950/30 ring-1 ring-white/5"
+                  className="cursor-pointer relative w-full drop-shadow-[0_10px_25px_rgba(0,0,0,0.12)] dark:drop-shadow-[0_15px_30px_rgba(0,0,0,0.55)] transition-all duration-200 group-hover:-translate-y-1.5 group-hover:drop-shadow-[0_20px_35px_rgba(0,0,0,0.22)] dark:group-hover:drop-shadow-[0_25px_45px_rgba(0,0,0,0.75)]"
                 >
-                  {/* Screen preview */}
-                  <div className="relative w-full h-full rounded-[36px] overflow-hidden bg-[#090D16]">
-                    <Image
-                      src={screen.imageUrl}
-                      alt={screen.alt}
-                      fill
-                      sizes="270px"
-                      className="object-contain transition-transform duration-500 group-hover:scale-105"
-                    />
+                  <Image
+                    src={screen.imageUrl}
+                    alt={screen.alt}
+                    width={1469}
+                    height={3104}
+                    className="w-full h-auto object-contain"
+                  />
 
-                    {/* Hover Overlay with Enlarge Icon */}
-                    <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 backdrop-blur-[2px] transition-opacity duration-200 flex items-center justify-center">
-                      <div className="w-12 h-12 rounded-full bg-emerald-400 text-slate-950 flex items-center justify-center shadow-lg transform scale-75 group-hover:scale-100 transition-transform duration-200">
-                        <Maximize2 className="w-5 h-5" />
-                      </div>
+                  {/* Inspect Badge on Hover */}
+                  <div className="absolute inset-0 bg-[#173D32]/10 dark:bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-150 rounded-[40px] flex items-center justify-center pointer-events-none">
+                    <div className="w-10 h-10 rounded-full bg-[#173D32] dark:bg-[#C8D8B9] text-[#F7F7F2] dark:text-[#111714] flex items-center justify-center shadow-lg">
+                      <Maximize2 className="w-4 h-4" />
                     </div>
                   </div>
                 </div>
 
-                {/* Caption Details */}
-                <div className="mt-5 text-center max-w-[270px]">
-                  <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 mb-1.5">
-                    {screen.category}
-                  </span>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                {/* Editorial Caption (No slashes) */}
+                <div className="mt-4 pt-3 border-t border-[#E2E5DD] dark:border-[#26372F]">
+                  <div className="flex items-center justify-between text-[11px] font-mono text-[#777D76] dark:text-[#8E9B93] uppercase">
+                    <span>{screen.category}</span>
+                    <span>Screen {originalIndex + 1}</span>
+                  </div>
+                  <h3 className="mt-1 text-sm font-semibold text-[#202521] dark:text-[#F3F6F1]">
                     {screen.title}
                   </h3>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                  <p className="mt-1 text-xs text-[#777D76] dark:text-[#8E9B93] leading-relaxed">
                     {screen.description}
                   </p>
                 </div>
@@ -156,19 +150,19 @@ export default function ScreenshotsGallery() {
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#202521]/90 dark:bg-black/90 backdrop-blur-sm p-4 animate-in fade-in duration-150"
           onClick={() => setActiveLightboxIndex(null)}
         >
           <div
-            className="relative max-w-4xl w-full flex flex-col items-center"
+            className="relative max-w-xl w-full flex flex-col items-center"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Close Button */}
             <button
               onClick={() => setActiveLightboxIndex(null)}
               type="button"
-              className="absolute -top-12 right-0 sm:right-2 p-2 rounded-full bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
-              aria-label="Close preview"
+              className="absolute -top-12 right-0 p-2 rounded text-[#F7F7F2] hover:bg-white/10 transition-colors"
+              aria-label="Close lightbox"
             >
               <X className="w-6 h-6" />
             </button>
@@ -177,43 +171,42 @@ export default function ScreenshotsGallery() {
             <button
               onClick={handlePrev}
               type="button"
-              className="absolute left-2 sm:-left-12 top-1/2 -translate-y-1/2 p-3 rounded-full bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700 transition-colors z-20 shadow-xl"
-              aria-label="Previous screenshot"
+              className="absolute left-2 -translate-x-full top-1/2 -translate-y-1/2 p-3 text-white hover:bg-white/10 rounded transition-colors hidden sm:block"
+              aria-label="Previous image"
             >
-              <ChevronLeft className="w-6 h-6" />
+              <ChevronLeft className="w-8 h-8" />
             </button>
 
             <button
               onClick={handleNext}
               type="button"
-              className="absolute right-2 sm:-right-12 top-1/2 -translate-y-1/2 p-3 rounded-full bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700 transition-colors z-20 shadow-xl"
-              aria-label="Next screenshot"
+              className="absolute right-2 translate-x-full top-1/2 -translate-y-1/2 p-3 text-white hover:bg-white/10 rounded transition-colors hidden sm:block"
+              aria-label="Next image"
             >
-              <ChevronRight className="w-6 h-6" />
+              <ChevronRight className="w-8 h-8" />
             </button>
 
-            {/* Enlarged Phone View */}
-            <div className="relative w-[300px] sm:w-[340px] aspect-[390/844] rounded-[50px] p-2.5 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 shadow-2xl border border-slate-700/80 ring-2 ring-emerald-500/40">
-              <div className="relative w-full h-full rounded-[40px] overflow-hidden bg-[#090D16]">
-                <Image
-                  src={APP_CONFIG.screenshots[activeLightboxIndex].imageUrl}
-                  alt={APP_CONFIG.screenshots[activeLightboxIndex].alt}
-                  fill
-                  sizes="340px"
-                  className="object-contain"
-                />
-              </div>
+            {/* Enlarged Natural Phone Frame */}
+            <div className="relative w-[280px] sm:w-[350px] drop-shadow-[0_25px_60px_rgba(0,0,0,0.85)] flex items-center justify-center">
+              <Image
+                src={APP_CONFIG.screenshots[activeLightboxIndex].imageUrl}
+                alt={APP_CONFIG.screenshots[activeLightboxIndex].alt}
+                width={1469}
+                height={3104}
+                className="w-full h-auto max-h-[75vh] object-contain"
+                priority
+              />
             </div>
 
-            {/* Lightbox Information Bar */}
-            <div className="mt-4 text-center max-w-md">
-              <div className="text-emerald-400 text-xs font-bold uppercase tracking-wider">
+            {/* Information Bar */}
+            <div className="mt-4 text-center max-w-sm">
+              <div className="text-[11px] font-mono uppercase tracking-widest text-[#C8D8B9]">
                 {APP_CONFIG.screenshots[activeLightboxIndex].category} · Screen {activeLightboxIndex + 1} of {APP_CONFIG.screenshots.length}
               </div>
-              <h4 className="text-xl font-bold text-white mt-1">
+              <h4 className="text-base font-semibold text-white mt-1">
                 {APP_CONFIG.screenshots[activeLightboxIndex].title}
               </h4>
-              <p className="text-sm text-slate-300 mt-1">
+              <p className="text-xs text-white/70 mt-1">
                 {APP_CONFIG.screenshots[activeLightboxIndex].description}
               </p>
             </div>

@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { APP_CONFIG } from "@/config/app.config";
+import { DownloadProvider } from "@/context/DownloadContext";
+import InstallDialogWrapper from "@/components/InstallDialogWrapper";
 
 export const viewport: Viewport = {
   themeColor: [
@@ -24,11 +26,11 @@ export const metadata: Metadata = {
   publisher: APP_CONFIG.app.name,
   icons: {
     icon: [
-      { url: "/images/logo.png", sizes: "32x32", type: "image/png" },
-      { url: "/images/app-icon.png", sizes: "192x192", type: "image/png" },
+      { url: APP_CONFIG.app.logoPath, sizes: "32x32", type: "image/png" },
+      { url: APP_CONFIG.app.appIconPath, sizes: "192x192", type: "image/png" },
     ],
     apple: [
-      { url: "/images/app-icon.png", sizes: "180x180", type: "image/png" },
+      { url: APP_CONFIG.app.appIconPath, sizes: "180x180", type: "image/png" },
     ],
   },
   openGraph: {
@@ -73,22 +75,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark scroll-smooth" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Instant theme switcher script to prevent theme flash */}
         <script
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
                 try {
                   var stored = localStorage.getItem('ruwia-theme');
-                  if (stored === 'light') {
-                    document.documentElement.classList.remove('dark');
-                  } else if (stored === 'dark') {
+                  if (stored === 'dark') {
                     document.documentElement.classList.add('dark');
-                  } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+                  } else if (stored === 'light') {
                     document.documentElement.classList.remove('dark');
-                  } else {
+                  } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
                     document.documentElement.classList.add('dark');
                   }
                 } catch (e) {}
@@ -97,8 +96,11 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="min-h-screen flex flex-col font-sans antialiased bg-slate-50 text-slate-900 dark:bg-[#06090e] dark:text-slate-100 selection:bg-emerald-500 selection:text-slate-950">
-        {children}
+      <body className="min-h-screen flex flex-col font-sans antialiased bg-[#F7F7F2] dark:bg-[#111714] text-[#202521] dark:text-[#F3F6F1] selection:bg-[#173D32] dark:selection:bg-[#C8D8B9] selection:text-[#F7F7F2] dark:selection:text-[#111714]">
+        <DownloadProvider>
+          {children}
+          <InstallDialogWrapper />
+        </DownloadProvider>
       </body>
     </html>
   );

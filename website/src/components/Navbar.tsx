@@ -3,117 +3,161 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { Download, Menu, X, ShieldCheck } from "lucide-react";
+import { Download, Menu, X, ArrowUpRight, Play } from "lucide-react";
 import { APP_CONFIG } from "@/config/app.config";
-import ThemeToggle from "./ThemeToggle";
+import ThemeToggle from "@/components/ThemeToggle";
+import { useDownload } from "@/context/DownloadContext";
 
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const { downloadState, progress, startDownload, openInstallDialog } = useDownload();
 
   useEffect(() => {
+    let ticking = false;
     const handleScroll = () => {
-      setScrolled(window.scrollY > 15);
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          setScrolled(window.scrollY > 20);
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
-    window.addEventListener("scroll", handleScroll);
+    window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  const handleDownloadAction = () => {
+    if (downloadState === "downloaded") {
+      openInstallDialog();
+    } else {
+      startDownload();
+      const hero = document.querySelector("main");
+      if (hero) hero.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
   const navLinks = [
-    { name: "Features", href: "#features" },
+    { name: "Overview", href: "#overview" },
+    { name: "Capabilities", href: "#features" },
     { name: "Screenshots", href: "#screenshots" },
-    { name: "Download", href: "#download" },
-    { name: "How to Install", href: "#installation" },
+    { name: "Specifications", href: "#download" },
+    { name: "Installation", href: "#installation" },
     { name: "Releases", href: "#releases" },
     { name: "FAQ", href: "#faq" },
   ];
 
   return (
     <header
-      className={`sticky top-0 z-50 w-full transition-all duration-300 ${
+      className={`sticky top-0 z-50 w-full transition-colors duration-150 ${
         scrolled
-          ? "bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800/80 shadow-sm shadow-emerald-950/5"
-          : "bg-transparent border-b border-transparent"
+          ? "bg-[#F7F7F2]/95 dark:bg-[#111714]/95 backdrop-blur-sm border-b border-[#E2E5DD] dark:border-[#26372F]"
+          : "bg-[#F7F7F2] dark:bg-[#111714] border-b border-[#E2E5DD] dark:border-[#26372F]"
       }`}
     >
+      {/* Topmost Horizontal Progress Line across the viewport while downloading */}
+      {downloadState === "downloading" && (
+        <div className="absolute top-0 left-0 right-0 h-1 bg-[#E2E5DD] dark:bg-[#26372F] z-[60] overflow-hidden">
+          <div
+            className="h-full bg-[#173D32] dark:bg-[#C8D8B9] transition-all duration-100 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 sm:h-20">
-          {/* Brand Logo & Name */}
+
+          {/* Brand Logo & Product Name (Version removed from top section) */}
           <Link
             href="/"
             className="flex items-center gap-3 group focus:outline-none"
           >
-            <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden shadow-md shadow-emerald-500/10 border border-emerald-500/20 bg-slate-900 flex items-center justify-center transition-transform duration-300 group-hover:scale-105">
+            <div className="relative w-8 h-8 sm:w-9 sm:h-9 overflow-hidden rounded border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D] flex items-center justify-center">
               <Image
                 src={APP_CONFIG.app.logoPath}
                 alt={`${APP_CONFIG.app.name} logo`}
-                width={40}
-                height={40}
+                width={36}
+                height={36}
                 className="object-cover"
                 priority
               />
             </div>
-            <div className="flex flex-col">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-lg sm:text-xl tracking-tight text-slate-900 dark:text-white">
-                  {APP_CONFIG.app.name}
-                </span>
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                  Android
-                </span>
-              </div>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block -mt-0.5">
-                v{APP_CONFIG.release.version} Official
+            <div className="flex items-baseline gap-2">
+              <span className="font-semibold text-lg sm:text-xl tracking-tight text-[#202521] dark:text-[#F3F6F1]">
+                {APP_CONFIG.app.name}
               </span>
             </div>
           </Link>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1 lg:gap-2">
+          <nav className="hidden lg:flex items-center gap-6 xl:gap-8">
             {navLinks.map((link) => (
               <a
                 key={link.name}
                 href={link.href}
-                className="px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/60 dark:hover:bg-slate-900/60 rounded-lg transition-colors"
+                className="text-xs font-mono uppercase tracking-wider text-[#777D76] dark:text-[#8E9B93] hover:text-[#173D32] dark:hover:text-[#C8D8B9] transition-colors"
               >
                 {link.name}
               </a>
             ))}
-            <Link
-              href="/privacy"
-              className="px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/60 dark:hover:bg-slate-900/60 rounded-lg transition-colors"
-            >
-              Privacy
-            </Link>
           </nav>
 
           {/* Right Action Items */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <Link
+              href="/privacy"
+              className="hidden sm:inline-block text-xs font-mono uppercase tracking-wider text-[#777D76] dark:text-[#8E9B93] hover:text-[#173D32] dark:hover:text-[#C8D8B9] transition-colors px-2 py-1"
+            >
+              Privacy
+            </Link>
+
+            {/* Night Mode Toggle */}
             <ThemeToggle />
 
-            {/* Direct Download Button */}
-            <a
-              href="#download"
-              className="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 active:bg-emerald-500 shadow-sm shadow-emerald-500/25 transition-all duration-200 hover:shadow-emerald-500/35 hover:-translate-y-0.5"
+            {/* Distinctive Download / Open App CTA */}
+            <button
+              onClick={handleDownloadAction}
+              disabled={downloadState === "downloading"}
+              type="button"
+              className={`inline-flex items-center gap-2 px-4 py-2 sm:px-5 sm:py-2.5 rounded text-xs font-semibold uppercase tracking-wider transition-all focus:outline-none ${
+                downloadState === "downloaded"
+                  ? "text-[#F7F7F2] bg-[#173D32] hover:bg-[#315E4C] dark:bg-[#C8D8B9] dark:text-[#111714] dark:hover:bg-[#DCE7D1] shadow-sm ring-1 ring-[#C8D8B9]"
+                  : downloadState === "downloading"
+                  ? "text-[#F7F7F2] bg-[#315E4C] dark:bg-[#C8D8B9]/80 dark:text-[#111714] cursor-wait"
+                  : "text-[#F7F7F2] bg-[#173D32] hover:bg-[#315E4C] dark:bg-[#C8D8B9] dark:text-[#111714] dark:hover:bg-[#DCE7D1]"
+              }`}
             >
-              <Download className="w-4 h-4" />
-              <span>Download APK</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-950/15 font-mono font-medium">
-                v{APP_CONFIG.release.version}
-              </span>
-            </a>
+              {downloadState === "downloading" ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  <span>{progress}%</span>
+                </>
+              ) : downloadState === "downloaded" ? (
+                <>
+                  <Play className="w-3.5 h-3.5 fill-current text-[#C8D8B9] dark:text-[#111714]" />
+                  <span>Install APK</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5 text-[#C8D8B9] dark:text-[#111714]" />
+                  <span>Download APK</span>
+                </>
+              )}
+            </button>
 
             {/* Mobile Menu Trigger */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               type="button"
-              className="md:hidden flex items-center justify-center w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-emerald-500"
+              className="lg:hidden flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D] text-[#202521] dark:text-[#F3F6F1] hover:bg-[#EBF0E6] dark:hover:bg-[#202E28] transition-colors"
               aria-label="Toggle menu"
             >
               {mobileMenuOpen ? (
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               ) : (
-                <Menu className="w-5 h-5" />
+                <Menu className="w-4 h-4" />
               )}
             </button>
           </div>
@@ -122,47 +166,58 @@ export default function Navbar() {
 
       {/* Mobile Drawer Menu */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-white/95 dark:bg-slate-950/95 backdrop-blur-2xl border-b border-slate-200 dark:border-slate-800 px-4 pt-3 pb-6 space-y-2 animate-in fade-in slide-in-from-top-3 duration-200">
-          <div className="flex flex-col space-y-1">
+        <div className="lg:hidden bg-[#F7F7F2] dark:bg-[#111714] border-b border-[#E2E5DD] dark:border-[#26372F] px-4 pt-3 pb-6 space-y-3">
+          <div className="flex flex-col divide-y divide-[#E2E5DD] dark:divide-[#26372F]">
             {navLinks.map((link) => (
               <a
                 key={link.name}
                 href={link.href}
                 onClick={() => setMobileMenuOpen(false)}
-                className="px-3 py-2.5 rounded-lg text-base font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-emerald-500 transition-colors"
+                className="py-3 text-xs font-mono uppercase tracking-wider text-[#202521] dark:text-[#F3F6F1] hover:text-[#173D32] dark:hover:text-[#C8D8B9] transition-colors flex items-center justify-between"
               >
-                {link.name}
+                <span>{link.name}</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-[#777D76] dark:text-[#8E9B93]" />
               </a>
             ))}
             <Link
               href="/privacy"
               onClick={() => setMobileMenuOpen(false)}
-              className="px-3 py-2.5 rounded-lg text-base font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-emerald-500 transition-colors"
+              className="py-3 text-xs font-mono uppercase tracking-wider text-[#202521] dark:text-[#F3F6F1] hover:text-[#173D32] dark:hover:text-[#C8D8B9] transition-colors flex items-center justify-between"
             >
-              Privacy Policy
+              <span>Privacy Policy</span>
+              <ArrowUpRight className="w-3.5 h-3.5 text-[#777D76] dark:text-[#8E9B93]" />
             </Link>
             <Link
               href="/terms"
               onClick={() => setMobileMenuOpen(false)}
-              className="px-3 py-2.5 rounded-lg text-base font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-emerald-500 transition-colors"
+              className="py-3 text-xs font-mono uppercase tracking-wider text-[#202521] dark:text-[#F3F6F1] hover:text-[#173D32] dark:hover:text-[#C8D8B9] transition-colors flex items-center justify-between"
             >
-              Terms of Service
+              <span>Terms of Service</span>
+              <ArrowUpRight className="w-3.5 h-3.5 text-[#777D76] dark:text-[#8E9B93]" />
             </Link>
           </div>
 
-          <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
-            <a
-              href="#download"
-              onClick={() => setMobileMenuOpen(false)}
-              className="flex items-center justify-center gap-2 w-full px-4 py-3 rounded-xl text-base font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 shadow-md shadow-emerald-500/20"
+          <div className="pt-3">
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                handleDownloadAction();
+              }}
+              type="button"
+              className="flex items-center justify-center gap-2 w-full px-4 py-3 rounded text-xs font-semibold uppercase tracking-wider text-[#F7F7F2] bg-[#173D32] hover:bg-[#315E4C] dark:bg-[#C8D8B9] dark:text-[#111714] dark:hover:bg-[#DCE7D1] transition-colors"
             >
-              <Download className="w-5 h-5" />
-              <span>Download APK (v{APP_CONFIG.release.version})</span>
-            </a>
-            <p className="mt-2 text-center text-xs text-slate-500 flex items-center justify-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-              Verified official release · No Play Store account required
-            </p>
+              {downloadState === "downloaded" ? (
+                <>
+                  <Play className="w-4 h-4 fill-current text-[#C8D8B9] dark:text-[#111714]" />
+                  <span>Install APK</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4 text-[#C8D8B9] dark:text-[#111714]" />
+                  <span>Download APK</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
       )}

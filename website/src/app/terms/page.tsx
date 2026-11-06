@@ -1,108 +1,90 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, FileText, CheckCircle2 } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { APP_CONFIG } from "@/config/app.config";
 
-export const metadata: Metadata = {
-  title: `Terms & Conditions - ${APP_CONFIG.app.name}`,
-  description: `Official terms of service for downloading, installing, and using the ${APP_CONFIG.app.name} Android application.`,
-};
-
 export default function TermsPage() {
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="flex flex-col min-h-screen bg-[#F7F7F2] dark:bg-[#111714] text-[#202521] dark:text-[#F3F6F1] transition-colors">
       <Navbar />
 
-      <main className="flex-1 py-14 sm:py-20">
+      <main className="flex-1 py-14 sm:py-20 border-b border-[#E2E5DD] dark:border-[#26372F]">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           
           {/* Back Navigation */}
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-emerald-500 mb-8 transition-colors"
+            className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-[#777D76] dark:text-[#8E9B93] hover:text-[#173D32] dark:hover:text-[#C8D8B9] mb-8 transition-colors"
           >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to Home</span>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Return to Distribution</span>
           </Link>
 
           {/* Header */}
-          <div className="border-b border-slate-200 dark:border-slate-800 pb-8 mb-10">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 mb-3">
-              <FileText className="w-3.5 h-3.5" />
-              <span>Terms of Service</span>
+          <div className="border-b border-[#E2E5DD] dark:border-[#26372F] pb-8 mb-10">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs font-mono tracking-widest text-[#777D76] dark:text-[#8E9B93] uppercase">
+                Software Distribution Agreement
+              </span>
             </div>
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              Terms & Conditions
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-normal tracking-tight text-[#202521] dark:text-[#F3F6F1]">
+              Terms of <span className="font-semibold text-[#173D32] dark:text-[#C8D8B9]">Service</span>
             </h1>
-            <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
-              Effective Date: {APP_CONFIG.release.releaseDate} · App Package: <code>{APP_CONFIG.app.packageName}</code>
+            <p className="mt-3 text-xs font-mono text-[#777D76] dark:text-[#8E9B93]">
+              Effective: {APP_CONFIG.release.releaseDate} · App Package: {APP_CONFIG.app.packageName}
             </p>
           </div>
 
           {/* Content */}
-          <div className="prose prose-slate dark:prose-invert max-w-none space-y-8 text-slate-700 dark:text-slate-300 text-sm sm:text-base leading-relaxed">
+          <div className="space-y-8 text-sm sm:text-base leading-relaxed text-[#202521] dark:text-[#F3F6F1]">
             
             <section className="space-y-3">
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
+              <h2 className="text-lg font-semibold text-[#202521] dark:text-[#F3F6F1]">
                 1. Acceptance of Terms
               </h2>
-              <p>
-                By downloading, installing, or using the <strong>{APP_CONFIG.app.name}</strong> Android application (APK), you agree to be bound by these Terms and Conditions. If you do not agree to these terms, do not install or use the application.
+              <p className="text-[#777D76] dark:text-[#8E9B93]">
+                By downloading, installing, or executing the <strong>{APP_CONFIG.app.name}</strong> Android package (APK), you agree to be bound by these Terms of Service. If you do not agree with any provision herein, do not install or use the software.
               </p>
             </section>
 
             <section className="space-y-3">
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-                2. Software License & Distribution
+              <h2 className="text-lg font-semibold text-[#202521] dark:text-[#F3F6F1]">
+                2. Software License &amp; Intellectual Property
               </h2>
-              <p>
-                {APP_CONFIG.app.name} grants you a revocable, non-exclusive, non-transferable license to download and install the official APK on authorized Android devices for your personal or commercial business operations.
-              </p>
-              <p>
-                You may not:
-              </p>
-              <ul className="list-disc pl-5 space-y-1">
-                <li>Reverse-engineer, decompile, or disassemble the binary packages without prior written authorization.</li>
-                <li>Redistribute modified, re-signed, or tampered copies of the APK claiming them to be official releases.</li>
-                <li>Attempt to bypass security features, tenant authentication, or database row-level security policies.</li>
-              </ul>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-                3. APK Authenticity & Verification
-              </h2>
-              <p>
-                Official releases are distributed exclusively through our official website and designated GitHub Releases repository. We provide cryptographic SHA-256 hashes for all builds. We cannot guarantee the security, integrity, or functionality of packages downloaded from unauthorized third-party mirrors.
+              <p className="text-[#777D76] dark:text-[#8E9B93]">
+                {APP_CONFIG.app.name} grants authorized users a non-exclusive, revocable license to execute official application binaries for water delivery and stock ledger operations. Users may not decompile, reverse engineer, or redistribute tampered copies of the APK claiming them as official builds.
               </p>
             </section>
 
             <section className="space-y-3">
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-                4. Operational Use & Accuracy
+              <h2 className="text-lg font-semibold text-[#202521] dark:text-[#F3F6F1]">
+                3. Direct Distribution &amp; Integrity Verification
               </h2>
-              <p>
-                {APP_CONFIG.app.name} provides inventory tracking, stock movements, and customer ledger management. While we strive for absolute precision and offline resiliency, business operators are encouraged to perform regular manual stock audits and baseline reconciliations.
+              <p className="text-[#777D76] dark:text-[#8E9B93]">
+                Official APK binaries are distributed directly through this website and are accompanied by public SHA-256 cryptographic hashes. Users are responsible for verifying package authenticity when downloading through alternative mirrors.
               </p>
             </section>
 
             <section className="space-y-3">
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-                5. Disclaimer of Warranties
+              <h2 className="text-lg font-semibold text-[#202521] dark:text-[#F3F6F1]">
+                4. Operational Disclaimer
               </h2>
-              <p className="uppercase text-xs sm:text-sm text-slate-500 font-medium">
-                The application is provided &ldquo;as is&rdquo; and &ldquo;as available&rdquo;, without warranties of any kind, either express or implied, including but not limited to the implied warranties of merchantability, fitness for a particular purpose, and non-infringement.
+              <p className="text-xs sm:text-sm text-[#777D76] dark:text-[#8E9B93] font-mono uppercase tracking-wider">
+                The software is provided &ldquo;as is&rdquo; without warranties of any kind, express or implied. Users should maintain regular operational audits of water can stock baselines and financial receipts.
               </p>
             </section>
 
             <section className="space-y-3">
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-                6. Contact Information
+              <h2 className="text-lg font-semibold text-[#202521] dark:text-[#F3F6F1]">
+                5. Contact
               </h2>
-              <p>
-                For inquiries regarding these Terms and Conditions, please email us at <a href={`mailto:${APP_CONFIG.links.supportEmail}`} className="text-emerald-500 hover:underline">{APP_CONFIG.links.supportEmail}</a>.
+              <p className="text-[#777D76] dark:text-[#8E9B93]">
+                For legal inquiries, contact{" "}
+                <a href={`mailto:${APP_CONFIG.links.supportEmail}`} className="text-[#173D32] dark:text-[#C8D8B9] font-semibold underline">
+                  {APP_CONFIG.links.supportEmail}
+                </a>.
               </p>
             </section>
 

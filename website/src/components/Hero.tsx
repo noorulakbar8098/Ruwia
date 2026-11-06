@@ -1,177 +1,228 @@
 "use client";
 
-import { useState } from "react";
 import Image from "next/image";
-import {
-  Download,
-  ShieldCheck,
-  Smartphone,
-  Calendar,
-  HardDrive,
-  Cpu,
-  ArrowRight,
-  CheckCircle2,
-  Sparkles,
-} from "lucide-react";
+import { Download, ArrowRight, ShieldCheck, CheckCircle2, Play } from "lucide-react";
 import { APP_CONFIG } from "@/config/app.config";
+import { useDownload } from "@/context/DownloadContext";
 
 export default function Hero() {
-  const [downloading, setDownloading] = useState(false);
-  const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const {
+    downloadState,
+    progress,
+    downloadedMB,
+    totalMB,
+    startDownload,
+    openInstallDialog,
+    resetDownload,
+  } = useDownload();
 
-  const handleDownloadClick = () => {
-    setDownloading(true);
-    window.location.href = APP_CONFIG.release.downloadUrl;
-    setTimeout(() => {
-      setDownloading(false);
-      setDownloadSuccess(true);
-      setTimeout(() => setDownloadSuccess(false), 5000);
-    }, 1200);
+  const handlePrimaryClick = () => {
+    if (downloadState === "downloaded") {
+      openInstallDialog();
+    } else if (downloadState === "idle") {
+      startDownload();
+    }
   };
 
   return (
-    <section className="relative pt-8 pb-16 sm:pt-14 sm:pb-24 overflow-hidden">
-      {/* Background Radial Glow */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-[620px] pointer-events-none radial-glow-hero -z-10" />
-
-      {/* Subtle Dot Grid */}
-      <div className="absolute inset-0 bg-grid-pattern opacity-60 -z-20" />
-
+    <section className="relative pt-12 pb-20 sm:pt-20 sm:pb-28 border-b border-[#E2E5DD] dark:border-[#26372F] transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
-          
-          {/* Left Column: Headlines & CTA */}
-          <div className="lg:col-span-7 flex flex-col items-start text-left">
-            
-            {/* Version & Security Pill Badge */}
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs sm:text-sm font-semibold mb-6 shadow-sm backdrop-blur-md">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <span>Official Release v{APP_CONFIG.release.version}</span>
-              <span className="text-slate-300 dark:text-slate-600">|</span>
-              <span className="flex items-center gap-1 text-slate-600 dark:text-slate-300 font-normal">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                Signed APK
+
+        {/* Asymmetric Editorial Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
+
+          {/* Left Column: Editorial Content */}
+          <div className="lg:col-span-7 flex flex-col items-start">
+
+            {/* Category Eyebrow (No versions in top section) */}
+            <div className="flex items-center gap-3 mb-6">
+              <span className="inline-block w-2 h-2 rounded-full bg-[#173D32] dark:bg-[#C8D8B9]" />
+              <span className="text-xs font-mono tracking-widest text-[#777D76] dark:text-[#8E9B93] uppercase">
+                Direct Android Distribution
               </span>
             </div>
 
             {/* Main Headline */}
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 dark:text-white leading-[1.12]">
-              Your App. <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400">Your Device.</span>
-              <br />
-              Your Experience.
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-normal tracking-tight text-[#202521] dark:text-[#F3F6F1] leading-[1.08]">
+              Technology that works <br />
+              <span className="font-semibold text-[#173D32] dark:text-[#C8D8B9]">around you.</span>
             </h1>
 
-            {/* Sub-headline description */}
-            <p className="mt-5 text-base sm:text-lg lg:text-xl text-slate-600 dark:text-slate-300 max-w-2xl leading-relaxed">
-              {APP_CONFIG.app.heroDescription}
+            {/* Description */}
+            <p className="mt-6 text-base sm:text-lg text-[#777D76] dark:text-[#8E9B93] max-w-xl leading-relaxed">
+              A thoughtfully built digital experience, designed to make everyday tasks simpler, faster, and more connected. Download the verified production Android application directly to your device.
             </p>
 
-            {/* Quick Specs Ribbon */}
-            <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-3 w-full max-w-xl">
-              <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800/80 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <HardDrive className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span>Size</span>
-                </div>
-                <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{APP_CONFIG.release.apkSize}</div>
-              </div>
-
-              <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800/80 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <Calendar className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span>Updated</span>
-                </div>
-                <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{APP_CONFIG.release.releaseDate}</div>
-              </div>
-
-              <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800/80 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <Smartphone className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span>Android</span>
-                </div>
-                <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100 truncate">7.0 to 16</div>
-              </div>
-
-              <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800/80 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <Cpu className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span>Arch</span>
-                </div>
-                <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Universal</div>
-              </div>
-            </div>
-
-            {/* CTA Buttons Row */}
-            <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5 w-full sm:w-auto">
+            {/* CTA & Explore Row */}
+            <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full sm:w-auto">
+              {/* Primary Action Button: Transforms into Open when downloaded */}
               <button
-                onClick={handleDownloadClick}
-                disabled={downloading}
+                onClick={handlePrimaryClick}
+                disabled={downloadState === "downloading"}
                 type="button"
-                className="group relative inline-flex items-center justify-center gap-3 px-8 py-4 rounded-2xl text-base font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 active:bg-emerald-500 shadow-xl shadow-emerald-500/25 transition-all duration-300 hover:shadow-emerald-500/40 hover:-translate-y-0.5 focus:outline-none"
+                className={`inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded text-sm font-semibold uppercase tracking-wider transition-all focus:outline-none ${
+                  downloadState === "downloaded"
+                    ? "text-[#F7F7F2] bg-[#173D32] hover:bg-[#315E4C] dark:bg-[#C8D8B9] dark:text-[#111714] dark:hover:bg-[#DCE7D1] shadow-md ring-2 ring-[#C8D8B9]/60 dark:ring-[#173D32]/60 transform hover:scale-[1.02] active:scale-[0.98]"
+                    : downloadState === "downloading"
+                    ? "text-[#F7F7F2] bg-[#315E4C] dark:bg-[#C8D8B9]/80 dark:text-[#111714] cursor-wait"
+                    : "text-[#F7F7F2] bg-[#173D32] hover:bg-[#315E4C] dark:bg-[#C8D8B9] dark:text-[#111714] dark:hover:bg-[#DCE7D1]"
+                }`}
               >
-                {downloading ? (
+                {downloadState === "downloading" ? (
                   <>
-                    <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                    <span>Initiating Download...</span>
+                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    <span>Downloading... {progress}%</span>
                   </>
-                ) : downloadSuccess ? (
+                ) : downloadState === "downloaded" ? (
                   <>
-                    <CheckCircle2 className="w-5 h-5 text-emerald-950" />
-                    <span>Downloading APK!</span>
+                    <Play className="w-4 h-4 fill-current text-[#C8D8B9] dark:text-[#111714]" />
+                    <span>Install APK</span>
+                    <span className="ml-1 text-[11px] font-mono opacity-90">
+                      (Downloaded)
+                    </span>
                   </>
                 ) : (
                   <>
-                    <Download className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" />
+                    <Download className="w-4 h-4 text-[#C8D8B9] dark:text-[#111714]" />
                     <span>Download for Android</span>
-                    <span className="px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-slate-950/15">
-                      {APP_CONFIG.release.apkSize}
+                    <span className="ml-1 text-[11px] font-mono opacity-80">
+                      ({APP_CONFIG.release.apkSize})
                     </span>
                   </>
                 )}
               </button>
 
               <a
-                href="#installation"
-                className="inline-flex items-center justify-center gap-2 px-6 py-4 rounded-2xl text-base font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-900/80 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 transition-colors"
+                href="#overview"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded text-sm font-semibold uppercase tracking-wider text-[#202521] dark:text-[#F3F6F1] hover:text-[#173D32] dark:hover:text-[#C8D8B9] border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D] hover:bg-[#EBF0E6]/50 dark:hover:bg-[#202E28] transition-colors"
               >
-                <span>How to Install</span>
-                <ArrowRight className="w-4 h-4 text-emerald-500" />
+                <span>Explore Product</span>
+                <ArrowRight className="w-4 h-4 text-[#777D76] dark:text-[#8E9B93]" />
               </a>
             </div>
 
-            {/* Download Security Subtext */}
-            <div className="mt-4 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-              <span>Official GitHub Releases link · Zero telemetry · 100% ad-free</span>
+            {/* Horizontal Line Download Status Indicator (Top First Screen) */}
+            {downloadState === "downloading" && (
+              <div className="w-full max-w-xl mt-5 p-4 rounded-lg bg-[#EBF0E6] dark:bg-[#18221D] border border-[#C8D8B9] dark:border-[#26372F] transition-all">
+                <div className="flex items-center justify-between text-xs font-mono mb-2">
+                  <span className="text-[#173D32] dark:text-[#C8D8B9] font-medium flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#173D32] dark:bg-[#C8D8B9] opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#173D32] dark:bg-[#C8D8B9]"></span>
+                    </span>
+                    Downloading ruwia-v{APP_CONFIG.release.version}-release.apk
+                  </span>
+                  <span className="text-[#202521] dark:text-[#F3F6F1] font-semibold">
+                    {downloadedMB} / {totalMB} ({progress}%)
+                  </span>
+                </div>
+
+                {/* Horizontal Progress Bar Line */}
+                <div className="w-full bg-[#D2D8CA] dark:bg-[#26372F] h-2.5 rounded-full overflow-hidden">
+                  <div
+                    className="bg-[#173D32] dark:bg-[#C8D8B9] h-full rounded-full transition-all duration-100 ease-out"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+
+                <div className="mt-2 flex items-center justify-between text-[11px] text-[#777D76] dark:text-[#8E9B93] font-mono">
+                  <span>Source: Official ruwia.app download</span>
+                  <span>Status: In Progress ({progress}%)</span>
+                </div>
+              </div>
+            )}
+
+            {downloadState === "downloaded" && (
+              <div className="w-full max-w-xl mt-5 p-4 rounded-lg bg-[#EBF0E6] dark:bg-[#18221D] border border-[#173D32]/30 dark:border-[#C8D8B9]/30 transition-all">
+                <div className="flex items-center justify-between text-xs font-mono mb-2">
+                  <span className="text-[#173D32] dark:text-[#C8D8B9] font-semibold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-[#173D32] dark:text-[#C8D8B9]" />
+                    <span>Download completed · {totalMB}</span>
+                  </span>
+                  <button
+                    onClick={resetDownload}
+                    type="button"
+                    className="text-[11px] text-[#777D76] dark:text-[#8E9B93] hover:text-[#173D32] dark:hover:text-[#C8D8B9] underline cursor-pointer"
+                  >
+                    Download again
+                  </button>
+                </div>
+
+                {/* Horizontal Completed Line */}
+                <div className="w-full bg-[#173D32] dark:bg-[#C8D8B9] h-2 rounded-full" />
+
+                <div className="mt-2 flex items-center justify-between text-[11px] text-[#777D76] dark:text-[#8E9B93] font-mono">
+                  <span>APK saved to your Downloads folder</span>
+                  <button
+                    onClick={openInstallDialog}
+                    className="text-[#173D32] dark:text-[#C8D8B9] font-semibold hover:underline"
+                  >
+                    Tap the download notification to install →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Security Subtext */}
+            <div className="mt-4 flex items-center gap-2 text-xs text-[#777D76] dark:text-[#8E9B93]">
+              <ShieldCheck className="w-4 h-4 text-[#315E4C] dark:text-[#C8D8B9] shrink-0" />
+              <span>Official signed build · SHA-256 verified · No Google Play account required</span>
+            </div>
+
+            {/* Architectural Specs Ribbon: Initial detail screen showing version name, app size, and updated on */}
+            <div className="mt-10 pt-6 border-t border-[#E2E5DD] dark:border-[#26372F] grid grid-cols-2 sm:grid-cols-4 gap-6 w-full max-w-xl">
+              <div>
+                <div className="text-[10px] font-mono tracking-widest text-[#777D76] dark:text-[#8E9B93] uppercase">Version</div>
+                <div className="mt-1 text-sm font-semibold text-[#202521] dark:text-[#F3F6F1] font-mono">v{APP_CONFIG.release.version}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-mono tracking-widest text-[#777D76] dark:text-[#8E9B93] uppercase">Size</div>
+                <div className="mt-1 text-sm font-semibold text-[#202521] dark:text-[#F3F6F1] font-mono">{APP_CONFIG.release.apkSize}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-mono tracking-widest text-[#777D76] dark:text-[#8E9B93] uppercase">Updated On</div>
+                <div className="mt-1 text-sm font-semibold text-[#202521] dark:text-[#F3F6F1]">{APP_CONFIG.release.releaseDate}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-mono tracking-widest text-[#777D76] dark:text-[#8E9B93] uppercase">Compatibility</div>
+                <div className="mt-1 text-sm font-semibold text-[#202521] dark:text-[#F3F6F1]">Android 7.0+</div>
+              </div>
             </div>
 
           </div>
 
-          {/* Right Column: Premium Smartphone Frame */}
-          <div className="lg:col-span-5 flex justify-center lg:justify-end">
-            <div className="relative mx-auto w-[290px] sm:w-[325px] aspect-[390/844] rounded-[50px] p-3 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 shadow-[0_30px_70px_-15px_rgba(0,0,0,0.8)] border border-slate-700/80 ring-1 ring-white/10 transition-transform duration-500 hover:scale-[1.02]">
-              
-              {/* Screen Bezel */}
-              <div className="relative w-full h-full rounded-[40px] overflow-hidden bg-[#090D16]">
+          {/* Right Column: Architectural Device Showcase */}
+          <div className="lg:col-span-5 flex flex-col items-center lg:items-end">
+            <div className="relative w-full max-w-[340px]">
+
+              {/* Top Editorial Annotation Badge (No version in top section badge) */}
+              <div className="absolute -top-4 -left-4 z-20 px-3 py-1 bg-white dark:bg-[#18221D] border border-[#E2E5DD] dark:border-[#26372F] rounded text-[10px] font-mono uppercase tracking-wider text-[#173D32] dark:text-[#C8D8B9] shadow-sm">
+                Built for everyday use
+              </div>
+
+              {/* Primary Realistic Device Frame */}
+              <div className="relative w-full drop-shadow-[0_20px_40px_rgba(0,0,0,0.18)] dark:drop-shadow-[0_25px_50px_rgba(0,0,0,0.7)] transition-transform duration-300 hover:scale-[1.01]">
                 <Image
-                  src="/images/screenshots/dashboard.svg"
-                  alt="Ruwia Dashboard Preview"
-                  fill
-                  sizes="(max-width: 640px) 290px, 325px"
-                  className="object-contain"
+                  src={APP_CONFIG.app.heroScreenshotPath}
+                  alt={`${APP_CONFIG.app.name} Owner Dashboard`}
+                  width={1469}
+                  height={3104}
+                  className="w-full h-auto object-contain"
                   priority
                 />
               </div>
 
-              {/* Glass Reflection Highlight */}
-              <div className="pointer-events-none absolute inset-0 rounded-[50px] bg-gradient-to-tr from-transparent via-white/[0.04] to-transparent" />
+              {/* Bottom Caption (No version in top section caption) */}
+              <div className="mt-4 flex items-center justify-between text-[11px] font-mono text-[#777D76] dark:text-[#8E9B93] px-2">
+                <span>Figure 1.0 — Real-Time Owner Dashboard</span>
+                <span>Verified Production Build</span>
+              </div>
+
             </div>
           </div>
 
         </div>
+
       </div>
     </section>
   );

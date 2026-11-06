@@ -4,28 +4,13 @@ import { useEffect, useState } from "react";
 import { Sun, Moon } from "lucide-react";
 
 export default function ThemeToggle() {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">("light");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
-    const storedTheme = localStorage.getItem("ruwia-theme");
-    if (storedTheme === "light") {
-      setTheme("light");
-      document.documentElement.classList.remove("dark");
-    } else if (storedTheme === "dark") {
-      setTheme("dark");
-      document.documentElement.classList.add("dark");
-    } else {
-      // System preference default
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      setTheme(prefersDark ? "dark" : "light");
-      if (prefersDark) {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-    }
+    const isDark = document.documentElement.classList.contains("dark");
+    setTheme(isDark ? "dark" : "light");
   }, []);
 
   const toggleTheme = () => {
@@ -42,7 +27,7 @@ export default function ThemeToggle() {
 
   if (!mounted) {
     return (
-      <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
+      <div className="w-8 h-8 rounded border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D]" />
     );
   }
 
@@ -50,13 +35,14 @@ export default function ThemeToggle() {
     <button
       onClick={toggleTheme}
       type="button"
-      aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-      className="relative flex items-center justify-center w-9 h-9 rounded-full border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 hover:text-emerald-500 dark:hover:text-emerald-400 hover:border-emerald-500/40 transition-all duration-200 shadow-sm"
+      aria-label={theme === "dark" ? "Switch to day mode" : "Switch to night mode"}
+      title={theme === "dark" ? "Day Mode" : "Night Mode"}
+      className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded border border-[#E2E5DD] dark:border-[#26372F] bg-white dark:bg-[#18221D] text-[#202521] dark:text-[#F3F6F1] hover:bg-[#EBF0E6] dark:hover:bg-[#202E28] hover:text-[#173D32] dark:hover:text-[#C8D8B9] transition-colors focus:outline-none"
     >
       {theme === "dark" ? (
-        <Sun className="w-4 h-4 transition-transform duration-300 rotate-0 hover:rotate-45 text-amber-400" />
+        <Sun className="w-4 h-4 text-[#C8D8B9]" />
       ) : (
-        <Moon className="w-4 h-4 transition-transform duration-300 text-slate-700 hover:text-emerald-600" />
+        <Moon className="w-4 h-4 text-[#202521]" />
       )}
     </button>
   );

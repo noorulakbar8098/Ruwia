@@ -1,5 +1,6 @@
 import Navbar from "@/components/Navbar";
 import Hero from "@/components/Hero";
+import ProductIntro from "@/components/ProductIntro";
 import Features from "@/components/Features";
 import ScreenshotsGallery from "@/components/ScreenshotsGallery";
 import DownloadCard from "@/components/DownloadCard";
@@ -41,6 +42,7 @@ export default function HomePage() {
         <Navbar />
         <main className="flex-1">
           <Hero />
+          <ProductIntro />
           <Features />
           <ScreenshotsGallery />
           <DownloadCard />
