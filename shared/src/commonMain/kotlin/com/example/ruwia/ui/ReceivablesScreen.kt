@@ -49,6 +49,23 @@ import kotlin.math.roundToInt
 
 private val HeroMint = Color(0xFF5EEAD4)
 
+/** Deep forest teal with the shared top-light sheen used by glossy actions. */
+private val GlossyTeal = Color(0xFF0F2E2C)
+
+private fun Modifier.glossyTealSurface(shape: Shape): Modifier = this
+    .clip(shape)
+    .background(GlossyTeal)
+    .background(
+        Brush.verticalGradient(
+            listOf(
+                Color.White.copy(alpha = 0.16f),
+                Color.White.copy(alpha = 0.03f),
+                Color.Transparent,
+            ),
+        ),
+    )
+    .border(1.dp, Color.White.copy(alpha = 0.16f), shape)
+
 private enum class ReceivablesListTab { OUTSTANDING, ALL }
 
 private enum class PaymentMode(
@@ -432,12 +449,7 @@ private fun MoneyHeroCard(
         modifier = modifier
             .fillMaxWidth()
             .shadow(8.dp, shape, clip = false)
-            .clip(shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(NTColors.PrimaryDeep, NTColors.PrimaryDark),
-                ),
-            )
+            .glossyTealSurface(shape)
             .padding(20.dp),
     ) {
         Row(verticalAlignment = Alignment.Top) {
@@ -1137,14 +1149,13 @@ private fun RecordPaymentSheet(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(NTColors.PrimaryLight),
+                        .glossyTealSurface(RoundedCornerShape(14.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         Icons.Rounded.Payments,
                         contentDescription = null,
-                        tint = NTColors.PrimaryDark,
+                        tint = HeroMint,
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -1189,22 +1200,21 @@ private fun RecordPaymentSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(NTColors.PrimaryLight)
+                    .glossyTealSurface(RoundedCornerShape(16.dp))
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         "Outstanding balance",
-                        color = NTColors.PrimaryDark.copy(alpha = 0.72f),
+                        color = Color.White.copy(alpha = 0.62f),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
                         formatReceivableAmount(customer.balance),
-                        color = NTColors.PrimaryDark,
+                        color = HeroMint,
                         fontSize = 19.sp,
                         fontWeight = FontWeight.ExtraBold,
                     )
@@ -1213,14 +1223,14 @@ private fun RecordPaymentSheet(
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             "Cans held",
-                            color = NTColors.PrimaryDark.copy(alpha = 0.72f),
+                            color = Color.White.copy(alpha = 0.62f),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Medium,
                         )
                         Spacer(Modifier.height(3.dp))
                         Text(
                             "${customer.cansHeld}",
-                            color = NTColors.PrimaryDark,
+                            color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                         )
@@ -1240,9 +1250,7 @@ private fun RecordPaymentSheet(
                 Spacer(Modifier.weight(1f))
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(NTColors.SurfaceVar)
-                        .border(1.dp, NTColors.Border, RoundedCornerShape(50))
+                        .glossyTealSurface(RoundedCornerShape(50))
                         .clickable(onClickLabel = "Pay full balance") {
                             amount = paymentAmountInput(customer.balance)
                         }
@@ -1250,7 +1258,7 @@ private fun RecordPaymentSheet(
                 ) {
                     Text(
                         "Pay full",
-                        color = NTColors.Primary,
+                        color = HeroMint,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                     )
@@ -1267,7 +1275,7 @@ private fun RecordPaymentSheet(
                         width = 1.dp,
                         color = when {
                             showError -> NTColors.Error
-                            amount.isNotBlank() -> NTColors.Primary
+                            amount.isNotBlank() -> GlossyTeal
                             else -> NTColors.Border
                         },
                         shape = RoundedCornerShape(16.dp),
@@ -1299,7 +1307,7 @@ private fun RecordPaymentSheet(
                             fontWeight = FontWeight.ExtraBold,
                             color = NTColors.TextPrimary,
                         ),
-                        cursorBrush = SolidColor(NTColors.Primary),
+                        cursorBrush = SolidColor(GlossyTeal),
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Decimal,
                             imeAction = ImeAction.Next,
@@ -1369,7 +1377,7 @@ private fun RecordPaymentSheet(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = NTColors.Primary,
+                    focusedBorderColor = GlossyTeal,
                     unfocusedBorderColor = NTColors.Border,
                     focusedContainerColor = NTColors.SurfaceVar,
                     unfocusedContainerColor = NTColors.SurfaceVar,
@@ -1425,15 +1433,17 @@ private fun PaymentModeChip(
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
+    val background = if (selected) {
+        Modifier.glossyTealSurface(shape)
+    } else {
+        Modifier
+            .clip(shape)
+            .background(NTColors.SurfaceVar)
+            .border(1.dp, NTColors.Border, shape)
+    }
     Row(
         modifier = modifier
-            .clip(shape)
-            .background(if (selected) NTColors.Primary else NTColors.SurfaceVar)
-            .border(
-                width = 1.dp,
-                color = if (selected) NTColors.Primary else NTColors.Border,
-                shape = shape,
-            )
+            .then(background)
             .clickable(onClickLabel = option.label, onClick = onClick)
             .padding(vertical = 10.dp),
         horizontalArrangement = Arrangement.Center,
@@ -1442,13 +1452,13 @@ private fun PaymentModeChip(
         Icon(
             option.icon,
             contentDescription = null,
-            tint = if (selected) NTColors.TextOnPrimary else NTColors.TextSecondary,
+            tint = if (selected) HeroMint else NTColors.TextSecondary,
             modifier = Modifier.size(15.dp),
         )
         Spacer(Modifier.width(5.dp))
         Text(
             option.label,
-            color = if (selected) NTColors.TextOnPrimary else NTColors.TextSecondary,
+            color = if (selected) Color.White else NTColors.TextSecondary,
             fontSize = 11.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
