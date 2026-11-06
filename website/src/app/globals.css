@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg-warm: #F7F7F2;
+  --primary-forest: #173D32;
+  --secondary-forest: #315E4C;
+  --text-charcoal: #202521;
+  --text-muted: #777D76;
+  --border-subtle: #E2E5DD;
+  --accent-sage: #C8D8B9;
+  --accent-soft: #EBF0E6;
+  --surface-white: #FFFFFF;
+}
+
+.dark {
+  --bg-warm: #111714;
+  --primary-forest: #C8D8B9;
+  --secondary-forest: #386D5A;
+  --text-charcoal: #F3F6F1;
+  --text-muted: #8E9B93;
+  --border-subtle: #26372F;
+  --accent-sage: #C8D8B9;
+  --accent-soft: #18221D;
+  --surface-white: #18221D;
+}
+
+html {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  background-color: var(--bg-warm);
+  color: var(--text-charcoal);
+}
+
+body {
+  background-color: var(--bg-warm);
+  color: var(--text-charcoal);
+  min-height: 100vh;
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+/* Swiss editorial grid alignment & subtle rules */
+.editorial-border {
+  border-color: var(--border-subtle);
+}
+
+.editorial-divider {
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Subtle architectural hairline borders */
+.hairline-border {
+  border: 1px solid var(--border-subtle);
+}
+
+/* Monospace numerals for timestamps, versions, steps */
+.font-mono-num {
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/* Clean, unobtrusive scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F7F7F2;
+}
+::-webkit-scrollbar-thumb {
+  background: #D2D6CD;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #315E4C;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #111714;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #26372F;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #386D5A;
+}
