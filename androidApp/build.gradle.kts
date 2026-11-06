@@ -83,8 +83,8 @@ android {
         applicationId = "com.example.ruwia"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 5
-        versionName = "2.3"
+        versionCode = 6
+        versionName = "2.4"
         manifestPlaceholders["appName"] = "Ruwia"
 
         // No Supabase keys are embedded here. The publishable key and URL live

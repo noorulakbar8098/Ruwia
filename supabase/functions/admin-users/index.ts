@@ -7,8 +7,10 @@
 // Deploy with the default JWT verification enabled:
 //   supabase functions deploy admin-users
 //
-// SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are injected
-// automatically by Supabase and are never present in the repository.
+// SUPABASE_URL and SUPABASE_ANON_KEY are injected automatically. The privileged
+// key is read from the RUWIA_SERVICE_KEY function secret (a server-only
+// sb_secret_… key) with the built-in SUPABASE_SERVICE_ROLE_KEY as fallback.
+// Neither value is ever present in the repository or the app.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -61,7 +63,8 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey =
+    Deno.env.get("RUWIA_SERVICE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !anonKey || !serviceKey) {
     return json({ ok: false, error: "server is not configured" }, 500);
   }

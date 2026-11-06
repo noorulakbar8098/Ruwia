@@ -10,7 +10,9 @@
 //   FCM_SERVICE_ACCOUNT  full service-account JSON (Firebase → Project
 //                        settings → Service accounts → Generate new key)
 //   PUSH_WEBHOOK_SECRET  random shared secret sent by the database webhook
-// SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are injected automatically.
+// SUPABASE_URL is injected automatically. The privileged key is read from the
+// RUWIA_SERVICE_KEY secret (server-only sb_secret_… key), falling back to the
+// built-in SUPABASE_SERVICE_ROLE_KEY. Neither value is ever in the app.
 //
 // Deploy with `--no-verify-jwt`: the public app key also passes the gateway's
 // JWT check, so authentication is enforced here with PUSH_WEBHOOK_SECRET.
@@ -84,10 +86,12 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
+    const serviceKey =
+      Deno.env.get("RUWIA_SERVICE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!serviceKey) {
+      return Response.json({ ok: false, error: "Missing server key" }, { status: 500 });
+    }
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
     const projectId = Deno.env.get("FCM_PROJECT_ID");
     if (!projectId) {
       return Response.json({ ok: false, error: "Missing FCM_PROJECT_ID secret" }, { status: 500 });
