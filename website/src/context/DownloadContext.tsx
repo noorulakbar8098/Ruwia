@@ -27,7 +27,7 @@ interface DownloadContextType {
 const DownloadContext = createContext<DownloadContextType | undefined>(undefined);
 
 const APK_MIME_TYPE = "application/vnd.android.package-archive";
-const APK_FILE_NAME = `ruwia-v${APP_CONFIG.release.version}-release.apk`;
+const APK_FILE_NAME = APP_CONFIG.release.apkFileName;
 
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const [downloadState, setDownloadState] = useState<DownloadState>("idle");
@@ -83,11 +83,11 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
   const openInstallPrompt = useCallback(() => {
     if (dialogTimerRef.current) clearTimeout(dialogTimerRef.current);
-    // Give the browser a moment to register the saved file before asking
-    // the user to open the download notification.
+    // Give Android a moment to write the file and post its download
+    // notification before we point the user at it.
     dialogTimerRef.current = setTimeout(() => {
       setIsInstallDialogOpen(true);
-    }, 700);
+    }, 1200);
   }, []);
 
   const completeDownload = useCallback(() => {

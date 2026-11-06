@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Image from "next/image";
 import {
   Download,
@@ -14,15 +13,14 @@ import {
 } from "lucide-react";
 import { APP_CONFIG } from "@/config/app.config";
 import { useDownload } from "@/context/DownloadContext";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
 export default function DownloadCard() {
-  const [copiedSha, setCopiedSha] = useState(false);
+  const { copied: copiedSha, copy } = useCopyToClipboard();
   const { downloadState, progress, startDownload, openInstallDialog } = useDownload();
 
   const handleCopySha = () => {
-    navigator.clipboard.writeText(APP_CONFIG.release.sha256);
-    setCopiedSha(true);
-    setTimeout(() => setCopiedSha(false), 2500);
+    void copy(APP_CONFIG.release.sha256);
   };
 
   const handlePrimaryClick = () => {
@@ -233,7 +231,9 @@ export default function DownloadCard() {
             When installing directly from a browser for the first time, Android displays a standard prompt: <em>&ldquo;For your security, your phone is not allowed to install unknown apps from this source.&rdquo;</em> This is standard behavior for all direct installations outside Google Play. Tap the completed download notification to open the APK, then tap <strong>Settings</strong>, toggle <strong>Allow from this source</strong>, and tap <strong>Install</strong>.
           </p>
           <p className="mt-3 text-xs sm:text-sm text-[#777D76] dark:text-[#8E9B93] leading-relaxed">
-            Upgrading from v2.3? This release uses a new signing certificate, so Android may ask you to uninstall the older build once before installing v2.4.
+            Upgrading from a build signed with the old certificate (v2.3 or
+            earlier)? Android may ask you to uninstall it once before installing
+            v{APP_CONFIG.release.version}.
           </p>
         </div>
 
