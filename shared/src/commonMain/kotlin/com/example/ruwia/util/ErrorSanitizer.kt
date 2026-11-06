@@ -6,17 +6,13 @@ package com.example.ruwia.util
  *
  * Supabase/Ktor exception messages embed the full HTTP request dump — including
  * `Authorization: Bearer <JWT>` and `apikey=<key>` headers. Showing that raw
- * message on screen leaks secrets (the user's session token, or the service-role
- * key). ALWAYS run backend error text through this before displaying or storing
- * it in UI state.
+ * message on screen leaks the user's session token. ALWAYS run backend error
+ * text through this before displaying or storing it in UI state.
  */
 fun sanitizeError(raw: String?): String {
     if (raw == null) return "Something went wrong. Please try again."
 
     var msg: String = stripTechnicalDetails(raw)
-    // Diagnostic bundles composed by the app (service-key setup message)
-    // already contain safe text — never rewrite them.
-    if ("Installed key:" in msg) return msg
 
     // Friendlier, actionable copy for the most common backend errors.
     return when {
@@ -27,8 +23,7 @@ fun sanitizeError(raw: String?): String {
 
         msg.contains("Invalid API key", ignoreCase = true) ||
             msg.contains("Unauthorized", ignoreCase = true) ->
-            "Server rejected the request key. The Supabase service-role key is " +
-                "missing or invalid — set SUPABASE_SERVICE_KEY in SupabaseClient.kt."
+            "Your session is no longer valid. Sign in again and retry."
 
         msg.contains("row-level security", ignoreCase = true) ||
             msg.contains("violates row-level", ignoreCase = true) ->

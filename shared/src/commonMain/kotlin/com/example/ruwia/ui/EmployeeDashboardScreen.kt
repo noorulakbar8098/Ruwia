@@ -117,6 +117,8 @@ fun EmployeeDashboardScreen(
     employeeName: String = "Employee",
     shopInfo: String = "",
     userEmail: String = "",
+    deepLinkNotificationId: String? = null,
+    onNotificationDeepLinkHandled: () -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -154,6 +156,15 @@ fun EmployeeDashboardScreen(
     var isSubmittingAction by remember { mutableStateOf(false) }
     var showReceiveEmptyCansDialog by remember { mutableStateOf(false) }
     var selectedCustomerForSale by remember { mutableStateOf<Customer?>(null) }
+
+    // A push tap opens the notification center and marks that item read.
+    // Runs once per id; the host then clears the pending deep link.
+    LaunchedEffect(deepLinkNotificationId) {
+        val id = deepLinkNotificationId ?: return@LaunchedEffect
+        screen = EmpScreen.Notifications
+        vm.markNotificationRead(id)
+        onNotificationDeepLinkHandled()
+    }
 
     LaunchedEffect(state.loading, state.error) {
         if (isSubmittingAction && !state.loading) {

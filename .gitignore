@@ -7,6 +7,12 @@ xcuserdata
 local.properties
 # Firebase Android config (per-machine; download from Firebase console)
 google-services.json
+# Signing material — never commit keystores or their passwords
+*.jks
+*.keystore
+*.p12
+.env
+.env.*
 .idea
 .DS_Store
 captures

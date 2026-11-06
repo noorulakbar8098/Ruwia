@@ -20,6 +20,35 @@ import { SignJWT, importPKCS8 } from "npm:jose@5.10.0";
 
 const FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 
+// FCM error codes that mean this token will never work again. Prune them so
+// the next push doesn't keep retrying dead devices.
+const STALE_FCM_ERROR_CODES = new Set(["UNREGISTERED", "SENDER_ID_MISMATCH"]);
+
+function maskToken(token: string): string {
+  return token.length <= 12 ? token : `${token.slice(0, 8)}…${token.slice(-4)}`;
+}
+
+/** Reads an FCM error response and decides whether the token is dead. */
+async function readFcmFailure(res: Response): Promise<{ stale: boolean; detail: string }> {
+  const raw = await res.text();
+  let errorCode = "";
+  try {
+    const details = JSON.parse(raw)?.error?.details;
+    if (Array.isArray(details)) {
+      errorCode = details.find((d) => typeof d?.errorCode === "string")?.errorCode ?? "";
+    }
+  } catch {
+    // FCM normally returns JSON, but a gateway error may be plain text.
+  }
+  const stale =
+    res.status === 404 ||
+    STALE_FCM_ERROR_CODES.has(errorCode) ||
+    // 400 + "registration token" is a bad token; other INVALID_ARGUMENT
+    // responses point at the message payload, so they must not prune.
+    (res.status === 400 && /registration token/i.test(raw));
+  return { stale, detail: raw.slice(0, 500) };
+}
+
 async function googleAccessToken(serviceAccount: {
   client_email: string;
   private_key: string;
@@ -129,7 +158,8 @@ Deno.serve(async (req: Request) => {
 
     const accessToken = await googleAccessToken(serviceAccount);
     let sent = 0;
-    const failures: string[] = [];
+    const failures: Array<{ token: string; stale: boolean; detail: string }> = [];
+    const staleTokens: string[] = [];
     for (const token of pushTokens) {
       const res = await fetch(
         `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
@@ -156,11 +186,40 @@ Deno.serve(async (req: Request) => {
       );
       if (res.ok) {
         sent++;
+        continue;
+      }
+      const failure = await readFcmFailure(res);
+      failures.push({ token: maskToken(token), ...failure });
+      if (failure.stale) staleTokens.push(token);
+    }
+
+    // Delete tokens FCM reports as permanently invalid (uninstalled app,
+    // restored/cleared device, token from another Firebase project).
+    let pruned = 0;
+    if (staleTokens.length > 0) {
+      const { error: pruneError, count } = await supabase
+        .from("device_tokens")
+        .delete({ count: "exact" })
+        .in("token", staleTokens);
+      if (pruneError) {
+        console.error("send-push: failed to prune stale tokens", pruneError);
       } else {
-        failures.push(await res.text());
+        pruned = count ?? staleTokens.length;
       }
     }
-    return Response.json({ ok: true, sent, failed: failures.length });
+
+    if (failures.length > 0) {
+      console.error("send-push: FCM send failures", JSON.stringify(failures));
+    }
+    return Response.json({
+      ok: true,
+      sent,
+      failed: failures.length,
+      pruned,
+      fcmProjectId: projectId,
+      serviceAccountProjectId: serviceAccount.project_id ?? null,
+      failures,
+    });
   } catch (e) {
     return Response.json({ ok: false, error: String(e) }, { status: 500 });
   }

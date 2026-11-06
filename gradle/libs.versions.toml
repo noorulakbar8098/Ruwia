@@ -50,6 +50,7 @@ supabase-bom       = { module = "io.github.jan-tennert.supabase:bom", version.re
 supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt" }
 supabase-auth      = { module = "io.github.jan-tennert.supabase:auth-kt" }
 supabase-realtime  = { module = "io.github.jan-tennert.supabase:realtime-kt" }
+supabase-functions = { module = "io.github.jan-tennert.supabase:functions-kt" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 ktor-client-js     = { module = "io.ktor:ktor-client-js", version.ref = "ktor" }

@@ -13,6 +13,7 @@ Two layers ship in this repo:
 
 1. Open Supabase Dashboard → SQL Editor.
 2. Paste the contents of `supabase_migration_notifications.sql` → Run. Re-run it for existing installations to enable multiple devices per account.
+3. Paste the contents of `supabase_migration_notification_security.sql` → Run. This replaces the old tenant-wide policies with recipient-scoped `notifications` policies, self-only `device_tokens` policies, and the `upsert_device_token` RPC used by the app. Re-running is safe.
 3. Events wired in the app:
    - employee records a sale, stock change, customer, or delivery update → admin is notified
    - admin adds/updates/removes a customer or changes stock → employees are notified
@@ -79,9 +80,11 @@ gateway's JWT check, so the function authenticates the webhook with
 | `Missing FCM_PROJECT_ID or FCM_SERVICE_ACCOUNT secret` | Secrets not set on the function | Add both secrets (step 2). |
 | `403 PERMISSION_DENIED — SenderId mismatch` | Service account belongs to a different Firebase project than the app | Generate the key from the project in `google-services.json`. |
 | Notification row exists but no push | Recipient has no `device_tokens` row | Sign in on that device with the current build and accept notifications. |
+| Background push appears under **Miscellaneous** | The app's channel metadata was missing in an older build | Install the current build; the `ruwia_updates` channel is created at startup and set as the FCM default in `AndroidManifest.xml`. |
+| `upsert_device_token` not found | `supabase_migration_notification_security.sql` has not been run | Run it in the SQL Editor. |
 
 ### How it fits together
-`RuwiaMessagingService` (system tray) ← FCM ← `send-push` edge function ← `notifications` table ← app writes. Device tokens register after login and session restoration, refresh on FCM rotation, and are removed on logout. The migration supports multiple devices per account. Tapping a banner opens the app, where the same item waits in the bell center.
+`RuwiaMessagingService` (system tray) ← FCM ← `send-push` edge function ← `notifications` table ← app writes. Device tokens register after login and session restoration, refresh on FCM rotation, and are removed on logout. The migrations support multiple devices per account and restrict each user to their own tokens and only the notifications addressed to them. Tapping a banner opens the app, deep-links to that item in the bell center, and marks it read. When FCM reports a token as `UNREGISTERED` or belonging to another project, `send-push` deletes it so dead devices are not retried.
 
 ### iOS note
 iOS needs APNs certificates plus a native delegate — not wired in this change. The in-app feed works on iOS as-is.

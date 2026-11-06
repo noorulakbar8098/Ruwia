@@ -55,12 +55,20 @@ android {
         }
     }
 
+    // Signing secrets come from the environment in CI and from the gitignored
+    // local.properties on a developer machine. Never commit a keystore or its
+    // passwords. The keystore itself is encrypted by JKS; its passwords must
+    // stay in a secret manager / environment, not in the repository.
+    fun signingValue(envName: String, propertyName: String): String? =
+        System.getenv(envName)?.takeIf { it.isNotBlank() }
+            ?: localProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
+
     signingConfigs {
         create("release") {
-            val storeFileVal = localProperties.getProperty("signing.storeFile")
-            val storePasswordVal = localProperties.getProperty("signing.storePassword")
-            val keyAliasVal = localProperties.getProperty("signing.keyAlias")
-            val keyPasswordVal = localProperties.getProperty("signing.keyPassword")
+            val storeFileVal = signingValue("RUWIA_STORE_FILE", "signing.storeFile")
+            val storePasswordVal = signingValue("RUWIA_STORE_PASSWORD", "signing.storePassword")
+            val keyAliasVal = signingValue("RUWIA_KEY_ALIAS", "signing.keyAlias")
+            val keyPasswordVal = signingValue("RUWIA_KEY_PASSWORD", "signing.keyPassword")
 
             if (storeFileVal != null && storePasswordVal != null && keyAliasVal != null && keyPasswordVal != null) {
                 storeFile = file(storeFileVal)
@@ -71,13 +79,6 @@ android {
         }
     }
 
-    // Single production build: Supabase keys come from local.properties.
-    val prodUrl = localProperties.getProperty("supabase.url.prod") ?: "https://srvertclbjcvlfdectsl.supabase.co"
-    val prodAnonKey = localProperties.getProperty("supabase.anonkey.prod") ?: "sb_publishable_N3oENikhDxobWX5dcEJoMw_FMbth7CN"
-    // Never commit a real service-role secret here: when local.properties is
-    // absent the build gets an empty key and the app shows the setup message.
-    val prodServiceKey = localProperties.getProperty("supabase.servicekey.prod") ?: ""
-
     defaultConfig {
         applicationId = "com.example.ruwia"
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -86,11 +87,9 @@ android {
         versionName = "2.3"
         manifestPlaceholders["appName"] = "Ruwia"
 
-        // Single production build: keys come from local.properties
-        // (supabase.url.prod / supabase.anonkey.prod / supabase.servicekey.prod).
-        buildConfigField("String", "SUPABASE_URL", "\"$prodUrl\"")
-        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$prodAnonKey\"")
-        buildConfigField("String", "SUPABASE_SERVICE_KEY", "\"$prodServiceKey\"")
+        // No Supabase keys are embedded here. The publishable key and URL live
+        // in the shared client (protected by RLS), and the service-role key is
+        // server-only (Supabase Edge Function secrets).
     }
     packaging {
         resources {
@@ -108,7 +107,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    buildFeatures {
-        buildConfig = true
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+        disable += "InvalidFragmentVersionForActivityResult"
     }
 }

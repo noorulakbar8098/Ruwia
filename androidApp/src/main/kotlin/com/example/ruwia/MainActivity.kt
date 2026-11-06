@@ -1,6 +1,7 @@
 package com.example.ruwia
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -11,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
+import com.example.ruwia.data.NotificationDeepLink
 
 class MainActivity : ComponentActivity() {
     // System-push permission (Android 13+). Without it FCM still refreshes
@@ -29,9 +31,30 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         // Koin is started in RuwiaApp.onCreate() — no need to call initKoin() here
+        handleNotificationIntent(intent)
         setContent {
             App()
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNotificationIntent(intent)
+    }
+
+    /**
+     * Turns a push tap into a deep link to the item in the notification
+     * center. FCM puts the data payload into the launch intent's extras; our
+     * own foreground notifications add the same extra explicitly.
+     *
+     * The extra is removed after reading so an activity recreation (rotation)
+     * doesn't re-open an already-consumed notification.
+     */
+    private fun handleNotificationIntent(intent: Intent?) {
+        val id = intent?.getStringExtra(NotificationDeepLink.EXTRA_NOTIFICATION_ID) ?: return
+        intent.removeExtra(NotificationDeepLink.EXTRA_NOTIFICATION_ID)
+        NotificationDeepLink.open(id)
     }
 }
 

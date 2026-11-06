@@ -9,6 +9,8 @@ import com.example.ruwia.data.awaitAuthentication
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import com.example.ruwia.domain.Customer
 import com.example.ruwia.domain.CustomerLedger
 import com.example.ruwia.domain.CustomerProductPrice
@@ -111,6 +113,21 @@ data class AdminState(
     val tasks: List<DeliveryTask> = emptyList(),
 )
 
+private data class HomeSnapshot(
+    val products: List<ProductCategory>,
+    val movements: List<StockMovement>,
+    val saleEntries: List<SaleEntry>,
+    val customers: List<Customer>,
+    val orders: List<Order>,
+    val tasks: List<DeliveryTask>,
+    val feed: List<NotificationItem>,
+    val shopNames: List<String>,
+    val baseline: Int,
+    val expense: MonthlyExpense?,
+    val lastExpense: MonthlyExpense?,
+    val csat: Double,
+)
+
 class AdminViewModel(
     private val repo: AdminRepository,
     private val notifications: NotificationRepository = NotificationRepository(),
@@ -120,9 +137,21 @@ class AdminViewModel(
     val state: StateFlow<AdminState> = _state.asStateFlow()
 
     private var refreshJob: Job? = null
+    private var initialLoadJob: Job? = null
+    private var tabLoadJob: Job? = null
+    private var saleHistoryJob: Job? = null
+    private var overlayLoadJob: Job? = null
+    private var customersLoadJob: Job? = null
+    private var activeTab = 0
+    private var initialLoaded = false
+    private var inventoryLoaded = false
+    private var transactionsLoaded = false
+    private var analyticsLoaded = false
+    private var settingsLoaded = false
+    /** Earliest YYYY-MM-DD currently held in [AdminState.saleEntries]. */
+    private var loadedSaleStart = ""
 
     init {
-        loadData()
         startPeriodicRefresh()
     }
 
@@ -130,38 +159,12 @@ class AdminViewModel(
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             while (true) {
-                delay(15_000L) // Poll every 15 seconds
+                delay(15_000L)
+                // Only the visible tab is polled. Hidden tabs load on demand,
+                // so we no longer re-download the whole admin dataset here.
+                if (activeTab != 0 || !initialLoaded) continue
                 if (!awaitAuthentication()) continue
-                runCatching {
-                    // Cross-app freshness: customers / suppliers / products /
-                    // stock numbers all change when an employee logs activity,
-                    // so we re-pull everything an admin watches at a glance.
-                    val shopStocks = repo.getShopStocks()
-                    val movements  = repo.getRecentMovements()
-                    val customers  = repo.getAllCustomers()
-                    val products      = repo.getProductCategories()
-                    val stockItems    = repo.getStockSummaryList()
-                    val saleEntries   = repo.getSaleEntries()
-                    val baseline      = repo.getEmptyCansBaseline()
-                    val tasks           = repo.getDeliveryTasks()
-                    val feed          = notifications.getFeed()
-
-                    // Prevent replacing valid cached data with empty lists if RLS returned empty lists due to a race
-                    if (products.isNotEmpty() || movements.isNotEmpty() || _state.value.productCategories.isEmpty()) {
-                        _state.value = _state.value.copy(
-                            shopStocks        = shopStocks,
-                            recentMovements   = movements,
-                            customers         = customers,
-                            productCategories = products,
-                            stockItems        = stockItems,
-                            saleEntries       = saleEntries,
-                            emptyCansBaseline = if (baseline >= 0) baseline else _state.value.emptyCansBaseline,
-                            notifications     = feed,
-                            unreadNotifications = feed.count { !it.isRead },
-                            tasks                = tasks,
-                        ).deriveStockFromMovements()
-                    }
-                }
+                runCatching { refreshHomeNow() }
             }
         }
     }
@@ -173,65 +176,450 @@ class AdminViewModel(
 
     fun clearState() {
         stopPeriodicRefresh()
+        initialLoadJob?.cancel()
+        tabLoadJob?.cancel()
+        saleHistoryJob?.cancel()
+        overlayLoadJob?.cancel()
+        customersLoadJob?.cancel()
+        activeTab = 0
+        initialLoaded = false
+        inventoryLoaded = false
+        transactionsLoaded = false
+        analyticsLoaded = false
+        settingsLoaded = false
+        loadedSaleStart = ""
         _state.value = AdminState()
     }
 
+    // ── Initial load ──────────────────────────────────────────────────────────
+
+    /**
+     * Loads only what the Home tab renders on the first frame. Inventory,
+     * transactions, analytics and settings are loaded when their tab opens.
+     */
+    fun loadInitialData() {
+        if (initialLoadJob?.isActive == true || initialLoaded) return
+        if (refreshJob?.isActive != true) startPeriodicRefresh()
+        initialLoadJob = viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, error = null)
+            if (!awaitAuthentication()) {
+                _state.value = _state.value.copy(loading = false, error = "Not authenticated")
+                return@launch
+            }
+            val currentMonth = currentYearMonth()
+            val previousMonth = previousYearMonth()
+            val saleStart = monthStartKey(1)
+            runCatching {
+                coroutineScope {
+                    val products   = async { repo.getProductCategories() }
+                    val movements  = async { repo.getRecentMovements() }
+                    val sales      = async { repo.getSaleEntriesSince(saleStart) }
+                    val customers  = async { repo.getAllCustomers() }
+                    val orders     = async { repo.getAllOrders() }
+                    val tasks      = async { repo.getDeliveryTasks() }
+                    val shopNames  = async { repo.getShopNames() }
+                    val baseline   = async { repo.getEmptyCansBaseline() }
+                    val expense    = async { repo.getMonthlyExpense(currentMonth) }
+                    val lastExpense = async { repo.getMonthlyExpense(previousMonth) }
+                    val feed       = async { notifications.getFeed() }
+                    val csat       = async { repo.getCSAT() }
+                    HomeSnapshot(
+                        products     = products.await(),
+                        movements    = movements.await(),
+                        saleEntries  = sales.await(),
+                        customers    = customers.await(),
+                        orders       = orders.await(),
+                        tasks        = tasks.await(),
+                        feed         = feed.await(),
+                        shopNames    = shopNames.await(),
+                        baseline     = baseline.await(),
+                        expense      = expense.await(),
+                        lastExpense  = lastExpense.await(),
+                        csat         = csat.await(),
+                    )
+                }
+            }.onSuccess { snapshot ->
+                val previous = _state.value
+                val products = snapshot.products
+                val sales = mergeSaleEntries(snapshot.saleEntries, previous.saleEntries, saleStart)
+                val weekly = weeklyRevenue(sales)
+                _state.value = previous.copy(
+                    loading             = false,
+                    error               = null,
+                    mrr                 = sales.filter { it.createdAt?.startsWith(currentMonth) == true }
+                        .sumOf { it.totalSelling },
+                    csat                = snapshot.csat,
+                    fleetActiveCount    = previous.employees.count { it.status == "active" },
+                    stockItems          = repo.stockSummaryList(products),
+                    orders              = snapshot.orders,
+                    customers           = snapshot.customers,
+                    recentMovements     = snapshot.movements,
+                    weeklyRevenuePoints = weekly.first,
+                    weeklyRevenueRaw    = weekly.second,
+                    weeklyRevenueLabel  = weekly.third,
+                    productCategories   = products,
+                    saleEntries         = sales,
+                    currentMonthExpense = snapshot.expense,
+                    lastMonthExpense    = snapshot.lastExpense,
+                    monthlyExpenses     = listOfNotNull(snapshot.expense, snapshot.lastExpense)
+                        .associateBy { it.month },
+                    currentMonth        = currentMonth,
+                    previousMonth       = previousMonth,
+                    shopNames           = snapshot.shopNames,
+                    shopName            = snapshot.shopNames.firstOrNull().orEmpty(),
+                    emptyCansBaseline   = if (snapshot.baseline >= 0) snapshot.baseline else previous.emptyCansBaseline,
+                    notifications       = snapshot.feed,
+                    unreadNotifications = snapshot.feed.count { !it.isRead },
+                    tasks               = snapshot.tasks,
+                ).deriveStockFromMovements()
+                markSaleHistoryLoaded(saleStart)
+                initialLoaded = true
+            }.onFailure {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    error   = it.message ?: "Failed to load dashboard",
+                )
+            }
+        }
+    }
+
+    /** Pull-to-refresh / retry for the currently visible tab. */
+    fun refreshCurrentTab() = viewModelScope.launch {
+        if (!awaitAuthentication()) {
+            _state.value = _state.value.copy(loading = false, error = "Not authenticated")
+            return@launch
+        }
+        if (activeTab == 0 && !initialLoaded) {
+            loadInitialData()
+            return@launch
+        }
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching {
+            when (activeTab) {
+                0 -> refreshHomeNow(includeMovements = true)
+                1 -> loadInventoryData()
+                2 -> loadTransactionsData()
+                3 -> loadAnalyticsData()
+                4 -> loadSettingsData()
+            }
+        }.onSuccess {
+            _state.value = _state.value.copy(loading = false)
+        }.onFailure {
+            _state.value = _state.value.copy(
+                loading = false,
+                error   = it.message ?: "Could not refresh this screen",
+            )
+        }
+    }
+
+    /** Called whenever the bottom navigation changes. */
+    fun onTabSelected(tab: Int) {
+        activeTab = tab
+        when (tab) {
+            0 -> if (!initialLoaded) loadInitialData()
+            1 -> if (!inventoryLoaded) runTabLoad { loadInventoryData() }
+            2 -> if (!transactionsLoaded) runTabLoad { loadTransactionsData() }
+            3 -> if (!analyticsLoaded) runTabLoad { loadAnalyticsData() }
+            4 -> if (!settingsLoaded) runTabLoad { loadSettingsData() }
+        }
+    }
+
+    private fun runTabLoad(block: suspend () -> Unit) {
+        tabLoadJob?.cancel()
+        tabLoadJob = viewModelScope.launch {
+            if (!awaitAuthentication()) return@launch
+            runCatching { block() }
+                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Could not load this screen") }
+        }
+    }
+
+    private suspend fun loadInventoryData() {
+        coroutineScope {
+            val products  = async { repo.getProductCategories() }
+            val movements = async { repo.getRecentMovements() }
+            val shops     = async { repo.getShopStocks() }
+            val employees = async { repo.getEmployees() }
+            val productList = products.await()
+            _state.value = _state.value.copy(
+                productCategories = productList,
+                recentMovements   = movements.await(),
+                shopStocks        = shops.await(),
+                employees         = employees.await(),
+                stockItems        = repo.stockSummaryList(productList),
+            ).deriveStockFromMovements()
+        }
+        inventoryLoaded = true
+        settingsLoaded = true
+    }
+
+    private suspend fun loadTransactionsData() {
+        coroutineScope {
+            val employees = async { repo.getEmployees() }
+            val shops     = async { repo.getShopStocks() }
+            val customers = async { repo.getAllCustomers() }
+            fetchSaleHistory(23)
+            _state.value = _state.value.copy(
+                employees  = employees.await(),
+                shopStocks = shops.await(),
+                customers  = customers.await(),
+            )
+        }
+        transactionsLoaded = true
+    }
+
+    private suspend fun loadAnalyticsData() {
+        coroutineScope {
+            val products  = async { repo.getProductCategories() }
+            val movements = async { repo.getRecentMovements() }
+            fetchSaleHistory(23)
+            val productList = products.await()
+            _state.value = _state.value.copy(
+                productCategories = productList,
+                recentMovements   = movements.await(),
+                stockItems        = repo.stockSummaryList(productList),
+            ).deriveStockFromMovements()
+        }
+        analyticsLoaded = true
+        inventoryLoaded = true
+    }
+
+    private suspend fun loadSettingsData() {
+        coroutineScope {
+            val employees = async { repo.getEmployees() }
+            val customers = async { repo.getAllCustomers() }
+            val shops     = async { repo.getShopStocks() }
+            _state.value = _state.value.copy(
+                employees  = employees.await(),
+                customers  = customers.await(),
+                shopStocks = shops.await(),
+            )
+        }
+        settingsLoaded = true
+    }
+
+    /** Expands the sale window only when a wider dashboard range is chosen. */
+    fun ensureSaleHistory(monthsBack: Int) {
+        if (!initialLoaded) return
+        val target = monthStartKey(monthsBack)
+        if (loadedSaleStart.isNotBlank() && loadedSaleStart <= target) return
+        saleHistoryJob?.cancel()
+        saleHistoryJob = viewModelScope.launch {
+            if (!awaitAuthentication()) return@launch
+            runCatching { fetchSaleHistory(monthsBack) }
+        }
+    }
+
+    /** Loads the full rows the notifications overlay needs. */
+    fun loadNotifications() {
+        if (overlayLoadJob?.isActive == true) return
+        overlayLoadJob = viewModelScope.launch {
+            if (!awaitAuthentication()) return@launch
+            runCatching { notifications.getFeed() }
+                .onSuccess { feed ->
+                    _state.value = _state.value.copy(
+                        notifications = feed,
+                        unreadNotifications = feed.count { !it.isRead },
+                    )
+                }
+        }
+    }
+
+    fun loadCustomersForScreen() {
+        if (customersLoadJob?.isActive == true) return
+        customersLoadJob = viewModelScope.launch {
+            if (!awaitAuthentication()) return@launch
+            coroutineScope {
+                val customers = async { repo.getAllCustomers() }
+                val movements = async { repo.getRecentMovements() }
+                fetchSaleHistory(23)
+                _state.value = _state.value.copy(
+                    customers       = customers.await(),
+                    recentMovements = movements.await(),
+                )
+            }
+        }
+    }
+
+    fun loadEmployees() {
+        viewModelScope.launch {
+            if (!awaitAuthentication()) return@launch
+            runCatching { repo.getEmployees() }
+                .onSuccess { list ->
+                    _state.value = _state.value.copy(
+                        employees = list,
+                        fleetActiveCount = list.count { it.status == "active" },
+                    )
+                }
+        }
+    }
+
+    fun loadPricing() {
+        viewModelScope.launch {
+            if (!awaitAuthentication()) return@launch
+            runCatching { repo.getProductCategories() }
+                .onSuccess { products ->
+                    _state.value = _state.value.copy(
+                        productCategories = products,
+                        stockItems = repo.stockSummaryList(products),
+                    )
+                }
+        }
+    }
+
+    fun loadStockItems() {
+        viewModelScope.launch {
+            if (!awaitAuthentication()) return@launch
+            coroutineScope {
+                val products = async { repo.getProductCategories() }
+                val shops    = async { repo.getShopStocks() }
+                val productList = products.await()
+                _state.value = _state.value.copy(
+                    productCategories = productList,
+                    stockItems = repo.stockSummaryList(productList),
+                    shopStocks = shops.await(),
+                )
+            }
+        }
+    }
+
+    private suspend fun fetchSaleHistory(monthsBack: Int) {
+        val start = monthStartKey(monthsBack)
+        if (loadedSaleStart.isNotBlank() && loadedSaleStart <= start) return
+        val fresh = repo.getSaleEntriesSince(start)
+        val previous = _state.value.saleEntries
+        // A transient read failure returns an empty list. Keep the cache rather
+        // than blanking charts that were already showing valid data.
+        if (fresh.isEmpty() && previous.isNotEmpty()) return
+        _state.value = _state.value.copy(
+            saleEntries = mergeSaleEntries(fresh, previous, start),
+        )
+        markSaleHistoryLoaded(start)
+    }
+
+    private suspend fun refreshHomeNow(includeMovements: Boolean = false) {
+        val currentMonth = currentYearMonth()
+        val previousMonth = previousYearMonth()
+        val saleStart = monthStartKey(1)
+        val snapshot = coroutineScope {
+            val products    = async { repo.getProductCategories() }
+            val movements   = if (includeMovements) async { repo.getRecentMovements() } else null
+            val sales       = async { repo.getSaleEntriesSince(saleStart) }
+            val customers   = async { repo.getAllCustomers() }
+            val orders      = async { repo.getAllOrders() }
+            val tasks       = async { repo.getDeliveryTasks() }
+            val expense     = async { repo.getMonthlyExpense(currentMonth) }
+            val lastExpense = async { repo.getMonthlyExpense(previousMonth) }
+            val feed        = async { notifications.getFeed() }
+            HomeSnapshot(
+                products     = products.await(),
+                movements    = movements?.await() ?: _state.value.recentMovements,
+                saleEntries  = sales.await(),
+                customers    = customers.await(),
+                orders       = orders.await(),
+                tasks        = tasks.await(),
+                feed         = feed.await(),
+                shopNames    = emptyList(),
+                baseline     = -1,
+                expense      = expense.await(),
+                lastExpense  = lastExpense.await(),
+                csat         = _state.value.csat,
+            )
+        }
+        val previous = _state.value
+        val products = snapshot.products
+        val sales = mergeSaleEntries(snapshot.saleEntries, previous.saleEntries, saleStart)
+        val weekly = weeklyRevenue(sales)
+        _state.value = previous.copy(
+            productCategories   = products,
+            saleEntries         = sales,
+            stockItems          = repo.stockSummaryList(products),
+            customers           = snapshot.customers,
+            orders              = snapshot.orders,
+            tasks               = snapshot.tasks,
+            recentMovements     = snapshot.movements,
+            notifications       = snapshot.feed,
+            unreadNotifications = snapshot.feed.count { !it.isRead },
+            currentMonthExpense = snapshot.expense,
+            lastMonthExpense    = snapshot.lastExpense,
+            monthlyExpenses     = previous.monthlyExpenses +
+                listOfNotNull(snapshot.expense, snapshot.lastExpense).associateBy { it.month },
+            weeklyRevenuePoints = weekly.first,
+            weeklyRevenueRaw    = weekly.second,
+            weeklyRevenueLabel  = weekly.third,
+            mrr                 = sales.filter { it.createdAt?.startsWith(currentMonth) == true }
+                .sumOf { it.totalSelling },
+        ).deriveStockFromMovements()
+        markSaleHistoryLoaded(saleStart)
+    }
+
+    /**
+     * Full reload used after writes and destructive operations. It reuses the
+     * sale window already loaded instead of fetching the entire table again.
+     */
     fun loadData() = viewModelScope.launch {
         _state.value = _state.value.copy(loading = true, error = null)
         if (!awaitAuthentication()) {
             _state.value = _state.value.copy(loading = false, error = "Not authenticated")
             return@launch
         }
+        val currentMonth = currentYearMonth()
+        val previousMonth = previousYearMonth()
+        val saleStart = loadedSaleStart.ifBlank { monthStartKey(1) }
         runCatching {
-            val mrr              = repo.getMRR()
-            val csat             = repo.getCSAT()
-            val fleet            = repo.getActiveFleetCount()
-            val stocks           = repo.getStockSummaryList()
-            val orders           = repo.getAllOrders()
-            val customers        = repo.getAllCustomers()
-            val employees        = repo.getEmployees()
-            val (weeklyPts, weeklyRaw, weeklyLabel) = repo.getWeeklyRevenueSummary()
-            val shopStocks       = repo.getShopStocks()
-            val movements        = repo.getRecentMovements()
-            val productCategories = repo.getProductCategories()
-            val saleEntries      = repo.getSaleEntries()
-            val currentMonth     = currentYearMonth()
-            val previousMonth    = previousYearMonth()
-            val expense          = repo.getMonthlyExpense(currentMonth)
-            val lastExpense      = repo.getMonthlyExpense(previousMonth)
-            val shopNames        = repo.getShopNames()
-            val shopName         = shopNames.firstOrNull().orEmpty()
-            val baseline         = repo.getEmptyCansBaseline()
-            val tasks           = repo.getDeliveryTasks()
-            val feed             = notifications.getFeed()
-            AdminState(
-                loading              = false,
-                mrr                  = mrr,
-                csat                 = csat,
-                fleetActiveCount     = fleet,
-                stockItems           = stocks,
-                orders               = orders,
-                customers            = customers,
-                employees            = employees,
-                weeklyRevenuePoints  = weeklyPts,
-                weeklyRevenueRaw     = weeklyRaw,
-                weeklyRevenueLabel   = weeklyLabel,
-                shopStocks           = shopStocks,
-                recentMovements      = movements,
-                productCategories    = productCategories,
-                saleEntries          = saleEntries,
-                currentMonthExpense  = expense,
-                lastMonthExpense     = lastExpense,
-                monthlyExpenses      = listOfNotNull(expense, lastExpense).associateBy { it.month },
-                currentMonth         = currentMonth,
-                previousMonth        = previousMonth,
-                shopNames            = shopNames,
-                shopName             = shopName,
-                emptyCansBaseline    = if (baseline >= 0) baseline else 0,
-                notifications        = feed,
-                unreadNotifications  = feed.count { !it.isRead },
-                tasks                = tasks,
-            )
+            coroutineScope {
+                val csatDeferred      = async { repo.getCSAT() }
+                val stocks           = async { repo.getProductCategories() }
+                val orders           = async { repo.getAllOrders() }
+                val customers        = async { repo.getAllCustomers() }
+                val employees        = async { repo.getEmployees() }
+                val shopStocks       = async { repo.getShopStocks() }
+                val movements        = async { repo.getRecentMovements() }
+                val saleEntries      = async { repo.getSaleEntriesSince(saleStart) }
+                val expense          = async { repo.getMonthlyExpense(currentMonth) }
+                val lastExpense      = async { repo.getMonthlyExpense(previousMonth) }
+                val shopNames        = async { repo.getShopNames() }
+                val baseline         = async { repo.getEmptyCansBaseline() }
+                val tasks            = async { repo.getDeliveryTasks() }
+                val feed             = async { notifications.getFeed() }
+                val productCategories = stocks.await()
+                val sales            = saleEntries.await()
+                val staff            = employees.await()
+                val weekly           = weeklyRevenue(sales)
+                val monthExpense     = expense.await()
+                val previousExpense  = lastExpense.await()
+                val names            = shopNames.await()
+                val notificationFeed = feed.await()
+                AdminState(
+                    loading              = false,
+                    mrr                  = sales.filter { it.createdAt?.startsWith(currentMonth) == true }
+                        .sumOf { it.totalSelling },
+                    csat                 = csatDeferred.await(),
+                    fleetActiveCount     = staff.count { it.status == "active" },
+                    stockItems           = repo.stockSummaryList(productCategories),
+                    orders               = orders.await(),
+                    customers            = customers.await(),
+                    employees            = staff,
+                    weeklyRevenuePoints  = weekly.first,
+                    weeklyRevenueRaw     = weekly.second,
+                    weeklyRevenueLabel   = weekly.third,
+                    shopStocks           = shopStocks.await(),
+                    recentMovements      = movements.await(),
+                    productCategories    = productCategories,
+                    saleEntries          = sales,
+                    currentMonthExpense  = monthExpense,
+                    lastMonthExpense     = previousExpense,
+                    monthlyExpenses      = listOfNotNull(monthExpense, previousExpense)
+                        .associateBy { it.month },
+                    currentMonth         = currentMonth,
+                    previousMonth        = previousMonth,
+                    shopNames            = names,
+                    shopName             = names.firstOrNull().orEmpty(),
+                    emptyCansBaseline    = baseline.await().let { if (it >= 0) it else 0 },
+                    notifications        = notificationFeed,
+                    unreadNotifications  = notificationFeed.count { !it.isRead },
+                    tasks                = tasks.await(),
+                )
+            }
         }.onSuccess { newState ->
             val previous = _state.value
             _state.value = newState.copy(
@@ -242,11 +630,69 @@ class AdminViewModel(
                 paymentSaving = previous.paymentSaving,
                 paymentMessage = previous.paymentMessage,
             ).deriveStockFromMovements()
+            markSaleHistoryLoaded(saleStart)
+            initialLoaded = true
+            inventoryLoaded = true
+            settingsLoaded = true
         }.onFailure {
             _state.value = _state.value.copy(
                 loading = false,
                 error   = it.message ?: "Failed to load admin telemetry"
             )
+        }
+    }
+
+    private fun markSaleHistoryLoaded(start: String) {
+        if (start.isBlank()) return
+        loadedSaleStart = if (loadedSaleStart.isBlank() || start < loadedSaleStart) start else loadedSaleStart
+    }
+
+    private fun mergeSaleEntries(
+        fresh: List<SaleEntry>,
+        existing: List<SaleEntry>,
+        start: String,
+    ): List<SaleEntry> = (fresh + existing.filter { it.date.take(10) < start })
+        .distinctBy { entry ->
+            entry.id?.takeIf { it.isNotBlank() }
+                ?: entry.clientKey?.takeIf { it.isNotBlank() }
+                ?: "${entry.date}|${entry.customerName}|${entry.productId}|${entry.qty}|${entry.totalSelling}"
+        }
+        .sortedByDescending { it.date }
+
+    private fun weeklyRevenue(entries: List<SaleEntry>): Triple<List<Float>, List<Float>, String> {
+        val byDay = entries
+            .groupBy { it.date.take(10) }
+            .filterKeys { it.isNotEmpty() }
+            .entries
+            .sortedByDescending { it.key }
+            .take(7)
+            .reversed()
+            .map { (_, sales) -> sales.sumOf { it.totalSelling }.toFloat() }
+        if (byDay.isEmpty()) {
+            return Triple(emptyList(), emptyList(), "₹0")
+        }
+        val maxValue = byDay.max().takeIf { it > 0f } ?: 1f
+        val total = byDay.sum()
+        val label = if (total >= 100_000f) {
+            "₹${(total / 100_000f * 100).toInt() / 100.0} L"
+        } else {
+            "₹${total.toInt()}"
+        }
+        return Triple(byDay.map { it / maxValue }, byDay, label)
+    }
+
+    private fun monthStartKey(monthsBack: Int): String {
+        return try {
+            val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+            var year = now.year
+            var month = now.monthNumber - monthsBack.coerceAtLeast(0)
+            while (month <= 0) {
+                month += 12
+                year -= 1
+            }
+            "$year-${month.toString().padStart(2, '0')}-01"
+        } catch (_: Exception) {
+            ""
         }
     }
 
@@ -1413,9 +1859,23 @@ class AdminViewModel(
     }
 
     fun loadTasks() = viewModelScope.launch {
-        runCatching { repo.getDeliveryTasks() }
-            .onSuccess { _state.value = _state.value.copy(tasks = it) }
-            .onFailure { _state.value = _state.value.copy(error = it.message) }
+        if (!awaitAuthentication()) return@launch
+        coroutineScope {
+            val tasks     = async { repo.getDeliveryTasks() }
+            val employees = async { repo.getEmployees() }
+            val customers = async { repo.getAllCustomers() }
+            val products  = async { repo.getProductCategories() }
+            val shops     = async { repo.getShopStocks() }
+            val productList = products.await()
+            _state.value = _state.value.copy(
+                tasks             = tasks.await(),
+                employees         = employees.await(),
+                customers         = customers.await(),
+                productCategories = productList,
+                stockItems        = repo.stockSummaryList(productList),
+                shopStocks        = shops.await(),
+            )
+        }
     }
 
     fun createDeliveryTask(

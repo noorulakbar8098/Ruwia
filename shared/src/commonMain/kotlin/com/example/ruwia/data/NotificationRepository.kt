@@ -3,7 +3,10 @@ package com.example.ruwia.data
 import com.example.ruwia.domain.NotificationItem
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order as SortOrder
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -116,18 +119,25 @@ class NotificationRepository {
         val adminId = tenantAdminId() ?: return emptyList()
         return try {
             val role = myRole()
-            val rows = supabase.from("notifications")
-                .select {
-                    filter { eq("admin_id", adminId) }
-                    order("created_at", SortOrder.DESCENDING)
-                    limit(limit.toLong())
+            val (rows, reads) = coroutineScope {
+                val rowsAsync = async {
+                    supabase.from("notifications")
+                        .select {
+                            filter { eq("admin_id", adminId) }
+                            order("created_at", SortOrder.DESCENDING)
+                            limit(limit.toLong())
+                        }
+                        .decodeList<NotificationItem>()
                 }
-                .decodeList<NotificationItem>()
-            val reads = supabase.from("notification_reads")
-                .select { filter { eq("user_id", me) } }
-                .decodeList<ReadMarker>()
-                .map { it.notificationId }
-                .toSet()
+                val readsAsync = async {
+                    supabase.from("notification_reads")
+                        .select { filter { eq("user_id", me) } }
+                        .decodeList<ReadMarker>()
+                        .map { it.notificationId }
+                        .toSet()
+                }
+                rowsAsync.await() to readsAsync.await()
+            }
             rows.filter { n ->
                 n.toUserId == me ||
                     (n.toRole == "employee" && role == "employee") ||
@@ -169,34 +179,26 @@ class NotificationRepository {
 
     /**
      * Registers/refreshes this device's FCM token for outside-the-app push.
-     * Insert-then-update by token allows one user to register multiple devices.
+     *
+     * The SECURITY DEFINER RPC keys the row by token, stamps the caller's
+     * user/tenant server-side, and uses the database clock — never a client
+     * timestamp. This also keeps the device_tokens UPDATE policy self-only,
+     * so a known token cannot be reassigned to another account by a client
+     * update.
      */
     suspend fun upsertDeviceToken(token: String, platform: String = "android") {
-        val me = currentUserId() ?: return
+        if (currentUserId() == null) return
         if (token.isBlank()) return
-        val adminId = tenantAdminId() ?: return
-        fun payload() = buildJsonObject {
-            put("user_id", me)
-            put("admin_id", adminId)
-            put("token", token)
-            put("platform", platform)
-            put("updated_at", kotlin.time.Clock.System.now().toString())
-        }
         try {
-            supabase.from("device_tokens").insert(payload())
-        } catch (e: Exception) {
-            val msg = e.message.orEmpty()
-            if (msg.contains("duplicate", ignoreCase = true) || msg.contains("conflict", ignoreCase = true)) {
-                try {
-                    supabase.from("device_tokens").update(payload()) {
-                        filter { eq("token", token) }
-                    }
-                } catch (e2: Exception) {
-                    e2.printStackTrace()
+            supabase.postgrest.rpc(
+                "upsert_device_token",
+                buildJsonObject {
+                    put("p_token", token)
+                    put("p_platform", platform)
                 }
-            } else {
-                e.printStackTrace()
-            }
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import com.example.ruwia.data.NotificationDeepLink
 import com.example.ruwia.domain.UserRole
 import com.example.ruwia.presentation.AdminViewModel
 import com.example.ruwia.presentation.AuthViewModel
@@ -37,13 +38,15 @@ fun App() {
         val adminVm = koinInject<AdminViewModel>()
         val employeeVm = koinInject<EmployeeViewModel>()
         val authState by authVm.state.collectAsState()
+        // Set by MainActivity when a push is tapped; consumed by the role
+        // dashboard once it opens the notification center.
+        val pendingNotificationId by NotificationDeepLink.pendingNotificationId.collectAsState()
 
         val lifecycleState by rememberLifecycleObserver()
 
         LaunchedEffect(lifecycleState) {
             if (lifecycleState == LifecycleState.ON_RESUME) {
                 authVm.checkSession()
-                adminVm.loadData()
                 employeeVm.startPeriodicRefresh()
             }
         }
@@ -134,10 +137,13 @@ fun App() {
                                     adminVm.clearState()
                                     employeeVm.clearState()
                                     authVm.logout()
+                                    NotificationDeepLink.consume()
                                     screen = Screen.Login
                                 },
                                 employeeName = authState.displayName.ifEmpty { "User" },
                                 userEmail    = authState.email,
+                                deepLinkNotificationId = pendingNotificationId,
+                                onNotificationDeepLinkHandled = NotificationDeepLink::consume,
                             )
                         }
                     }
@@ -151,10 +157,13 @@ fun App() {
                                 adminVm.clearState()
                                 employeeVm.clearState()
                                 authVm.logout()
+                                NotificationDeepLink.consume()
                                 screen = Screen.Login
                             },
                             adminName    = authState.displayName.ifEmpty { "Admin" },
                             adminEmail   = authState.email,
+                            deepLinkNotificationId = pendingNotificationId,
+                            onNotificationDeepLinkHandled = NotificationDeepLink::consume,
                         )
                     }
                 }
@@ -168,10 +177,13 @@ fun App() {
                                     adminVm.clearState()
                                     employeeVm.clearState()
                                     authVm.logout()
+                                    NotificationDeepLink.consume()
                                     screen = Screen.Login
                                 },
                                 employeeName = authState.displayName.ifEmpty { "Employee" },
                                 userEmail    = authState.email,
+                                deepLinkNotificationId = pendingNotificationId,
+                                onNotificationDeepLinkHandled = NotificationDeepLink::consume,
                             )
                         }
                     }

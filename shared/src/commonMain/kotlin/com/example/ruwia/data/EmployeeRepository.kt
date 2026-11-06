@@ -11,7 +11,6 @@ import com.example.ruwia.domain.StockMovement
 import com.example.ruwia.domain.netStockPerProductInShop
 import com.example.ruwia.domain.orderedShopSlots
 import com.example.ruwia.domain.shopMatchKey
-import com.example.ruwia.domain.Supplier
 import com.example.ruwia.domain.TaskTimelinePoint
 import com.example.ruwia.util.LocationUtils
 import io.github.jan.supabase.auth.auth
@@ -263,28 +262,8 @@ class EmployeeRepository {
                 .firstOrNull()
             row?.value?.toIntOrNull() ?: 0
         } catch (e: Exception) {
-            // Fall back to the service-role client so an admin reset is still
-            // reflected even when the tenant isolation policy blocks the auth
-            // session's read of the admin's app_settings row.
             e.printStackTrace()
-            try {
-                val uid = currentUserId() ?: return -1
-                val adminId = getAdminIdForUser(uid) ?: return -1
-                initAdminSession()
-                val row = supabaseAdmin.from("app_settings")
-                    .select {
-                        filter {
-                            eq("admin_id", adminId)
-                            eq("settings_key", "empty_cans_baseline")
-                        }
-                    }
-                    .decodeList<AppSetting>()
-                    .firstOrNull()
-                row?.value?.toIntOrNull() ?: 0
-            } catch (e2: Exception) {
-                e2.printStackTrace()
-                -1
-            }
+            -1
         }
     }
 
@@ -353,14 +332,7 @@ class EmployeeRepository {
             }
         }
 
-        return try {
-            insertCustomerInternal(supabase)
-        } catch (e: Exception) {
-            println("Standard addCustomer failed, trying admin bypass: ${e.message}")
-            e.printStackTrace()
-            initAdminSession()
-            insertCustomerInternal(supabaseAdmin)
-        }
+        return insertCustomerInternal(supabase)
     }
 
     // ── Products ──────────────────────────────────────────────────────────────

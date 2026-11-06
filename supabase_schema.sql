@@ -41,29 +41,26 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
--- Trigger to handle new user signup
+-- Trigger to handle new user signup.
+-- SECURITY: never trust role/admin_id from client-supplied metadata. Doing so
+-- let anyone join an arbitrary tenant by passing its admin_id during signup.
+-- Every self-signup becomes the admin of its own tenant; employee accounts are
+-- created by the admin-users Edge Function, which moves them into the caller's
+-- tenant after verifying the caller is an admin.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
-DECLARE
-    assigned_role TEXT;
-    assigned_admin_id UUID;
 BEGIN
-    assigned_role := COALESCE(NEW.raw_user_meta_data->>'role', 'admin');
-    assigned_admin_id := COALESCE((NEW.raw_user_meta_data->>'admin_id')::UUID, NEW.id);
-
     INSERT INTO public.profiles (id, role, full_name, phone, admin_id)
     VALUES (
         NEW.id,
-        assigned_role,
+        'admin',
         NEW.raw_user_meta_data->>'full_name',
         NEW.raw_user_meta_data->>'phone',
-        assigned_admin_id
+        NEW.id
     )
     ON CONFLICT (id) DO UPDATE SET
-        role = EXCLUDED.role,
         full_name = EXCLUDED.full_name,
-        phone = EXCLUDED.phone,
-        admin_id = EXCLUDED.admin_id;
+        phone = EXCLUDED.phone;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -231,12 +228,62 @@ CREATE INDEX IF NOT EXISTS route_tasks_employee_schedule_idx
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "profiles_isolation" ON profiles;
 DROP POLICY IF EXISTS "profiles_update_self" ON profiles;
+DROP POLICY IF EXISTS "profiles_admin_update_tenant" ON profiles;
+DROP POLICY IF EXISTS "profiles_read" ON profiles;
+DROP POLICY IF EXISTS "profiles_update" ON profiles;
 
 CREATE POLICY "profiles_isolation" ON profiles FOR SELECT TO authenticated
     USING (admin_id = public.get_admin_id() OR id = auth.uid());
 
 CREATE POLICY "profiles_update_self" ON profiles FOR UPDATE TO authenticated
     USING (id = auth.uid()) WITH CHECK (id = auth.uid());
+
+-- Only a tenant admin may edit another member's profile. SECURITY DEFINER
+-- avoids recursive RLS evaluation on profiles.
+CREATE OR REPLACE FUNCTION public.is_tenant_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = auth.uid() AND role = 'admin'
+    );
+$$;
+
+CREATE POLICY "profiles_admin_update_tenant" ON profiles FOR UPDATE TO authenticated
+    USING (public.is_tenant_admin() AND admin_id = public.get_admin_id())
+    WITH CHECK (public.is_tenant_admin() AND admin_id = public.get_admin_id());
+
+-- Sensitive profile columns are server-managed. Clients may edit display
+-- fields, but can never change their role or tenant membership. The signup
+-- flow's redundant "set admin" write is a no-op and still succeeds.
+CREATE OR REPLACE FUNCTION public.protect_profile_tenant_fields()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+    IF current_user IN ('postgres', 'supabase_admin', 'service_role')
+       OR auth.role() = 'service_role' THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.admin_id IS DISTINCT FROM OLD.admin_id THEN
+        RAISE EXCEPTION 'admin_id is server-managed';
+    END IF;
+    IF NEW.role IS DISTINCT FROM OLD.role THEN
+        RAISE EXCEPTION 'role is server-managed';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS protect_profile_tenant_fields ON profiles;
+CREATE TRIGGER protect_profile_tenant_fields
+    BEFORE UPDATE ON profiles
+    FOR EACH ROW EXECUTE FUNCTION public.protect_profile_tenant_fields();
 
 -- Cleanup unique constraint on monthly_expenses
 ALTER TABLE monthly_expenses DROP CONSTRAINT IF EXISTS monthly_expenses_month_shop_id_key;

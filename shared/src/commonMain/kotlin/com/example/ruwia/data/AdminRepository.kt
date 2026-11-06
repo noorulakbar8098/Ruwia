@@ -96,21 +96,22 @@ class AdminRepository {
         } catch (e: Exception) { emptyList() }
     }
 
-    suspend fun getStockSummaryList(): List<StockItem> {
-        return try {
-            getProductCategories().map { cat ->
-                StockItem(
-                    id             = cat.id,
-                    name           = cat.displayName,
-                    capacityLiters = parseLiters(cat.name),
-                    stockAvailable = cat.stockAvailable,
-                    pricePerCan    = cat.defaultSellPrice,
-                    costPrice      = if (cat.purchasePrice > 0) cat.purchasePrice else cat.purchasePriceGC,
-                    tags           = cat.brandName,
-                )
-            }
-        } catch (e: Exception) { emptyList() }
-    }
+    suspend fun getStockSummaryList(): List<StockItem> =
+        stockSummaryList(getProductCategories())
+
+    /** Reuses an already-loaded catalogue instead of fetching it a second time. */
+    fun stockSummaryList(categories: List<ProductCategory>): List<StockItem> =
+        categories.map { cat ->
+            StockItem(
+                id             = cat.id,
+                name           = cat.displayName,
+                capacityLiters = parseLiters(cat.name),
+                stockAvailable = cat.stockAvailable,
+                pricePerCan    = cat.defaultSellPrice,
+                costPrice      = if (cat.purchasePrice > 0) cat.purchasePrice else cat.purchasePriceGC,
+                tags           = cat.brandName,
+            )
+        }
 
     suspend fun getTenantAdminId(): String {
         val uid = supabase.auth.currentUserOrNull()?.id ?: return ""
@@ -242,35 +243,14 @@ class AdminRepository {
                 ) {
                     filter { eq("product_id", id) }
                 }
-            } catch (_: Exception) {
-                try {
-                    initAdminSession()
-                    supabaseAdmin.from("stock_movements").update(
-                        buildJsonObject { put("product_name", displayName) }
-                    ) {
-                        filter { eq("product_id", id) }
-                    }
-                } catch (_: Exception) { }
-            }
+            } catch (_: Exception) { }
         }
-        try {
-            supabase.from("product_categories").update(
-                buildJsonObject {
-                    put("is_deleted", true)
-                }
-            ) {
-                filter { eq("id", id) }
+        supabase.from("product_categories").update(
+            buildJsonObject {
+                put("is_deleted", true)
             }
-        } catch (e: Exception) {
-            // Bypass RLS using admin client if standard update fails
-            initAdminSession()
-            supabaseAdmin.from("product_categories").update(
-                buildJsonObject {
-                    put("is_deleted", true)
-                }
-            ) {
-                filter { eq("id", id) }
-            }
+        ) {
+            filter { eq("id", id) }
         }
     }
 
@@ -293,6 +273,30 @@ class AdminRepository {
                         entries.filter { it.productName.contains(productName, ignoreCase = true) }
                     else entries
                 }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /**
+     * Sales on or after [sinceDate] (YYYY-MM-DD).
+     *
+     * The dashboard only needs the visible window. Loading a bounded history
+     * here keeps the first screen fast while still leaving older transactions
+     * available on demand when the admin opens Transactions/Analytics.
+     */
+    suspend fun getSaleEntriesSince(sinceDate: String): List<SaleEntry> {
+        if (sinceDate.isBlank()) return emptyList()
+        return try {
+            val adminId = supabase.auth.currentUserOrNull()?.id ?: return emptyList()
+            supabase.from("sale_entries")
+                .select {
+                    filter {
+                        eq("admin_id", adminId)
+                        gte("date", sinceDate)
+                    }
+                    order("created_at", SortOrder.DESCENDING)
+                    limit(20_000)
+                }
+                .decodeList()
         } catch (e: Exception) { emptyList() }
     }
 
@@ -349,20 +353,7 @@ class AdminRepository {
      * second save updates the existing row instead of duplicating it.
      */
     suspend fun upsertCustomerProductPrice(price: CustomerProductPrice) {
-        try {
-            upsertCustomerProductPriceInternal(supabase, price)
-        } catch (e: Exception) {
-            println("Standard upsertCustomerProductPrice failed, trying admin bypass: ${e.message}")
-            initAdminSession()
-            upsertCustomerProductPriceInternal(supabaseAdmin, price)
-        }
-    }
-
-    private suspend fun upsertCustomerProductPriceInternal(
-        client: io.github.jan.supabase.SupabaseClient,
-        price: CustomerProductPrice
-    ) {
-        val existing = client.from("customer_product_prices")
+        val existing = supabase.from("customer_product_prices")
             .select {
                 filter { eq("customer_id", price.customerId) }
                 filter { eq("product_id", price.productId) }
@@ -371,14 +362,14 @@ class AdminRepository {
             .decodeSingleOrNull<CustomerProductPrice>()
         val existingId = existing?.id
         if (!existingId.isNullOrBlank()) {
-            client.from("customer_product_prices").update(
+            supabase.from("customer_product_prices").update(
                 buildJsonObject {
                     put("selling_price", price.sellingPrice)
                     put("is_active", true)
                 }
             ) { filter { eq("id", existingId) } }
         } else {
-            client.from("customer_product_prices").insert(price)
+            supabase.from("customer_product_prices").insert(price)
         }
     }
 
@@ -387,27 +378,13 @@ class AdminRepository {
      * transparently falls back to the product default afterwards.
      */
     suspend fun deleteCustomerProductPrice(customerId: String, productId: String) {
-        try {
-            supabase.from("customer_product_prices").update(
-                buildJsonObject { put("is_active", false) }
-            ) {
-                filter {
-                    eq("customer_id", customerId)
-                    eq("product_id", productId)
-                    eq("is_active", true)
-                }
-            }
-        } catch (e: Exception) {
-            println("Standard deleteCustomerProductPrice failed, trying admin bypass: ${e.message}")
-            initAdminSession()
-            supabaseAdmin.from("customer_product_prices").update(
-                buildJsonObject { put("is_active", false) }
-            ) {
-                filter {
-                    eq("customer_id", customerId)
-                    eq("product_id", productId)
-                    eq("is_active", true)
-                }
+        supabase.from("customer_product_prices").update(
+            buildJsonObject { put("is_active", false) }
+        ) {
+            filter {
+                eq("customer_id", customerId)
+                eq("product_id", productId)
+                eq("is_active", true)
             }
         }
     }
@@ -731,34 +708,17 @@ class AdminRepository {
             }
         }
 
-        return try {
-            insertCustomerInternal(supabase)
-        } catch (e: Exception) {
-            println("Standard addCustomer failed, trying admin bypass: ${e.message}")
-            e.printStackTrace()
-            initAdminSession()
-            insertCustomerInternal(supabaseAdmin)
-        }
+        return insertCustomerInternal(supabase)
     }
 
     suspend fun deleteCustomer(id: String) {
         if (id.isBlank()) {
             throw IllegalArgumentException("Customer id is blank — cannot delete.")
         }
-        val updated = try {
-            supabase.from("customers").delete {
-                filter { eq("id", id) }
-                select()
-            }.decodeList<Customer>()
-        } catch (e: Exception) {
-            println("Standard deleteCustomer failed, trying admin bypass: ${e.message}")
-            e.printStackTrace()
-            initAdminSession()
-            supabaseAdmin.from("customers").delete {
-                filter { eq("id", id) }
-                select()
-            }.decodeList<Customer>()
-        }
+        val updated = supabase.from("customers").delete {
+            filter { eq("id", id) }
+            select()
+        }.decodeList<Customer>()
 
         if (updated.isEmpty()) {
             throw IllegalStateException(
@@ -790,14 +750,7 @@ class AdminRepository {
                 select()
             }.decodeSingle()
         }
-        val saved = try {
-            updateCustomerInternal(supabase)
-        } catch (e: Exception) {
-            println("Standard updateCustomer failed, trying admin bypass: ${e.message}")
-            e.printStackTrace()
-            initAdminSession()
-            updateCustomerInternal(supabaseAdmin)
-        }
+        val saved = updateCustomerInternal(supabase)
         val oldName = existing?.name.orEmpty().trim()
         val newName = customer.name.trim()
         if (oldName.isNotEmpty() && oldName != newName) {
@@ -811,10 +764,9 @@ class AdminRepository {
      *  new name everywhere, not just the customers list. */
     private suspend fun propagateCustomerRename(oldName: String, newName: String) {
         if (oldName.isBlank() || newName.isBlank()) return
-        initAdminSession()
         val adminId = supabase.auth.currentUserOrNull()?.id ?: return
         try {
-            supabaseAdmin.from("sale_entries").update(
+            supabase.from("sale_entries").update(
                 buildJsonObject { put("customer_name", newName) }
             ) {
                 filter {
@@ -829,7 +781,7 @@ class AdminRepository {
         // "Sale · <name>", "Empty cans · <name>", "Empty cases · <name>".
         try {
             val prefixes = listOf("Sale", "Empty cans", "Empty cases")
-            val rows = supabaseAdmin.from("stock_movements")
+            val rows = supabase.from("stock_movements")
                 .select {
                     filter { eq("admin_id", adminId) }
                     limit(100000)
@@ -840,7 +792,7 @@ class AdminRepository {
                 val label = prefixes.firstOrNull { source.startsWith("$it · $oldName") }
                     ?: return@forEach
                 try {
-                    supabaseAdmin.from("stock_movements").update(
+                    supabase.from("stock_movements").update(
                         buildJsonObject { put("source", "$label · $newName") }
                     ) { filter { eq("id", m.id) } }
                 } catch (e: Exception) {
@@ -887,67 +839,31 @@ class AdminRepository {
         email: String,
         password: String,
     ): EmployeeInfo {
-        initAdminSession()
-        val currentAdminId = supabase.auth.currentUserOrNull()?.id ?: throw IllegalStateException("Not logged in")
-
-        val newUser = try {
-            supabaseAdmin.auth.admin.createUserWithEmail {
-                this.email       = email
-                this.password    = password
-                this.autoConfirm = true
-                userMetadata = buildJsonObject {
-                    put("role", "employee")
-                    put("admin_id", currentAdminId)
-                    put("full_name", name)
-                    put("phone", phone)
-                }
-            }
-        } catch (e: Exception) {
-            // A rejected/placeholder service key must surface setup steps,
-            // not a raw backend dump. Business errors (duplicate email…)
-            // keep their original message via isServiceKeyRejection.
-            // The stripped server reason is appended so the true cause
-            // stays visible for diagnosis.
-            if (isServiceKeyRejection(e.message)) {
-                val detail = stripTechnicalDetails(e.message).take(240).ifBlank { "no details" }
-                // "Unregistered" is specific: Supabase has no record of this key
-                // value at all (deleted, wrong project, or copied wrong) — say so.
-                val hint = if (detail.contains("unregistered", ignoreCase = true)) {
-                    " Supabase does not recognise this key value at all — it was " +
-                        "deleted, belongs to a different project, or was copied " +
-                        "incorrectly. Confirm it is still listed under Project " +
-                        "Settings → API for this project, re-copy it exactly, and rebuild."
-                } else ""
-                throw IllegalStateException(serviceKeySetupMessage() + hint + "\n\nServer said: " + detail)
-            }
-            throw e
-        }
-        val userId = newUser.id
-
-        // Profiles is now handled by SQL trigger using metadata, 
-        // but we still need to populate the employee-specific details.
-
-        supabaseAdmin.from("employees").insert(
-            buildJsonObject {
-                put("id",             userId)
-                put("name",           name)
-                put("phone",          phone)
-                put("role",           role.lowercase())
-                put("shop_name",      shopName)
-                put("monthly_salary", salary)
-                put("status",         "active")
-                put("admin_id",       currentAdminId)
-            }
+        val response = invokeAdminFunction(
+            CreateEmployeeRequest(
+                action = "createEmployee",
+                email = email.trim(),
+                password = password,
+                name = name.trim(),
+                phone = phone.trim(),
+                role = role.trim().lowercase(),
+                shopName = shopName.trim(),
+                salary = salary,
+            )
         )
-
+        if (!response.ok) {
+            throw IllegalStateException(response.error ?: "Could not create employee.")
+        }
+        val employee = response.employee
+            ?: throw IllegalStateException("The admin service returned no employee.")
         return EmployeeInfo(
-            id            = userId,
-            name          = name,
-            phone         = phone,
-            role          = role.lowercase(),
-            shopName      = shopName,
-            monthlySalary = salary,
-            status        = "active",
+            id            = employee.id,
+            name          = employee.name,
+            phone         = employee.phone,
+            role          = employee.role,
+            shopName      = employee.shopName,
+            monthlySalary = employee.monthlySalary,
+            status        = employee.status,
         )
     }
 
@@ -957,8 +873,7 @@ class AdminRepository {
      *  displayed name in the employee's own app / auth state) so a rename
      *  reflects everywhere, not just the admin roster. */
     suspend fun updateEmployee(updated: EmployeeInfo): EmployeeInfo {
-        initAdminSession()
-        supabaseAdmin.from("employees").update(
+        supabase.from("employees").update(
             buildJsonObject {
                 put("name", updated.name)
                 put("phone", updated.phone)
@@ -970,7 +885,7 @@ class AdminRepository {
             filter { eq("id", updated.id) }
         }
         try {
-            supabaseAdmin.from("profiles").update(
+            supabase.from("profiles").update(
                 buildJsonObject { put("full_name", updated.name) }
             ) {
                 filter { eq("id", updated.id) }
@@ -981,33 +896,21 @@ class AdminRepository {
         return updated
     }
 
-    /** Deactivates an employee. The row is soft-deleted (`status = "inactive"`)
-     *  so historical movements/sales keep resolving to the employee's name in
-     *  stock history and the report summary, and the matching auth user is
-     *  disabled so they can no longer sign in. */
+    /** Deactivates an employee and revokes their sign-in.
+     *
+     *  Both steps require server-side privileges (the auth admin API), so the
+     *  `admin-users` Edge Function performs them atomically after verifying the
+     *  caller is an admin of the same tenant. */
     suspend fun deleteEmployee(id: String) {
         if (id.isBlank()) throw IllegalArgumentException("Employee id is blank — cannot delete.")
-        initAdminSession()
-        val updated = supabaseAdmin.from("employees").update(
-            buildJsonObject {
-                put("status", "inactive")
-            }
-        ) {
-            filter { eq("id", id) }
-            select()
-        }.decodeList<EmployeeInfo>()
-        if (updated.isEmpty()) {
-            throw IllegalStateException("Employee could not be deactivated. The row may not exist, or you lack permission.")
-        }
-        // Disable the auth user so the employee can no longer sign in.
-        try {
-            supabaseAdmin.auth.admin.updateUserById(id) {
-                this.userMetadata = buildJsonObject {
-                    put("disabled", true)
-                }
-            }
-        } catch (e: Exception) {
-            println("Employee auth user disable skipped: ${e.message}")
+        val response = invokeAdminFunction(
+            DeactivateEmployeeRequest(
+                action = "deactivateEmployee",
+                employeeId = id,
+            )
+        )
+        if (!response.ok) {
+            throw IllegalStateException(response.error ?: "Could not deactivate employee.")
         }
     }
 
@@ -1080,8 +983,7 @@ class AdminRepository {
             if (snapshotName != null && isUnknownColumnError(e, "product_name")) {
                 supabase.from("stock_movements").insert(rawPayload(true))
             } else {
-                initAdminSession()
-                supabaseAdmin.from("stock_movements").insert(rawPayload(false))
+                throw e
             }
         }
     }
@@ -1113,28 +1015,8 @@ class AdminRepository {
                 .firstOrNull()
             row?.value?.toIntOrNull() ?: 0
         } catch (e: Exception) {
-            // Fall back to the service-role client (bypasses RLS). The anon
-            // path can fail when the tenant isolation policy is missing or the
-            // self-row isn't visible to the auth session; the baseline is
-            // tenant data the admin must always be able to read back.
             e.printStackTrace()
-            try {
-                initAdminSession()
-                val adminId = supabase.auth.currentUserOrNull()?.id ?: return -1
-                val row = supabaseAdmin.from("app_settings")
-                    .select {
-                        filter {
-                            eq("admin_id", adminId)
-                            eq("settings_key", "empty_cans_baseline")
-                        }
-                    }
-                    .decodeList<AppSetting>()
-                    .firstOrNull()
-                row?.value?.toIntOrNull() ?: 0
-            } catch (e2: Exception) {
-                e2.printStackTrace()
-                -1
-            }
+            -1
         }
     }
 
@@ -1178,44 +1060,11 @@ class AdminRepository {
                 supabase.from("app_settings").insert(payload)
             }
         } catch (e: Exception) {
-            // The anon path may be blocked by RLS (missing tenant isolation
-            // policy on `app_settings`). Retry through the service-role client,
-            // which the app already uses for tenant-scoped writes (employees,
-            // stock adjustments, deletes).
+            // The `app_settings` table (or its `admin_id` tenant column) may not
+            // exist until supabase_schema.sql is applied. Report failure so the
+            // screen keeps its previous baseline instead of silently resetting.
             e.printStackTrace()
-            try {
-                initAdminSession()
-                val existing = supabaseAdmin.from("app_settings")
-                    .select {
-                        filter {
-                            eq("admin_id", adminId)
-                            eq("settings_key", "empty_cans_baseline")
-                        }
-                    }
-                    .decodeList<AppSetting>()
-                    .firstOrNull()
-                val payload = buildJsonObject {
-                    put("admin_id", adminId)
-                    put("settings_key", "empty_cans_baseline")
-                    put("settings_value", value)
-                }
-                if (existing != null) {
-                    val existingId = existing.id ?: return -1
-                    supabaseAdmin.from("app_settings").update(payload) {
-                        filter { eq("id", existingId) }
-                    }
-                } else {
-                    supabaseAdmin.from("app_settings").insert(payload)
-                }
-            } catch (e2: Exception) {
-                // The `app_settings` table (or its `admin_id` tenant column) is
-                // not present on the live database until supabase_schema.sql is
-                // applied, so the baseline cannot be persisted. Report failure
-                // so the screen keeps its previous baseline and shows a clear
-                // error instead of silently doing nothing.
-                e2.printStackTrace()
-                return -1
-            }
+            return -1
         }
         return current
     }
@@ -1304,10 +1153,7 @@ class AdminRepository {
                 // Pre-migration database: retry without the snapshot column.
                 supabase.from("stock_movements").insert(movementPayload(true))
             } else {
-                println("Standard addStockMovement failed, trying admin bypass: ${e.message}")
-                e.printStackTrace()
-                initAdminSession()
-                supabaseAdmin.from("stock_movements").insert(movementPayload(false))
+                throw e
             }
         }
 
@@ -1443,12 +1289,7 @@ class AdminRepository {
      */
     suspend fun seedInsertRows(table: String, rows: List<kotlinx.serialization.json.JsonObject>) {
         if (rows.isEmpty()) return
-        try {
-            supabase.from(table).insert(rows)
-        } catch (e: Exception) {
-            initAdminSession()
-            supabaseAdmin.from(table).insert(rows)
-        }
+        supabase.from(table).insert(rows)
     }
 
     /** Direct stock sync used by the seeder after movements are in place. */
@@ -1486,7 +1327,6 @@ class AdminRepository {
         if (index !in 0..1) return
         val clean = newName.trim()
         if (clean.isBlank()) return
-        initAdminSession()
         try {
             val adminId = supabase.auth.currentUserOrNull()?.id ?: return
             val rows = supabase.from("shop_stocks")

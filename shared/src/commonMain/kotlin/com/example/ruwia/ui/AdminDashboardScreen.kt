@@ -66,15 +66,21 @@ fun AdminDashboardScreen(
     onLogout: () -> Unit,
     adminName: String = "Admin",
     adminEmail: String = "",
+    deepLinkNotificationId: String? = null,
+    onNotificationDeepLinkHandled: () -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
 
+    LaunchedEffect(Unit) {
+        vm.loadInitialData()
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                vm.loadData()
+                vm.refreshCurrentTab()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -97,7 +103,9 @@ fun AdminDashboardScreen(
             onLogout = onLogout,
             adminName = adminName,
             adminEmail = adminEmail,
-            snackbarHostState = snackbarHostState
+            snackbarHostState = snackbarHostState,
+            deepLinkNotificationId = deepLinkNotificationId,
+            onNotificationDeepLinkHandled = onNotificationDeepLinkHandled,
         )
 
         if (state.loading) {
@@ -114,6 +122,8 @@ private fun AdminDashboardContentSwitcher(
     adminName: String,
     adminEmail: String,
     snackbarHostState: SnackbarHostState,
+    deepLinkNotificationId: String?,
+    onNotificationDeepLinkHandled: () -> Unit,
 ) {
     var selectedTab       by remember { mutableStateOf(0) }
     var showAddStock      by remember { mutableStateOf(false) }
@@ -137,6 +147,46 @@ private fun AdminDashboardContentSwitcher(
     var saleToEdit by remember { mutableStateOf<SaleEntry?>(null) }
     var saleEditLines by remember { mutableStateOf<List<SaleEntry>>(emptyList()) }
     var isSavingSaleEdit by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectedTab) {
+        vm.onTabSelected(selectedTab)
+    }
+    LaunchedEffect(showNotifications) {
+        if (showNotifications) vm.loadNotifications()
+    }
+    LaunchedEffect(showCustomers) {
+        if (showCustomers) vm.loadCustomersForScreen()
+    }
+    LaunchedEffect(showEmployees) {
+        if (showEmployees) vm.loadEmployees()
+    }
+    LaunchedEffect(showPricing) {
+        if (showPricing) vm.loadPricing()
+    }
+    LaunchedEffect(showReceivables) {
+        if (showReceivables) vm.loadPayments()
+    }
+    LaunchedEffect(showAddStock) {
+        if (showAddStock) vm.loadStockItems()
+    }
+    LaunchedEffect(productDetailName) {
+        if (productDetailName != null) vm.ensureSaleHistory(monthsBack = 23)
+    }
+    LaunchedEffect(showStockHistory) {
+        if (showStockHistory) {
+            vm.ensureSaleHistory(monthsBack = 23)
+            vm.loadEmployees()
+        }
+    }
+
+    // A push tap opens the notification center and marks that item read.
+    // Runs once per id; the host then clears the pending deep link.
+    LaunchedEffect(deepLinkNotificationId) {
+        val id = deepLinkNotificationId ?: return@LaunchedEffect
+        showNotifications = true
+        vm.markNotificationRead(id)
+        onNotificationDeepLinkHandled()
+    }
 
     // Close the receive dialog only after the backend confirms the return.
     LaunchedEffect(state.loading, state.error) {
@@ -172,6 +222,19 @@ private fun AdminDashboardContentSwitcher(
     }
 
     // ── Full-screen overlays ──────────────────────────────────
+    // Notifications lead the overlay stack so a push tap is never hidden
+    // behind an edit screen that was open when the app was backgrounded.
+    if (showNotifications) {
+        com.example.ruwia.ui.NotificationsScreen(
+            notifications = state.notifications,
+            unreadCount = state.unreadNotifications,
+            onBack = { showNotifications = false },
+            onMarkRead = vm::markNotificationRead,
+            onMarkAllRead = vm::markAllNotificationsRead,
+        )
+        return
+    }
+
     saleToEdit?.let { sale ->
         SystemBackHandler {
             if (!isSavingSaleEdit) {
@@ -244,17 +307,6 @@ private fun AdminDashboardContentSwitcher(
                 showStockHistory = false
                 beginSaleEdit(sale)
             },
-        )
-        return
-    }
-
-    if (showNotifications) {
-        com.example.ruwia.ui.NotificationsScreen(
-            notifications = state.notifications,
-            unreadCount = state.unreadNotifications,
-            onBack = { showNotifications = false },
-            onMarkRead = vm::markNotificationRead,
-            onMarkAllRead = vm::markAllNotificationsRead,
         )
         return
     }
@@ -507,7 +559,7 @@ private fun AdminDashboardContentSwitcher(
             isRefreshing = isRefreshing,
             onRefresh = {
                 isRefreshing = true
-                vm.loadData()
+                vm.refreshCurrentTab()
             },
             modifier = Modifier.fillMaxSize(),
         ) {
@@ -524,6 +576,7 @@ private fun AdminDashboardContentSwitcher(
                      onOpenInventory = { selectedTab = 1 },
                      onOpenNotifications = { showNotifications = true },
                      onOpenDeliveryTasks = { showDeliveryTasks = true },
+                     onSaleHistoryNeeded = vm::ensureSaleHistory,
                  )
             1 -> InventoryScreen(
                      state          = state,
@@ -603,12 +656,13 @@ private fun AdminHomeTab(
     onOpenInventory: () -> Unit = {},
     onOpenNotifications: () -> Unit = {},
     onOpenDeliveryTasks: () -> Unit = {},
+    onSaleHistoryNeeded: (Int) -> Unit = {},
 ) {
     when {
         state.loading  -> NTDashboardSkeleton(contentPadding)
         state.error != null -> NTErrorState(
             message = state.error,
-            onRetry  = vm::loadData,
+            onRetry  = vm::refreshCurrentTab,
             contentPadding = contentPadding
         )
         else -> AdminDashboardContent(
@@ -622,6 +676,7 @@ private fun AdminHomeTab(
             onOpenInventory = onOpenInventory,
             onOpenNotifications = onOpenNotifications,
             onOpenDeliveryTasks = onOpenDeliveryTasks,
+            onSaleHistoryNeeded = onSaleHistoryNeeded,
         )
     }
 }
@@ -638,6 +693,7 @@ private fun AdminDashboardContent(
     onOpenInventory: () -> Unit = {},
     onOpenNotifications: () -> Unit = {},
     onOpenDeliveryTasks: () -> Unit = {},
+    onSaleHistoryNeeded: (Int) -> Unit = {},
 ) {
     // Revenue + customer pickers drive their own charts.
     // Overview period dropdown defaults to Month.
@@ -761,7 +817,10 @@ private fun AdminDashboardContent(
         item {
             NTBusinessOverviewCard(
                 period = overviewPeriod,
-                onPeriodChange = { overviewPeriod = it },
+                onPeriodChange = {
+                    overviewPeriod = it
+                    onSaleHistoryNeeded(it.requiredMonthsBack())
+                },
                 chipLabel = overviewChip,
                 leftLabel = overviewLeftLabel,
                 leftValue = overviewLeftValue,
@@ -790,7 +849,10 @@ private fun AdminDashboardContent(
                 Spacer(modifier = Modifier.height(NTDp.md))
                 NTDateRangePicker(
                     selected = revenueRange,
-                    onSelect = { revenueRange = it },
+                    onSelect = {
+                        revenueRange = it
+                        onSaleHistoryNeeded(it.toDashboardRange().requiredMonthsBack())
+                    },
                 )
                 Spacer(modifier = Modifier.height(NTDp.md))
                 NTLineChartCard(
@@ -816,7 +878,10 @@ private fun AdminDashboardContent(
                 Spacer(modifier = Modifier.height(NTDp.md))
                 NTDateRangePicker(
                     selected = customerRange,
-                    onSelect = { customerRange = it },
+                    onSelect = {
+                        customerRange = it
+                        onSaleHistoryNeeded(it.toDashboardRange().requiredMonthsBack())
+                    },
                     options = listOf(
                         NTDateRange.MONTHLY,
                         NTDateRange.QUARTERLY,
@@ -1052,6 +1117,20 @@ private fun NTDateRange.toDashboardRange(): DashboardRange = when (this) {
     NTDateRange.MONTHLY   -> DashboardRange.MONTH
     NTDateRange.QUARTERLY -> DashboardRange.QUARTER
     NTDateRange.YEARLY    -> DashboardRange.YEAR
+}
+
+/** Sale history needed for a chart range (current window + comparison). */
+private fun DashboardRange.requiredMonthsBack(): Int = when (this) {
+    DashboardRange.WEEK    -> 1
+    DashboardRange.MONTH   -> 1
+    DashboardRange.QUARTER -> 5
+    DashboardRange.YEAR    -> 23
+}
+
+private fun OverviewPeriod.requiredMonthsBack(): Int = when (this) {
+    OverviewPeriod.MONTH, OverviewPeriod.LAST_MONTH -> 1
+    OverviewPeriod.LAST_QUARTER -> 5
+    OverviewPeriod.YEARLY -> 23
 }
 
 private fun rangeAnalyticsTitle(range: NTDateRange): String = when (range) {

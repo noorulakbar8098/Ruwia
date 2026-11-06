@@ -1,8 +1,5 @@
 package com.example.ruwia
 
-import com.example.ruwia.data.isServiceKeyConfigured
-import com.example.ruwia.data.isServiceKeyRejection
-import com.example.ruwia.data.serviceKeySetupMessage
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.domain.ShopStockInfo
 import com.example.ruwia.domain.StockMovement
@@ -228,29 +225,6 @@ class SharedLogicJvmTest {
         assertTrue(iso.contains('T'), "expected TZ-aware ISO, got '$iso'")
         assertTrue(iso.isNotBlank())
         kotlinx.datetime.Instant.parse(iso) // must not throw
-    }
-
-    // ── Service-key diagnostics (employee creation) ──────────────────────────
-
-    @Test
-    fun testInstalledServiceKeyIsConfigured() {
-        // A real service-role secret is installed, so admin calls (employee
-        // creation) can authenticate. The setup message stays available
-        // for builds where the key is still a placeholder.
-        assertTrue(isServiceKeyConfigured())
-        assertTrue(serviceKeySetupMessage().contains("SUPABASE_SERVICE_KEY"))
-    }
-
-    @Test
-    fun testServiceKeyRejectionMatcher() {
-        assertTrue(isServiceKeyRejection("Invalid API key"))
-        assertTrue(isServiceKeyRejection("invalid JWT: unable to parse"))
-        assertTrue(isServiceKeyRejection("401 Unauthorized"))
-        assertTrue(isServiceKeyRejection("User not allowed (service_role required)"))
-        // Business errors must keep their original message.
-        assertTrue(!isServiceKeyRejection("User already registered"))
-        assertTrue(!isServiceKeyRejection("duplicate key value violates unique constraint"))
-        assertTrue(!isServiceKeyRejection(null))
     }
 
     // ── Inventory consistency: canonical shop buckets ─────────────────────

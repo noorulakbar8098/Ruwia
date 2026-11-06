@@ -20,6 +20,12 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
+        <!-- Android 16+ ignores orientation locks on large screens unless the
+             app opts out. Keep MainActivity portrait on tablets/foldables too. -->
+        <property
+            android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+            android:value="true" />
+
         <!-- Explicitly register Supabase's context initializer so session storage
              works correctly even if the library manifest doesn't merge properly -->
         <provider
@@ -31,6 +37,19 @@
                 android:name="io.github.jan.supabase.auth.SupabaseInitializer"
                 android:value="androidx.startup" />
         </provider>
+
+        <!-- Background/closed-app pushes are rendered by FCM itself, so these
+             defaults decide the channel and status-bar icon they use. The
+             channel is created in RuwiaApp.onCreate() before the first push. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="ruwia_updates" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_neerthuli" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_color" />
 
         <!-- Receives FCM pushes while the app is closed/backgrounded and
              re-registers the device token on rotation. -->
@@ -50,7 +69,10 @@
 
         <activity
             android:exported="true"
-            android:name=".MainActivity">
+            android:launchMode="singleTop"
+            android:name=".MainActivity"
+            android:screenOrientation="portrait"
+            tools:ignore="LockedOrientationActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

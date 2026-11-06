@@ -185,8 +185,6 @@ class AuthViewModel(
             runCatching {
                 repo.signUp(email, password, name, phone)
                 repo.login(email, password)
-                val uid = repo.currentUserId() ?: throw Exception("User ID not found after registration")
-                repo.promoteToAdmin(uid)
                 repo.myProfile()
             }.onSuccess { profile ->
                 val resolvedRole = profile?.role ?: UserRole.admin

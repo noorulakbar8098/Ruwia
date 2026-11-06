@@ -333,11 +333,21 @@ private fun List<SaleEntry>.customerSeriesFor(
     DashboardRange.YEAR    -> customerYearSeries(currentYearMonth)
 }
 
-/** Distinct customers per day for the last 7 days with sales. */
+/**
+ * Running distinct-customer count for the last 7 days with sales.
+ *
+ * Each point is cumulative (customers served since the start of the window),
+ * so the line keeps adding up and its last point equals [rangeCustomers].
+ * Per-day unique counts reset every day and never matched the header total.
+ */
 private fun List<SaleEntry>.customerWeekSeries(): ChartSeries {
     val byDate = groupBy { it.date.take(10) }
     val days = byDate.keys.sortedDescending().take(7).reversed()
-    val raw = days.map { d -> byDate[d]!!.distinctCustomerCount().toDouble() }
+    val seen = mutableSetOf<String>()
+    val raw = days.map { d ->
+        byDate[d]!!.addDistinctCustomerNames(seen)
+        seen.size.toDouble()
+    }
     val labels = days.map { d ->
         val day = d.substring(8, 10).toIntOrNull()?.toString() ?: "?"
         val mon = d.substring(5, 7).toMonthAbbr()
@@ -346,10 +356,10 @@ private fun List<SaleEntry>.customerWeekSeries(): ChartSeries {
     // Same left-pad as weekSeries: never wipe a single real data point.
     val padded = if (raw.size >= 7) raw else List(7 - raw.size) { 0.0 } + raw
     val padLbls = if (labels.size >= 7) labels else List(7 - labels.size) { "—" } + labels
-    return ChartSeries(padded, padLbls, "Last 7 days", padded.sum())
+    return ChartSeries(padded, padLbls, "Last 7 days", padded.lastOrNull() ?: 0.0)
 }
 
-/** Distinct customers per day in [yearMonth]. */
+/** Running distinct customers per day in [yearMonth]. */
 private fun List<SaleEntry>.customerMonthSeries(yearMonth: String): ChartSeries {
     if (yearMonth.isBlank()) {
         return ChartSeries(List(7) { 0.0 }, listOf("1", "8", "15", "22", "30"), "This Month", 0.0)
@@ -363,9 +373,11 @@ private fun List<SaleEntry>.customerMonthSeries(yearMonth: String): ChartSeries 
     val nDays = daysInMonth(year, month)
     val mAbbr = monthAbbr(month)
     val byDate = groupBy { it.date.take(10) }
+    val seen = mutableSetOf<String>()
     val raw = (1..nDays).map { d ->
         val key = "$yearMonth-${d.toString().padStart(2, '0')}"
-        byDate[key]?.distinctCustomerCount()?.toDouble() ?: 0.0
+        byDate[key]?.addDistinctCustomerNames(seen)
+        seen.size.toDouble()
     }
     val markers = listOf(
         1,
@@ -375,10 +387,10 @@ private fun List<SaleEntry>.customerMonthSeries(yearMonth: String): ChartSeries 
         nDays,
     ).distinct()
     val labels = markers.map { "$it $mAbbr" }
-    return ChartSeries(raw, labels, "$mAbbr $year", raw.sum())
+    return ChartSeries(raw, labels, "$mAbbr $year", raw.lastOrNull() ?: 0.0)
 }
 
-/** Distinct customers per month for the last 3 months. */
+/** Running distinct customers per month for the last 3 months. */
 private fun List<SaleEntry>.customerQuarterSeries(currentYearMonth: String): ChartSeries {
     if (currentYearMonth.isBlank()) {
         return ChartSeries(List(3) { 0.0 }, listOf("—", "—", "—"), "Last 3 months", 0.0)
@@ -389,9 +401,13 @@ private fun List<SaleEntry>.customerQuarterSeries(currentYearMonth: String): Cha
         val (y, m) = subtractMonths(year, month, 2 - offset)
         "$y-${m.toString().padStart(2, '0')}"
     }
-    val raw = months.map { ym -> distinctCustomersForMonth(ym).toDouble() }
+    val seen = mutableSetOf<String>()
+    val raw = months.map { ym ->
+        filter { it.date.startsWith(ym) }.addDistinctCustomerNames(seen)
+        seen.size.toDouble()
+    }
     val labels = months.map { ym -> monthAbbr(ym.substring(5, 7).toIntOrNull() ?: 0) }
-    return ChartSeries(raw, labels, "Last 3 months", raw.sum())
+    return ChartSeries(raw, labels, "Last 3 months", raw.lastOrNull() ?: 0.0)
 }
 
 /** Distinct customers per month for the last 12 months. */
@@ -406,10 +422,14 @@ private fun List<SaleEntry>.customerYearSeries(currentYearMonth: String): ChartS
         val (y, m) = subtractMonths(year, month, 11 - offset)
         Triple(y, m, "$y-${m.toString().padStart(2, '0')}")
     }
-    val raw = months.map { (_, _, ym) -> distinctCustomersForMonth(ym).toDouble() }
+    val seen = mutableSetOf<String>()
+    val raw = months.map { (_, _, ym) ->
+        filter { it.date.startsWith(ym) }.addDistinctCustomerNames(seen)
+        seen.size.toDouble()
+    }
     val markers = listOf(0, 3, 6, 9, 11)
     val labels = markers.map { i -> monthAbbr(months[i].second) }
-    return ChartSeries(raw, labels, "Last 12 months", raw.sum())
+    return ChartSeries(raw, labels, "Last 12 months", raw.lastOrNull() ?: 0.0)
 }
 
 /** Distinct customers across the whole selected window. */
@@ -475,6 +495,14 @@ private fun List<SaleEntry>.distinctCustomerCount(): Int =
         .filter { it.isNotEmpty() }
         .distinct()
         .size
+
+/** Adds the non-blank normalized customer names in this list to [into]. */
+private fun List<SaleEntry>.addDistinctCustomerNames(into: MutableSet<String>) {
+    forEach { entry ->
+        val name = entry.customerName.trim().lowercase()
+        if (name.isNotEmpty()) into.add(name)
+    }
+}
 
 private fun List<SaleEntry>.distinctCountForMonths(months: List<String>): Int =
     filter { e -> months.any { e.date.startsWith(it) } }.distinctCustomerCount()
