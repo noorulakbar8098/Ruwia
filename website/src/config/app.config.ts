@@ -85,6 +85,9 @@ export const APP_CONFIG = {
     versionCode: 6,
     releaseDate: "November 7, 2026",
     apkSize: "26.8 MB",
+    // File name Android shows in the download notification and Downloads app.
+    // Keep this in sync with the actual file published under /downloads/.
+    apkFileName: "ruwia-v2.4-release.apk",
     minAndroid: "Android 7.0 (Nougat, API 24)",
     targetAndroid: "Android 16 (API 36)",
     architecture: "Universal (arm64-v8a, armeabi-v7a, x86_64)",
@@ -405,7 +408,13 @@ export const APP_CONFIG = {
     {
       question: "How do I install the APK?",
       answer:
-        "Installation takes less than 30 seconds: (1) Tap the 'Download APK' button above. The file downloads directly from this website. (2) When the download completes, open your browser's download notification or the Downloads app. (3) Tap 'ruwia-v2.4-release.apk'. (4) If prompted, toggle 'Allow from this source'. (5) Tap 'Install' and launch the app. Android does not allow a website to open its package installer automatically, so the final tap always happens on your device.",
+        "Download the APK and let it finish. (1) Swipe down and tap the finished file in your notification shade — that opens Android's installer, so you never have to hunt through a file manager. (2) On the first install only, tap Settings inside the permission prompt, switch on 'Allow from this source' for your browser, then press Back. (3) Tap Install, then Open. Later updates need only steps 1 and 3, because Android remembers the approval. A website cannot launch the installer itself, so that final confirmation always comes from you.",
+      category: "installation",
+    },
+    {
+      question: "Can the app install itself without any taps?",
+      answer:
+        "No. Android blocks websites from opening the package installer, and it will not install an app you have not confirmed. Any site promising a silent one-tap install of a non-Play app is either using a corporate device-management profile or describing something Android does not permit. The shortest direct-APK flow is: tap the download notification, allow the source once, tap Install. Installs with no confirmation at all require Google Play or an organisation's MDM/EMM deployment.",
       category: "installation",
     },
     {
@@ -429,54 +438,12 @@ export const APP_CONFIG = {
   ] as FaqItem[],
 
   // ----------------------------------------------------------------------------
-  // Installation Steps
-  // ----------------------------------------------------------------------------
-  installationSteps: [
-    {
-      step: 1,
-      title: "Tap Download APK",
-      description: "Tap the primary download button to retrieve the latest signed APK directly from this website.",
-      tip: "The download starts immediately. There is no external portal or GitHub detour.",
-    },
-    {
-      step: 2,
-      title: "Wait for Download",
-      description: "Track download progress in your browser notification area. The APK is 26.8 MB.",
-      tip: "A standard 4G or Wi-Fi connection takes only 2–5 seconds.",
-    },
-    {
-      step: 3,
-      title: "Open Downloaded File",
-      description: "Tap the download completed notification, or locate 'ruwia-v2.4-release.apk' in your Downloads folder.",
-      tip: "You can also access it via Chrome's Downloads tab (Ctrl+J or Menu > Downloads).",
-    },
-    {
-      step: 4,
-      title: "Grant Install Permission",
-      description: "If Android displays 'For your security, your phone is not allowed to install unknown apps', tap Settings and switch on 'Allow from this source'.",
-      tip: "This is a standard Android security measure for any app installed outside Google Play.",
-    },
-    {
-      step: 5,
-      title: "Tap Install",
-      description: "Confirm the installation dialog and allow the package installer to finalize the setup.",
-      tip: "If Play Protect prompts you, tap 'More details' → 'Install anyway'.",
-    },
-    {
-      step: 6,
-      title: "Launch & Get Started",
-      description: "Tap Open to launch Ruwia. Log in with your admin or employee credentials and start distributing!",
-      tip: "The app icon will now appear on your home screen and app drawer.",
-    },
-  ],
-
-  // ----------------------------------------------------------------------------
   // Android Compatibility Guide Notes
   // ----------------------------------------------------------------------------
   androidVersionNotes: {
-    android14Plus: "Android 14, 15, & 16: Go to Settings > Apps > Special app access > Install unknown apps > Select your browser (e.g., Chrome) > Toggle 'Allow from this source'.",
-    android8to13: "Android 8.0 to 13: Tap the downloaded file. When prompted, tap 'Settings', turn on 'Allow from this source', then tap Back and tap 'Install'.",
-    android7: "Android 7.0 & 7.1: Go to Settings > Security > Check 'Unknown sources' > Tap OK.",
+    android14Plus: "Android 14–16: tap the downloaded APK and use the Settings button inside the install warning — it jumps straight to the Install unknown apps page for your browser. Turn on Allow from this source, press Back, then tap Install. Manual route: Settings → Apps → Special app access → Install unknown apps → Chrome.",
+    android8to13: "Android 8.0 to 13: tap the downloaded file, tap Settings in the prompt, turn on Allow from this source, press Back, then tap Install. Manual route: Settings → Apps → Special access → Install unknown apps → Chrome.",
+    android7: "Android 7.0 & 7.1: go to Settings → Security → enable Unknown sources → tap OK, then open the downloaded APK and tap Install.",
   },
 
   // ----------------------------------------------------------------------------
