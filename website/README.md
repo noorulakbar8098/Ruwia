@@ -135,13 +135,25 @@ npm run build
 5. Framework Preset will automatically detect **Next.js**.
 6. Click **Deploy**. Vercel will build and assign you a free `https://your-app.vercel.app` domain with automatic SSL and global CDN.
 
-### Option B: GitHub Pages (100% Free with GitHub Actions)
+### Option B: GitHub Pages (Live at https://uniwattelektrik.com)
 
-A GitHub Actions workflow is already pre-configured in [`.github/workflows/deploy-site.yml`](../.github/workflows/deploy-site.yml).
+A GitHub Actions workflow is pre-configured in [`.github/workflows/deploy-site.yml`](../.github/workflows/deploy-site.yml) and publishes `website/out` to GitHub Pages.
 
 1. In your GitHub repository, navigate to **Settings** > **Pages**.
 2. Under **Build and deployment** > **Source**, select **GitHub Actions**.
-3. Push to `main`. The workflow will automatically build `website/out` and publish it to `https://<username>.github.io/<repo>/`.
+3. Push to `main`. The workflow builds `website/out` and deploys it with the custom domain declared in [`website/public/CNAME`](./public/CNAME).
+
+#### DNS records (Squarespace Domains)
+
+| Type | Host | Value |
+| --- | --- | --- |
+| A | `@` | `185.199.108.153` |
+| A | `@` | `185.199.109.153` |
+| A | `@` | `185.199.110.153` |
+| A | `@` | `185.199.111.153` |
+| CNAME | `www` | `noorulakbar8098.github.io` |
+
+Preserve the existing Google Workspace MX records and verification TXT records. GitHub provisions the HTTPS certificate automatically after DNS resolves.
 
 ---
 

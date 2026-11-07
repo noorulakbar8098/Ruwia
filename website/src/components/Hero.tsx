@@ -126,7 +126,7 @@ export default function Hero() {
                 </div>
 
                 <div className="mt-2 flex items-center justify-between text-[11px] text-[#777D76] dark:text-[#8E9B93] font-mono">
-                  <span>Source: Official ruwia.app download</span>
+                  <span>Source: Official uniwattelektrik.com download</span>
                   <span>Status: In Progress ({progress}%)</span>
                 </div>
               </div>

@@ -461,7 +461,7 @@ export const APP_CONFIG = {
       "Android inventory app",
       "Ruwia Android release",
     ],
-    siteUrl: process.env.NEXT_PUBLIC_SITE_URL || "https://ruwia.app",
+    siteUrl: process.env.NEXT_PUBLIC_SITE_URL || "https://uniwattelektrik.com",
     ogImageUrl: publicAsset("/images/og-card.png"),
     twitterHandle: "@ruwia_app",
   },
