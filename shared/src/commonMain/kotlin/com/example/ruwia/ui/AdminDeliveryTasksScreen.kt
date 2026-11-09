@@ -85,6 +85,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -100,6 +101,7 @@ import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.EmployeeInfo
 import com.example.ruwia.domain.ProductCategory
 import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
 import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
 import com.example.ruwia.ui.components.formKeyboardActions
 import com.example.ruwia.util.dbToDisplayDate
@@ -237,6 +239,7 @@ fun AdminDeliveryTasksScreen(
                     shape = RoundedCornerShape(22.dp),
                     color = NTColors.Surface,
                     border = BorderStroke(1.dp, NTColors.Border),
+                    shadowElevation = NTDp.cardElevation,
                 ) {
                     Column(
                         modifier = Modifier.padding(18.dp),
@@ -504,6 +507,7 @@ private fun AdminDeliveryTaskCard(
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(18.dp), clip = false)
             .clip(RoundedCornerShape(18.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(18.dp))

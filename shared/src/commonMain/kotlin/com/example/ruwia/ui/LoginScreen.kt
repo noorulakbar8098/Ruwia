@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.ImeAction
 import com.example.ruwia.ui.components.formKeyboardActions
+import com.example.ruwia.ui.dashboard.NTDp
 import androidx.compose.ui.autofill.AutofillNode
 import androidx.compose.ui.autofill.AutofillType
 import androidx.compose.ui.layout.boundsInWindow
@@ -326,10 +327,10 @@ private fun LoginGlassCard(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(
-                elevation = 40.dp,
+                elevation = NTDp.cardElevation,
                 shape = RoundedCornerShape(32.dp),
-                ambientColor = Color.Black.copy(alpha = 0.45f),
-                spotColor = Color.Black.copy(alpha = 0.45f)
+                ambientColor = Color.Black.copy(alpha = 0.10f),
+                spotColor = Color.Black.copy(alpha = 0.10f)
             ),
         shape = RoundedCornerShape(32.dp),
         color = DroplyColor.Card,

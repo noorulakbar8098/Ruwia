@@ -56,7 +56,7 @@ fun NTLineChartCard(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
         border = BorderStroke(1.dp, NTColors.Border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             val isPos = growthPercent >= 0.5
@@ -378,7 +378,7 @@ fun NTAnalyticsBarCard(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, NTColors.Border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             val isPos = (growthPercent ?: 0.0) >= 0.0

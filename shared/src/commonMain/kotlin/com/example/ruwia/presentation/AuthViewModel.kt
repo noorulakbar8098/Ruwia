@@ -192,7 +192,7 @@ class AuthViewModel(
                 _state.value = AuthState(
                     loggedIn    = true,
                     role        = resolvedRole,
-                    displayName = profile?.fullName ?: "",
+                    displayName = profile?.fullName?.takeIf { it.isNotBlank() } ?: name.trim(),
                     email       = repo.currentUserEmail(),
                 )
                 com.example.ruwia.data.refreshPushToken()

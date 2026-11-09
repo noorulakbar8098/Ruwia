@@ -23,6 +23,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.DeliveryTask
+import com.example.ruwia.ui.dashboard.NTDp
 import com.example.ruwia.ui.components.formKeyboardActions
 
 @Composable
@@ -52,7 +53,8 @@ fun EmployeeDeliveryDetailsScreen(
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Card(
                 shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF111C1F))
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF111C1F)),
+                elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
             ) {
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(task.customerName, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
@@ -73,7 +75,8 @@ fun EmployeeDeliveryDetailsScreen(
                 Card(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111C1F))
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111C1F)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("Quantity", fontSize = 12.sp, color = Color.White.copy(alpha = 0.5f))
@@ -83,7 +86,8 @@ fun EmployeeDeliveryDetailsScreen(
                 Card(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111C1F))
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111C1F)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("Status", fontSize = 12.sp, color = Color.White.copy(alpha = 0.5f))

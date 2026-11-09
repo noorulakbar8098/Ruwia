@@ -556,6 +556,7 @@ private fun CustomerRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
             .clickable(onClickLabel = "Open ${customer.name}", onClick = onOpen)
@@ -1863,6 +1864,7 @@ private fun DetailSectionCard(title: String, content: @Composable ColumnScope.()
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
             .clip(RoundedCornerShape(NTDp.radLg))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))

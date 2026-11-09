@@ -1,0 +1,4 @@
+[     483ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://pixel.pointmediatracker.com/kpi?c=squarespace&kpi=visit&fpc=48c814ce-4e41-4f20-88c5-50e16181c16b&user_id=6aeebff298a16f63c58ff1c5&utm_source=undefined&utm_medium=undefined&utm_campaign=undefined&order_value=undefined&new=undefined&hems=undefined&gtmcb=1874730742:0
+[     486ms] [WARNING] Unrecognized feature: 'attribution-reporting'. @ https://c.amazon-adsystem.com/aat/amzn.js:1
+[     486ms] [WARNING] Unrecognized feature: 'attribution-reporting'. @ https://c.amazon-adsystem.com/aat/amzn.js:1
+[     494ms] [WARNING] Unrecognized feature: 'attribution-reporting'. @ https://c.amazon-adsystem.com/aat/amzn.js:1

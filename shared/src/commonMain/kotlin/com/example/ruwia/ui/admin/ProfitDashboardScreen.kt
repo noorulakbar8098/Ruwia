@@ -44,6 +44,9 @@ import androidx.compose.ui.window.Dialog
 import com.example.ruwia.domain.*
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
+import com.example.ruwia.ui.dashboard.NTShimmerBox
+import com.example.ruwia.ui.dashboard.ntShimmerBrush
 import com.example.ruwia.ui.dashboard.GlossyTealBox
 import com.example.ruwia.ui.components.formKeyboardActions
 import kotlin.time.Clock
@@ -358,7 +361,9 @@ fun ProfitDashboardScreen(
         else -> "Month · ${months[selectedMonth]} $selectedYear"
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(SaaSColors.Background)) {
+    if (state.loading) {
+        ProfitDashboardSkeleton(contentPadding)
+    } else Box(modifier = Modifier.fillMaxSize().background(SaaSColors.Background)) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopBarSection(
                 year     = selectedYear,
@@ -628,6 +633,150 @@ fun ProfitDashboardScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Save")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfitDashboardSkeleton(contentPadding: PaddingValues) {
+    Column(
+        modifier = Modifier.fillMaxSize().background(SaaSColors.Background)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .background(SaaSColors.DeepTeal)
+                .statusBarsPadding()
+                .padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                NTShimmerBox(width = 40.dp, height = 40.dp, shape = RoundedCornerShape(12.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    NTShimmerBox(width = 142.dp, height = 20.dp)
+                    Spacer(Modifier.height(6.dp))
+                    NTShimmerBox(width = 74.dp, height = 12.dp)
+                }
+                NTShimmerBox(width = 40.dp, height = 40.dp, shape = RoundedCornerShape(12.dp))
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(
+                start = 20.dp,
+                top = 16.dp,
+                end = 20.dp,
+                bottom = contentPadding.calculateBottomPadding() + 32.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            item {
+                NTShimmerBox(
+                    width = 216.dp,
+                    height = 48.dp,
+                    shape = RoundedCornerShape(14.dp),
+                )
+            }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(SaaSColors.Surface)
+                        .padding(20.dp),
+                ) {
+                    NTShimmerBox(width = 116.dp, height = 11.dp)
+                    Spacer(Modifier.height(16.dp))
+                    NTShimmerBox(width = 176.dp, height = 34.dp)
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        repeat(3) {
+                            Column(
+                                modifier = Modifier.weight(1f)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(SaaSColors.Background)
+                                    .padding(12.dp),
+                            ) {
+                                NTShimmerBox(width = 58.dp, height = 10.dp)
+                                Spacer(Modifier.height(10.dp))
+                                NTShimmerBox(width = 74.dp, height = 16.dp)
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(SaaSColors.Surface)
+                        .padding(20.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            NTShimmerBox(width = 142.dp, height = 11.dp)
+                            Spacer(Modifier.height(10.dp))
+                            NTShimmerBox(width = 126.dp, height = 24.dp)
+                        }
+                        NTShimmerBox(width = 104.dp, height = 36.dp, shape = RoundedCornerShape(12.dp))
+                    }
+                    Spacer(Modifier.height(24.dp))
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                            .height(190.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(ntShimmerBrush())
+                    )
+                }
+            }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(SaaSColors.Surface)
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    NTShimmerBox(width = 142.dp, height = 14.dp)
+                    repeat(3) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            NTShimmerBox(width = 38.dp, height = 38.dp, shape = CircleShape)
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                NTShimmerBox(width = 132.dp, height = 13.dp)
+                                Spacer(Modifier.height(6.dp))
+                                NTShimmerBox(width = 88.dp, height = 10.dp)
+                            }
+                            NTShimmerBox(width = 72.dp, height = 16.dp)
+                        }
+                    }
+                }
+            }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(SaaSColors.Surface)
+                        .padding(20.dp),
+                ) {
+                    NTShimmerBox(width = 154.dp, height = 14.dp)
+                    Spacer(Modifier.height(18.dp))
+                    repeat(4) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            NTShimmerBox(width = 36.dp, height = 36.dp, shape = CircleShape)
+                            Spacer(Modifier.width(12.dp))
+                            NTShimmerBox(width = 128.dp, height = 13.dp)
+                            Spacer(Modifier.weight(1f))
+                            NTShimmerBox(width = 76.dp, height = 16.dp)
+                        }
                     }
                 }
             }
@@ -1142,7 +1291,8 @@ private fun MiniMetricCard(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
         color = SaaSColors.Surface,
-        border = BorderStroke(1.dp, SaaSColors.Border)
+        border = BorderStroke(1.dp, SaaSColors.Border),
+        shadowElevation = NTDp.cardElevation,
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(label, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = SaaSColors.TextMuted)
@@ -1205,7 +1355,7 @@ private fun SaaSBarChart(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface),
         border = BorderStroke(1.dp, SaaSColors.Border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation),
     ) {
         Column(modifier = Modifier.padding(24.dp).fillMaxSize()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2556,7 +2706,8 @@ private fun ExpenseAnalyticsSection(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
             color = SaaSColors.Surface,
-            border = BorderStroke(1.dp, SaaSColors.Border)
+            border = BorderStroke(1.dp, SaaSColors.Border),
+            shadowElevation = NTDp.cardElevation,
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

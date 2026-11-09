@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,6 +54,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import com.example.ruwia.ui.components.DeliveryTimelineView
 import com.example.ruwia.ui.components.DeliveryPrimaryButton
+import com.example.ruwia.ui.dashboard.NTDp
 
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.rounded.Navigation
@@ -219,6 +221,7 @@ fun EmployeeTasksScreen(
                     shape = RoundedCornerShape(20.dp),
                     color = DeliveryTrackingPalette.Surface,
                     border = BorderStroke(1.dp, DeliveryTrackingPalette.Border),
+                    shadowElevation = NTDp.cardElevation,
                 ) {
                     Row(
                         modifier = Modifier.padding(18.dp),
@@ -441,6 +444,7 @@ private fun DeliveryTaskCard(
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(18.dp), clip = false)
             .clip(RoundedCornerShape(18.dp))
             .background(DeliveryTrackingPalette.Surface)
             .border(1.dp, DeliveryTrackingPalette.Border, RoundedCornerShape(18.dp))

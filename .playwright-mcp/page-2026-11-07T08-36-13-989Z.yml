@@ -1,0 +1,42 @@
+- generic [ref=f11e3]:
+  - generic [ref=f11e5]:
+    - generic [ref=f11e10]:
+      - paragraph [ref=f11e11]: Secure your account with Two-factor Authentication
+      - generic [ref=f11e12]: Keep your Squarespace account secure by adding an additional layer of security, two-factor authentication (2FA).
+    - button "Set up" [ref=f11e14] [cursor=pointer]
+  - banner [ref=f11e16]:
+    - generic [ref=f11e18]:
+      - img "Squarespace" [ref=f11e20]
+      - generic [ref=f11e23]:
+        - link [ref=f11e26] [cursor=pointer]:
+          - /url: /redirects/help
+          - paragraph [ref=f11e27]: Help
+        - link [ref=f11e30] [cursor=pointer]:
+          - /url: /settings
+          - paragraph [ref=f11e31]: Account Settings
+        - button "Manage account for Sathish DS" [ref=f11e34] [cursor=pointer]
+      - tablist [ref=f11e39]:
+        - tab "Dashboard" [ref=f11e41] [cursor=pointer]
+        - tab "Domains" [selected] [ref=f11e43] [cursor=pointer]
+  - main [ref=f11e45]:
+    - generic [ref=f11e50]:
+      - generic [ref=f11e51]:
+        - heading "Domains" [level=1] [ref=f11e52]
+        - generic [ref=f11e53]:
+          - link "Transfer a domain" [ref=f11e54] [cursor=pointer]:
+            - /url: /redirects/transfer-domain
+          - link "Get a domain" [ref=f11e56] [cursor=pointer]:
+            - /url: /redirects/get-domain
+      - generic [ref=f11e58]:
+        - generic [ref=f11e60]:
+          - paragraph [ref=f11e61]: There are no domains
+          - paragraph [ref=f11e62]: Get or transfer a domain to manage them through Squarespace.
+          - link "Learn more" [ref=f11e63] [cursor=pointer]:
+            - /url: https://support.squarespace.com/hc/articles/205812198-Squarespace-domains-overview
+        - generic [ref=f11e66]:
+          - button "Dismiss product upsell" [ref=f11e69] [cursor=pointer]
+          - generic [ref=f11e74]:
+            - generic [ref=f11e75]: suggested for you
+            - heading "Create a beautiful, professional website for your domain using the power of AI or our designer templates" [level=3] [ref=f11e76]
+            - link "Create website" [ref=f11e78] [cursor=pointer]:
+              - /url: https://squarespace.com/templates/get-started

@@ -1,6 +1,8 @@
 package com.example.ruwia.ui.dashboard
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import com.example.ruwia.util.sanitizeError
 import androidx.compose.foundation.shape.CircleShape
@@ -32,10 +34,12 @@ fun NTDashboardSkeleton(contentPadding: PaddingValues = PaddingValues()) {
     Column(
         modifier = Modifier.fillMaxSize().background(NTColors.Background)
             .padding(contentPadding)
+            .verticalScroll(rememberScrollState())
     ) {
         // Header row — mirrors NTDashboardHeader: logo + titles + bell + avatar
         Row(
             modifier = Modifier.fillMaxWidth()
+                .statusBarsPadding()
                 .padding(horizontal = NTDp.screenPad, vertical = NTDp.sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -59,31 +63,70 @@ fun NTDashboardSkeleton(contentPadding: PaddingValues = PaddingValues()) {
         }
         Spacer(modifier = Modifier.height(NTDp.md))
         // Business overview card
-        Box(
-            modifier = Modifier.fillMaxWidth()
-                .padding(horizontal = NTDp.screenPad).height(208.dp)
-                .clip(RoundedCornerShape(24.dp)).background(ntShimmerBrush())
-        )
-        Spacer(modifier = Modifier.height(NTDp.md))
-        // Empty-cases row
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth()
                 .padding(horizontal = NTDp.screenPad)
                 .clip(RoundedCornerShape(24.dp))
-                .background(NTColors.Surface)
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .background(Color(0xFF0F2E2C))
+                .padding(20.dp),
         ) {
-            NTShimmerBox(width = 44.dp, height = 44.dp, shape = RoundedCornerShape(14.dp))
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                NTShimmerBox(width = 90.dp, height = 10.dp)
-                Spacer(modifier = Modifier.height(6.dp))
-                NTShimmerBox(width = 130.dp, height = 18.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                NTShimmerBox(width = 36.dp, height = 36.dp, shape = CircleShape)
+                Spacer(modifier = Modifier.width(10.dp))
+                NTShimmerBox(width = 132.dp, height = 12.dp)
+                Spacer(modifier = Modifier.weight(1f))
+                NTShimmerBox(width = 86.dp, height = 40.dp, shape = RoundedCornerShape(10.dp))
             }
-            NTShimmerBox(width = 84.dp, height = 44.dp, shape = RoundedCornerShape(14.dp))
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                repeat(2) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        NTShimmerBox(width = 88.dp, height = 10.dp)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        NTShimmerBox(width = 110.dp, height = 28.dp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        NTShimmerBox(width = 72.dp, height = 10.dp)
+                    }
+                }
+            }
         }
         Spacer(modifier = Modifier.height(NTDp.lg))
+        // Delivery routes card
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .padding(horizontal = NTDp.screenPad)
+                .clip(RoundedCornerShape(22.dp))
+                .background(NTColors.Surface)
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                NTShimmerBox(width = 44.dp, height = 44.dp, shape = RoundedCornerShape(14.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    NTShimmerBox(width = 124.dp, height = 17.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    NTShimmerBox(width = 184.dp, height = 12.dp)
+                }
+                NTShimmerBox(width = 20.dp, height = 20.dp, shape = CircleShape)
+            }
+            Box(
+                modifier = Modifier.fillMaxWidth()
+                    .height(1.dp)
+                    .background(NTColors.Border)
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    NTShimmerBox(width = 88.dp, height = 10.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    NTShimmerBox(width = 150.dp, height = 14.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    NTShimmerBox(width = 190.dp, height = 12.dp)
+                }
+                NTShimmerBox(width = 36.dp, height = 32.dp)
+            }
+        }
+        Spacer(modifier = Modifier.height(NTDp.md))
         // Analytics section — header + picker + chart card
         Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
             NTShimmerBox(width = 80.dp, height = 10.dp)
@@ -99,6 +142,116 @@ fun NTDashboardSkeleton(contentPadding: PaddingValues = PaddingValues()) {
                 modifier = Modifier.fillMaxWidth().height(272.dp)
                     .clip(RoundedCornerShape(24.dp)).background(ntShimmerBrush())
             )
+        }
+    }
+}
+
+@Composable
+fun NTStockDashboardSkeleton(contentPadding: PaddingValues = PaddingValues()) {
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .background(NTColors.Background)
+            .padding(bottom = contentPadding.calculateBottomPadding())
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .background(NTColors.Surface)
+                .statusBarsPadding()
+                .padding(start = 20.dp, end = 20.dp, bottom = 12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                NTShimmerBox(width = 38.dp, height = 38.dp, shape = RoundedCornerShape(10.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    NTShimmerBox(width = 146.dp, height = 20.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    NTShimmerBox(width = 202.dp, height = 12.dp)
+                }
+                NTShimmerBox(width = 38.dp, height = 38.dp, shape = CircleShape)
+            }
+        }
+
+        Column(
+            modifier = Modifier.weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(top = 4.dp, bottom = 24.dp),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .padding(horizontal = NTDp.screenPad)
+                    .clip(RoundedCornerShape(NTDp.radXxl))
+                    .background(NTColors.Surface)
+                    .padding(NTDp.cardPad),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    NTShimmerBox(width = 34.dp, height = 34.dp, shape = RoundedCornerShape(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    NTShimmerBox(width = 142.dp, height = 10.dp)
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                NTShimmerBox(width = 152.dp, height = 42.dp)
+                Spacer(modifier = Modifier.height(8.dp))
+                NTShimmerBox(width = 108.dp, height = 12.dp)
+                Spacer(modifier = Modifier.height(20.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(NTDp.sm)) {
+                    repeat(3) {
+                        Box(
+                            modifier = Modifier.weight(1f).height(58.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(ntShimmerBrush())
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    repeat(2) {
+                        Box(
+                            modifier = Modifier.weight(1f).height(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(ntShimmerBrush())
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(NTDp.xl))
+            Column(modifier = Modifier.padding(horizontal = NTDp.screenPad)) {
+                NTShimmerBox(width = 138.dp, height = 11.dp)
+                Spacer(modifier = Modifier.height(NTDp.md))
+            }
+            repeat(2) {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .padding(horizontal = NTDp.screenPad)
+                        .clip(RoundedCornerShape(NTDp.radXxl))
+                        .background(NTColors.Surface)
+                        .padding(NTDp.cardPad),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        NTShimmerBox(width = 50.dp, height = 50.dp, shape = CircleShape)
+                        Spacer(modifier = Modifier.width(NTDp.md))
+                        Column(modifier = Modifier.weight(1f)) {
+                            NTShimmerBox(width = 116.dp, height = 15.dp)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            NTShimmerBox(width = 84.dp, height = 12.dp)
+                        }
+                        NTShimmerBox(width = 44.dp, height = 20.dp, shape = RoundedCornerShape(12.dp))
+                    }
+                    Spacer(modifier = Modifier.height(NTDp.md))
+                    Row(horizontalArrangement = Arrangement.spacedBy(NTDp.sm)) {
+                        repeat(3) {
+                            Box(
+                                modifier = Modifier.weight(1f).height(54.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(ntShimmerBrush())
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(NTDp.md))
+            }
         }
     }
 }

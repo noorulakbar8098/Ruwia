@@ -160,7 +160,7 @@ fun NTOrderActivityCard(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(NTDp.radXxl),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Row(modifier = Modifier.padding(NTDp.md), verticalAlignment = Alignment.CenterVertically) {
             Box(

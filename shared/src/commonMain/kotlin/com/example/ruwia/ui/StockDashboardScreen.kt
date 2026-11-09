@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -70,7 +71,7 @@ fun StockDashboardScreen(
 ) {
     Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
         when {
-            state.loading       -> NTDashboardSkeleton(contentPadding)
+            state.loading       -> NTStockDashboardSkeleton(contentPadding)
             state.error != null -> NTErrorState(
                 message        = state.error,
                 onRetry        = onRefresh,
@@ -365,6 +366,7 @@ private fun CombinedStockCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radXxl), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radXxl))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radXxl))
             .padding(NTDp.cardPad),
@@ -572,6 +574,7 @@ private fun ShopStockCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radXxl), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radXxl))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radXxl))
             .clickable { expanded.value = !expanded.value }
@@ -742,6 +745,7 @@ private fun AllProductsStockCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radXxl), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radXxl))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radXxl))
             .padding(NTDp.cardPad),

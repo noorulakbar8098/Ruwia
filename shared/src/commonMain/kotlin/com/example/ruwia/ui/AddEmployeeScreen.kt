@@ -455,7 +455,7 @@ private fun AESectionCard(number: Int, title: String, content: @Composable Colum
         modifier = Modifier.fillMaxWidth().padding(horizontal = NTDp.screenPad),
         shape = RoundedCornerShape(NTDp.radXxl),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Column(modifier = Modifier.padding(NTDp.cardPad)) {
             Row(

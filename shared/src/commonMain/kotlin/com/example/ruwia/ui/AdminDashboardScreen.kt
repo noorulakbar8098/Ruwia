@@ -1,6 +1,7 @@
 package com.example.ruwia.ui
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,6 +51,9 @@ import com.example.ruwia.ui.admin.ProfitDashboardScreen
 import com.example.ruwia.ui.admin.InventoryScreen
 import com.example.ruwia.ui.dashboard.*
 import com.example.ruwia.ui.components.SaaSLoadingOverlay
+import org.jetbrains.compose.resources.painterResource
+import ruwia.shared.generated.resources.Res
+import ruwia.shared.generated.resources.home_background
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -634,6 +639,7 @@ private fun AdminDashboardContentSwitcher(
                      onResetEmptyCases      = { vm.resetEmptyCases() },
                      onOpenReceiveEmptyCans = { showReceiveEmptyCansDialog = true },
                      onShopNameChange       = { index, name -> vm.updateShopName(index, name) },
+                     onAdminConsoleNameChange = { name -> vm.updateAdminConsoleName(name) },
                      contentPadding         = contentPadding
                  )
         }
@@ -727,8 +733,6 @@ private fun AdminDashboardContent(
         revGrowth = monthMetrics.revenueGrowthPercent,
     )
 
-    val displayShopName = state.shopNames.firstOrNull()?.takeIf { it.isNotBlank() } ?: "ALHUDHA"
-
     // ── Overview numbers for the selected dropdown period ──────
     // Month / Last Month show NET PROFIT (expense data exists only for
     // these two months). Quarter / Yearly fall back to TOTAL REVENUE.
@@ -787,20 +791,26 @@ private fun AdminDashboardContent(
         NTDateRange.YEARLY -> revenueMetrics.revenueGrowthPercent
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(NTColors.Background),
-        contentPadding = PaddingValues(
-            top    = contentPadding.calculateTopPadding(),
-            bottom = contentPadding.calculateBottomPadding() + 16.dp
+    Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
+        Image(
+            painter = painterResource(Res.drawable.home_background),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
         )
-    ) {
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                top    = contentPadding.calculateTopPadding(),
+                bottom = contentPadding.calculateBottomPadding() + 16.dp
+            )
+        ) {
         // Header
         item {
             NTDashboardHeader(
-                shopName            = displayShopName,
                 adminName           = adminName.ifBlank { "Admin" },
+                consoleName         = state.adminConsoleName,
                 notificationCount   = pendingOrders + state.unreadNotifications,
                 onAvatarClick       = onOpenSettings,
                 onSearchClick       = {},
@@ -914,6 +924,7 @@ private fun AdminDashboardContent(
         }
         item { Spacer(modifier = Modifier.height(NTDp.lg)) }
     }
+    }
 }
 
 // ── Delivery tasks card ─────────────────────────────────────────
@@ -934,7 +945,7 @@ private fun DeliveryTasksOverviewCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
-            .shadow(1.dp, RoundedCornerShape(22.dp))
+            .shadow(NTDp.cardElevation, RoundedCornerShape(22.dp))
             .clip(RoundedCornerShape(22.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(22.dp))
@@ -1052,7 +1063,7 @@ private fun StockAlertCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
-            .shadow(3.dp, RoundedCornerShape(24.dp))
+            .shadow(NTDp.cardElevation, RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(24.dp))
@@ -1173,6 +1184,7 @@ private fun NTStaffCard(employee: EmployeeInfo, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
             .padding(NTDp.md),
@@ -1219,7 +1231,7 @@ private fun NTOrderCard(order: Order, @Suppress("UNUSED_PARAMETER") onAssign: (S
     Card(
         shape = RoundedCornerShape(NTDp.radXxl),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Row(modifier = Modifier.padding(NTDp.md), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -1277,6 +1289,7 @@ fun AdminCustomersTab(customers: List<Customer>, contentPadding: PaddingValues) 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
                     .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
                     .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
                     .padding(NTDp.md),
@@ -1349,6 +1362,7 @@ fun AdminReportsTab(state: AdminState, contentPadding: PaddingValues) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
                     .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
                     .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
                     .padding(NTDp.md),
@@ -1377,6 +1391,7 @@ fun AdminReportsTab(state: AdminState, contentPadding: PaddingValues) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
                     .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
                     .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
                     .padding(NTDp.md),

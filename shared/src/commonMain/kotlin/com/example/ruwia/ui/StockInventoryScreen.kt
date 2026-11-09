@@ -1008,10 +1008,10 @@ private fun ProductBreakdownCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp)
-            .shadow(2.dp, RoundedCornerShape(20.dp), ambientColor = SaaSColors.CardShadow, spotColor = SaaSColors.CardShadow),
+            .padding(horizontal = 24.dp),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation),
         // Read-only cards don't expand: there are no actions to reveal.
         onClick = { if (!readOnly && product.isActive) showActions = !showActions }
     ) {
@@ -1372,7 +1372,7 @@ private fun RecentActivityFeed(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp)
-            .shadow(3.dp, RoundedCornerShape(24.dp))
+            .shadow(NTDp.cardElevation, RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
             .background(SaaSColors.Surface)
             .border(1.dp, SaaSColors.Border, RoundedCornerShape(24.dp))
@@ -1729,7 +1729,8 @@ private fun CustomerPricePickerDialog(
                 .fillMaxWidth(0.94f)
                 .padding(vertical = 16.dp),
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface)
+            colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
         ) {
             Column(
                 modifier = Modifier
@@ -1943,7 +1944,8 @@ private fun CustomerPricePickerDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(16.dp),
                                 colors = CardDefaults.cardColors(containerColor = SaaSColors.SurfaceVar),
-                                border = BorderStroke(1.dp, SaaSColors.Border)
+                                border = BorderStroke(1.dp, SaaSColors.Border),
+                                elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
                             ) {
                                 Column(
                                     modifier = Modifier.padding(12.dp)
@@ -2221,7 +2223,8 @@ private fun TransferStockDialog(
                 .fillMaxWidth()
                 .padding(16.dp),
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface)
+            colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -2438,7 +2441,8 @@ private fun AdjustStockDialog(
                 .fillMaxWidth()
                 .padding(16.dp),
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface)
+            colors = CardDefaults.cardColors(containerColor = SaaSColors.Surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)

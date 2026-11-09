@@ -633,7 +633,7 @@ private fun TxSummaryCard(
 ) {
     Column(
         modifier = modifier
-            .shadow(2.dp, RoundedCornerShape(20.dp))
+            .shadow(NTDp.cardElevation, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(20.dp))
@@ -702,7 +702,7 @@ private fun TransactionCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
-            .shadow(2.dp, RoundedCornerShape(20.dp))
+            .shadow(NTDp.cardElevation, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(20.dp))
@@ -1958,7 +1958,7 @@ private fun TxPremiumCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(3.dp, RoundedCornerShape(20.dp))
+            .shadow(NTDp.cardElevation, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border.copy(alpha = 0.75f), RoundedCornerShape(20.dp))

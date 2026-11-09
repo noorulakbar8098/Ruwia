@@ -284,6 +284,7 @@ private fun ProductStockCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radXxl), clip = false)
             .clip(RoundedCornerShape(NTDp.radXxl))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
@@ -341,9 +342,10 @@ private fun TodayStockCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(NTDp.radXxl), ambientColor = NTColors.GradAccent, spotColor = NTColors.GradAccent),
+            .fillMaxWidth(),
         shape = RoundedCornerShape(NTDp.radXxl),
-        colors = CardDefaults.cardColors(containerColor = NTColors.Surface)
+        colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(

@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -471,6 +472,7 @@ val isInward = movement.type == "inward"
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(14.dp), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(14.dp))
             .clickable { expanded = !expanded }
             .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -657,4 +659,3 @@ private fun EntriesEmptyState(modifier: Modifier = Modifier) {
         )
     }
 }
-

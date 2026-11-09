@@ -1,0 +1,447 @@
+- generic [ref=f84e1]:
+  - generic [ref=f84e2]:
+    - navigation "Website pages and features" [ref=f84e4]:
+      - generic [ref=f84e5]:
+        - generic [aria-hidden] [ref=f84e6]:
+          - link [ref=f84e7] [cursor=pointer]:
+            - /url: /config/
+          - generic [ref=f84e11]:
+            - button [ref=f84e12] [cursor=pointer]
+            - button [ref=f84e17] [cursor=pointer]
+        - generic [ref=f84e24]:
+          - generic [ref=f84e25]:
+            - link [ref=f84e34] [cursor=pointer]:
+              - /url: /config/
+              - paragraph [ref=f84e36]: Home
+            - link [ref=f84e46] [cursor=pointer]:
+              - /url: /config/website
+              - paragraph [ref=f84e48]: Website
+            - generic [ref=f84e51]:
+              - link [ref=f84e58] [cursor=pointer]:
+                - /url: /config/commerce
+                - paragraph [ref=f84e60]: Products & Services
+              - generic [aria-hidden]:
+                - generic:
+                  - checkbox [checked]
+            - generic [ref=f84e63]:
+              - link [ref=f84e70] [cursor=pointer]:
+                - /url: /config/content-and-memberships
+                - paragraph [ref=f84e72]: Content & Memberships
+              - generic [aria-hidden]:
+                - generic:
+                  - checkbox [checked]
+            - generic [ref=f84e75]:
+              - link [ref=f84e82] [cursor=pointer]:
+                - /url: https://secure.acuityscheduling.com/oauth2/squarespace-attached?website_id=6aeee3d47691b16d44e777c8&analytics_id=501f2b6b-8d0a-4f84-b7cc-b4eb7c649ea6
+                - paragraph [ref=f84e85]: Scheduling
+              - generic [aria-hidden]:
+                - generic:
+                  - checkbox [checked]
+            - generic [ref=f84e88]:
+              - link [ref=f84e95] [cursor=pointer]:
+                - /url: /config/donations
+                - paragraph [ref=f84e97]: Donations
+              - generic [aria-hidden]:
+                - generic:
+                  - checkbox [checked]
+            - generic [ref=f84e100]:
+              - link [ref=f84e107] [cursor=pointer]:
+                - /url: /config/invoicing
+                - paragraph [ref=f84e109]: Invoicing & Pay Links
+              - generic [aria-hidden]:
+                - generic:
+                  - checkbox [checked]
+            - status [ref=f84e110]
+          - generic [aria-hidden] [ref=f84e111]:
+            - link [ref=f84e120] [cursor=pointer]:
+              - /url: /config/marketing/campaigns
+              - paragraph [ref=f84e122]: Campaigns
+            - link [ref=f84e131] [cursor=pointer]:
+              - /url: /config/profiles
+              - paragraph [ref=f84e133]: Contacts
+            - link [ref=f84e142] [cursor=pointer]:
+              - /url: /config/analytics
+              - paragraph [ref=f84e144]: Analytics
+            - link [ref=f84e153] [cursor=pointer]:
+              - /url: /config/finance
+              - paragraph [ref=f84e155]: Finance
+        - generic [ref=f84e159]:
+          - button [ref=f84e160] [cursor=pointer]
+          - list [ref=f84e163]:
+            - listitem [ref=f84e164]:
+              - button [ref=f84e165] [cursor=pointer]
+            - listitem [ref=f84e170]:
+              - button [ref=f84e171] [cursor=pointer]
+            - listitem [ref=f84e176]:
+              - button [ref=f84e177] [cursor=pointer]
+    - generic [ref=f84e183]:
+      - main [ref=f84e184]:
+        - generic [ref=f84e192]:
+          - generic [ref=f84e195]:
+            - heading [level=1] [ref=f84e198]: Welcome, Sathish
+            - generic [ref=f84e199]:
+              - button [ref=f84e200] [cursor=pointer]: Customize Home
+              - button [ref=f84e201] [cursor=pointer]:
+                - generic [ref=f84e202]: Edit site
+          - generic [ref=f84e206]:
+            - heading [level=2] [ref=f84e207]: Get started
+            - generic [ref=f84e210]:
+              - generic [ref=f84e212]:
+                - generic [ref=f84e215]:
+                  - button [ref=f84e216] [cursor=pointer]:
+                    - generic [ref=f84e220]:
+                      - paragraph [ref=f84e221]: Set up your website
+                      - paragraph [ref=f84e224]: 1 / 8
+                  - generic [ref=f84e229]:
+                    - generic [ref=f84e232]:
+                      - button [ref=f84e234] [cursor=pointer]
+                      - paragraph [ref=f84e238]: Personalize your site header and logo
+                      - button [ref=f84e239] [cursor=pointer]
+                    - generic [ref=f84e244]:
+                      - button [ref=f84e246] [cursor=pointer]
+                      - paragraph [ref=f84e250]: Customize your brand style
+                      - button [ref=f84e251] [cursor=pointer]
+                    - generic [ref=f84e256]:
+                      - button [ref=f84e258] [cursor=pointer]
+                      - paragraph [ref=f84e262]: Manage site navigation
+                      - button [ref=f84e263] [cursor=pointer]
+                    - generic [ref=f84e268]:
+                      - button [ref=f84e270] [cursor=pointer]
+                      - paragraph [ref=f84e274]: Edit site content
+                      - button [ref=f84e275] [cursor=pointer]
+                    - generic [ref=f84e280]:
+                      - button [ref=f84e282] [cursor=pointer]
+                      - paragraph [ref=f84e286]: Modify SEO for search
+                      - button [ref=f84e287] [cursor=pointer]
+                    - generic [ref=f84e292]:
+                      - button [ref=f84e294] [cursor=pointer]
+                      - paragraph [ref=f84e300]:
+                        - text: Manage your domain
+                        - generic [ref=f84e301]: ", Task complete"
+                      - button [ref=f84e302] [cursor=pointer]
+                    - generic [ref=f84e307]:
+                      - paragraph [ref=f84e312]: Publish your site
+                      - button [ref=f84e313] [cursor=pointer]
+                    - generic [ref=f84e318]:
+                      - button [ref=f84e320] [cursor=pointer]
+                      - paragraph [ref=f84e324]: Review your suggested AI prompts
+                      - button [ref=f84e325] [cursor=pointer]
+                - generic [ref=f84e330]:
+                  - button [ref=f84e331] [cursor=pointer]:
+                    - generic [ref=f84e335]:
+                      - paragraph [ref=f84e336]: Set up to sell group events
+                      - paragraph [ref=f84e339]: 0 / 3
+                  - generic [ref=f84e343]:
+                    - generic [ref=f84e346]:
+                      - button [ref=f84e348] [cursor=pointer]
+                      - paragraph [ref=f84e352]: Add a group event
+                      - button [ref=f84e353] [cursor=pointer]
+                    - generic [ref=f84e358]:
+                      - button [ref=f84e360] [cursor=pointer]
+                      - paragraph [ref=f84e364]: Connect a payment processor
+                      - button [ref=f84e365] [cursor=pointer]
+                    - generic [ref=f84e370]:
+                      - button [ref=f84e372] [cursor=pointer]
+                      - paragraph [ref=f84e376]: Customize your checkout
+                      - button [ref=f84e377] [cursor=pointer]
+              - generic [ref=f84e382]:
+                - generic [ref=f84e383]: Private
+                - generic [ref=f84e394]:
+                  - generic [ref=f84e395]:
+                    - heading [level=1] [ref=f84e396]: Your Site Title
+                    - link [ref=f84e399] [cursor=pointer]:
+                      - /url: https://salmon-cobalt-bnls.squarespace.com
+                      - paragraph [ref=f84e400]: salmon-cobalt-bnls.squarespace.com
+                  - generic [ref=f84e401]:
+                    - button [ref=f84e402] [cursor=pointer]:
+                      - generic [ref=f84e403]: Get a custom domain
+                    - button [ref=f84e408] [cursor=pointer]:
+                      - generic [ref=f84e409]: Publish your site
+          - generic [ref=f84e417]:
+            - heading [level=2] [ref=f84e418]: Learn the basics
+            - generic [ref=f84e421]:
+              - generic [ref=f84e422]:
+                - tablist [ref=f84e430]:
+                  - tab [selected] [ref=f84e432] [cursor=pointer]: Website
+                  - tab [ref=f84e434] [cursor=pointer]: Group Events
+                - generic [ref=f84e440]:
+                  - button [disabled] [ref=f84e441]
+                  - button [ref=f84e445] [cursor=pointer]
+              - generic [ref=f84e450]:
+                - button [ref=f84e452] [cursor=pointer]:
+                  - generic [ref=f84e454]:
+                    - paragraph [ref=f84e455]: Adding Page Sections
+                    - generic [ref=f84e456]: 00:49
+                - button [ref=f84e460] [cursor=pointer]:
+                  - generic [ref=f84e462]:
+                    - paragraph [ref=f84e463]: Adding Content with Blocks
+                    - generic [ref=f84e464]: 00:44
+                - button [ref=f84e468] [cursor=pointer]:
+                  - generic [ref=f84e470]:
+                    - paragraph [ref=f84e471]: Changing Fonts
+                    - generic [ref=f84e472]: 1:27
+                - button [ref=f84e476] [cursor=pointer]:
+                  - generic [ref=f84e478]:
+                    - paragraph [ref=f84e479]: Styling Buttons
+                    - generic [ref=f84e480]: 00:58
+                - button [ref=f84e484] [cursor=pointer]:
+                  - generic [ref=f84e486]:
+                    - paragraph [ref=f84e487]: Using Image Blocks
+                    - generic [ref=f84e488]: 00:58
+                - button [ref=f84e492] [cursor=pointer]:
+                  - generic [ref=f84e494]:
+                    - paragraph [ref=f84e495]: Using Gallery Sections
+                    - generic [ref=f84e496]: 2:34
+                - button [ref=f84e500] [cursor=pointer]:
+                  - generic [ref=f84e502]:
+                    - paragraph [ref=f84e503]: Adding Background Videos
+                    - generic [ref=f84e504]: 1:03
+                - button [ref=f84e508] [cursor=pointer]:
+                  - generic [ref=f84e510]:
+                    - paragraph [ref=f84e511]: Using Fluid Engine
+                    - generic [ref=f84e512]: 1:30
+                - button [ref=f84e516] [cursor=pointer]:
+                  - generic [ref=f84e518]:
+                    - paragraph [ref=f84e519]: Understanding the Not Linked Section
+                    - generic [ref=f84e520]: 00:52
+          - generic [ref=f84e525]:
+            - heading [level=2] [ref=f84e527]: Power your business with AI
+            - generic [ref=f84e529]:
+              - paragraph [ref=f84e535]: Clarkson
+              - generic [ref=f84e536]:
+                - generic [ref=f84e538]:
+                  - button [ref=f84e540] [cursor=pointer]:
+                    - generic [ref=f84e542]:
+                      - paragraph [ref=f84e543]: AI Visibility
+                      - heading [level=3] [ref=f84e544]: See how searches related to your brand are ranking against competitors on AI platforms.
+                  - button [ref=f84e552] [cursor=pointer]:
+                    - generic [ref=f84e554]:
+                      - paragraph [ref=f84e555]: SEO Scanner
+                      - heading [level=3] [ref=f84e556]: Add missing metadata and alt text to your pages and images for better search visibility.
+                  - button [ref=f84e564] [cursor=pointer]:
+                    - generic [ref=f84e566]:
+                      - paragraph [ref=f84e567]: Product Composer
+                      - heading [level=3] [ref=f84e568]: Upload a photo or share some info to generate site-ready product details.
+                  - button [ref=f84e576] [cursor=pointer]:
+                    - generic [ref=f84e578]:
+                      - paragraph [ref=f84e579]: Discount Composer
+                      - heading [level=3] [ref=f84e580]: Browse discounts designed for your specific offerings.
+                - generic [ref=f84e588]:
+                  - button [disabled] [ref=f84e589]
+                  - button [ref=f84e593] [cursor=pointer]
+          - generic [ref=f84e599]:
+            - heading [level=2] [ref=f84e601]: Discover more
+            - generic [ref=f84e605]:
+              - generic [ref=f84e607]:
+                - button [ref=f84e608] [cursor=pointer]:
+                  - generic [ref=f84e610]: Maximize profits with flexible payment options and low fees
+                - button [ref=f84e616] [cursor=pointer]:
+                  - generic [ref=f84e617]:
+                    - generic [ref=f84e618]: Pro Tip
+                    - paragraph [ref=f84e619]: Use service page layouts to give in-depth details on experiences like camps, travel packages, and more.
+                    - paragraph [ref=f84e620]: Add service page
+              - generic [ref=f84e622]:
+                - button [ref=f84e623] [cursor=pointer]:
+                  - generic [ref=f84e624]:
+                    - generic [ref=f84e625]: Did you know?
+                    - paragraph [ref=f84e626]: Adding a service product lets customers register for your offerings directly through your website.
+                    - paragraph [ref=f84e627]: Add service product
+                - button [ref=f84e628] [cursor=pointer]:
+                  - generic [ref=f84e630]: Keep guests and attendees up to date with professional, branded emails
+        - generic [ref=f84e637]:
+          - navigation [ref=f84e639]:
+            - button [ref=f84e641] [cursor=pointer]:
+              - generic [ref=f84e642]: Edit
+            - generic [ref=f84e647]:
+              - generic [ref=f84e648]: Home
+              - generic [ref=f84e649]: Page · Published
+            - list [ref=f84e652]:
+              - listitem [ref=f84e653]:
+                - radiogroup [ref=f84e656]:
+                  - radio [ref=f84e657] [cursor=pointer]
+                  - radio [checked] [ref=f84e661] [cursor=pointer]
+              - listitem [ref=f84e666]:
+                - button [ref=f84e668] [cursor=pointer]
+              - listitem [ref=f84e673]:
+                - button [ref=f84e675] [cursor=pointer]
+          - generic [ref=f84e679]:
+            - button
+            - iframe [ref=f84e682]:
+              - generic [ref=f87e2]:
+                - banner:
+                  - generic:
+                    - generic:
+                      - button "Edit Site Header"
+                  - generic [ref=f87e3]:
+                    - link "Skip to Content" [ref=f87e4] [cursor=pointer]:
+                      - /url: "#page"
+                    - generic [ref=f87e7]:
+                      - link "Your Site Title" [ref=f87e11] [cursor=pointer]:
+                        - /url: /
+                      - button "Open Menu" [ref=f87e13] [cursor=pointer]
+                  - text: Edit Header
+                - main [ref=f87e19]:
+                  - article [ref=f87e20]:
+                    - generic [ref=f87e21]:
+                      - heading "Specialized Solutions Delivered with Precision" [level=1] [ref=f87e42]
+                      - generic [ref=f87e48]:
+                        - heading "Digital Memberships and Courses" [level=1] [ref=f87e54]
+                        - img "Placeholder" [ref=f87e63]
+                        - generic [ref=f87e68]:
+                          - img [ref=f87e69] [cursor=pointer]
+                          - generic [ref=f87e74]:
+                            - generic [ref=f87e75]: Gold Subscription
+                            - status [ref=f87e76]:
+                              - generic [ref=f87e77]: ₹100.00
+                              - generic [ref=f87e78]: Every month
+                            - paragraph [ref=f87e79]: Get anytime access to our growing collection of classes, workshops, and exclusive content. New items added every month.
+                            - button "Sign up" [ref=f87e81] [cursor=pointer]
+                        - img "Placeholder" [ref=f87e91]
+                        - generic [ref=f87e96]:
+                          - img [ref=f87e97] [cursor=pointer]
+                          - generic [ref=f87e102]:
+                            - generic [ref=f87e103]: Gold Subscription
+                            - status [ref=f87e104]:
+                              - generic [ref=f87e105]: ₹100.00
+                              - generic [ref=f87e106]: Every month
+                            - paragraph [ref=f87e107]: Get anytime access to our growing collection of classes, workshops, and exclusive content. New items added every month.
+                            - button "Sign up" [ref=f87e109] [cursor=pointer]
+                        - img "Placeholder" [ref=f87e119]
+                        - generic [ref=f87e124]:
+                          - img [ref=f87e125] [cursor=pointer]
+                          - generic [ref=f87e130]:
+                            - generic [ref=f87e131]: Gold Subscription
+                            - status [ref=f87e132]:
+                              - generic [ref=f87e133]: ₹100.00
+                              - generic [ref=f87e134]: Every month
+                            - paragraph [ref=f87e135]: Get anytime access to our growing collection of classes, workshops, and exclusive content. New items added every month.
+                            - button "Sign up" [ref=f87e137] [cursor=pointer]
+                      - generic [ref=f87e144]:
+                        - heading "Commitment to Measurable Value" [level=1] [ref=f87e150]
+                        - paragraph [ref=f87e156]: Since inception, the organization has prioritized empirical methodologies and disciplined execution, delivering quantifiable outcomes across multiple sectors.
+                        - link "Learn More" [ref=f87e161] [cursor=pointer]:
+                          - /url: /about
+                        - img "Placeholder" [ref=f87e170]
+                      - generic [ref=f87e177]:
+                        - heading "Connect on Professional Networks" [level=2] [ref=f87e183]
+                        - img "Placeholder" [ref=f87e192]
+                        - img "Placeholder" [ref=f87e202]
+                        - img "Placeholder" [ref=f87e212]
+                        - link "Follow" [ref=f87e227] [cursor=pointer]:
+                          - /url: https://www.instagram.com/squarespace/
+                    - text: Edit Page
+                - contentinfo [ref=f87e228]:
+                  - generic [ref=f87e229]:
+                    - generic:
+                      - button "Edit Site Footer"
+                  - generic [ref=f87e235]:
+                    - heading "Your Site Title" [level=2] [ref=f87e241]
+                    - paragraph [ref=f87e247]:
+                      - text: Made with
+                      - link "Squarespace" [ref=f87e248] [cursor=pointer]:
+                        - /url: https://squarespace.com
+                    - heading "email@example.com" [level=2] [ref=f87e254]
+                    - navigation [ref=f87e260]:
+                      - link "x-formerly-twitter-unauth" [ref=f87e261] [cursor=pointer]:
+                        - /url: https://x.com/squarespace?lang=en
+                      - link "instagram-unauth" [ref=f87e266] [cursor=pointer]:
+                        - /url: https://www.instagram.com/squarespace/?hl=en
+                      - link "facebook-unauth" [ref=f87e271] [cursor=pointer]:
+                        - /url: https://www.facebook.com/squarespace/
+                  - text: Edit Footer
+      - generic [ref=f84e684]:
+        - generic [ref=f84e685]: Your trial ends in 14 days. Upgrade now to get the most out of your site.
+        - button [ref=f84e687] [cursor=pointer]: Subscribe
+  - generic [aria-hidden]:
+    - button [aria-hidden]:
+      - generic: 0 updates
+  - generic [aria-hidden]:
+    - button [aria-hidden]:
+      - generic: 0 updates
+  - dialog "Settings" [ref=f84e690]:
+    - generic [ref=f84e692]:
+      - list [ref=f84e698]:
+        - listitem [ref=f84e699]:
+          - list [ref=f84e700]:
+            - listitem [ref=f84e701]:
+              - generic [ref=f84e702]: Settings
+        - listitem [ref=f84e704]:
+          - list [ref=f84e705]:
+            - listitem [ref=f84e706]:
+              - button "Search" [active] [ref=f84e708] [cursor=pointer]
+            - listitem [ref=f84e712]:
+              - button "Close" [ref=f84e714] [cursor=pointer]
+      - generic [ref=f84e718]:
+        - generic [ref=f84e723]:
+          - link [ref=f84e725] [cursor=pointer]:
+            - /url: /settings/website
+            - paragraph [ref=f84e729]: Website
+            - button "Website" [ref=f84e730]
+          - link [ref=f84e732] [cursor=pointer]:
+            - /url: /settings/domains-email
+            - paragraph [ref=f84e736]: Domains & Email
+            - button "Domains & Email" [ref=f84e738]
+          - link [ref=f84e740] [cursor=pointer]:
+            - /url: /settings/customer-notifications
+            - paragraph [ref=f84e744]: Customer Notifications
+            - button "Customer Notifications" [ref=f84e745]
+          - link [ref=f84e747] [cursor=pointer]:
+            - /url: /settings/selling
+            - paragraph [ref=f84e751]: Selling
+            - button "Selling" [ref=f84e752]
+          - link [ref=f84e754] [cursor=pointer]:
+            - /url: /settings/brand
+            - paragraph [ref=f84e758]: Brand
+            - button "Brand" [ref=f84e759]
+          - link [ref=f84e761] [cursor=pointer]:
+            - /url: /settings/marketing
+            - paragraph [ref=f84e765]: Marketing
+            - button "Marketing" [ref=f84e766]
+          - link [ref=f84e768] [cursor=pointer]:
+            - /url: /settings/extensions
+            - paragraph [ref=f84e772]: Extensions
+            - button "Extensions" [ref=f84e774]
+          - link [ref=f84e776] [cursor=pointer]:
+            - /url: /settings/third-party-tools
+            - paragraph [ref=f84e780]: Third Party Tools
+            - button "Third Party Tools" [ref=f84e781]
+          - link [ref=f84e783] [cursor=pointer]:
+            - /url: /settings/permissions-ownership
+            - paragraph [ref=f84e787]: Permissions & Ownership
+            - button "Permissions & Ownership" [ref=f84e788]
+          - link [ref=f84e790] [cursor=pointer]:
+            - /url: /settings/billing
+            - paragraph [ref=f84e794]: Billing
+            - button "Billing" [ref=f84e795]
+          - link [ref=f84e797] [cursor=pointer]:
+            - /url: /settings/developer-tools
+            - paragraph [ref=f84e801]: Developer Tools
+            - button "Developer Tools" [ref=f84e802]
+        - generic [ref=f84e810]:
+          - navigation "Breadcrumbs" [ref=f84e811]:
+            - list [ref=f84e812]:
+              - listitem [ref=f84e813]:
+                - link "Domains & Email" [ref=f84e814] [cursor=pointer]:
+                  - /url: /config/settings/domains-email
+              - listitem [aria-hidden] [ref=f84e817]: /
+              - listitem [ref=f84e818]:
+                - paragraph [ref=f84e819]: Domains
+          - heading "Domains" [level=1] [ref=f84e821]
+          - generic [ref=f84e823]:
+            - text: Buy, connect, and manage domains associated with your website.
+            - link "Learn more" [ref=f84e824] [cursor=pointer]:
+              - /url: /api/auth/sso/help?path=/hc/articles/205812088
+          - list [ref=f84e825]:
+            - listitem [ref=f84e826]:
+              - button "Get a Domain" [ref=f84e827] [cursor=pointer]
+            - listitem [ref=f84e829]:
+              - button "Use a Domain I Own" [ref=f84e830] [cursor=pointer]
+          - generic [ref=f84e832]: Built-in Domain
+          - list [ref=f84e833]:
+            - listitem [ref=f84e834]:
+              - link "salmon-cobalt-bnls.squarespace.com Never Expires" [ref=f84e835] [cursor=pointer]:
+                - /url: /config/settings/domains-email/domains/built-in/salmon-cobalt-bnls.squarespace.com
+                - generic [ref=f84e838]:
+                  - paragraph [ref=f84e839]: salmon-cobalt-bnls.squarespace.com
+                  - generic [ref=f84e840]: Never Expires
+                - separator [aria-hidden] [ref=f84e844]

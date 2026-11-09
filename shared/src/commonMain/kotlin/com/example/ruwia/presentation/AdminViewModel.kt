@@ -102,6 +102,8 @@ data class AdminState(
     val shopNames: List<String> = listOf("Shop 1", "Shop 2"),
     /** Custom shop name set by the admin (kept as the primary display fallback). */
     val shopName: String = "",
+    /** Custom label shown above the admin's name on the dashboard. */
+    val adminConsoleName: String = "ADMIN CONSOLE",
     /** Global baseline subtracted from the live "Empty Cases" figure. */
     val emptyCansBaseline: Int = 0,
     /** Active customer-specific prices per product, keyed by product id. */
@@ -122,6 +124,7 @@ private data class HomeSnapshot(
     val tasks: List<DeliveryTask>,
     val feed: List<NotificationItem>,
     val shopNames: List<String>,
+    val adminConsoleName: String,
     val baseline: Int,
     val expense: MonthlyExpense?,
     val lastExpense: MonthlyExpense?,
@@ -218,6 +221,7 @@ class AdminViewModel(
                     val orders     = async { repo.getAllOrders() }
                     val tasks      = async { repo.getDeliveryTasks() }
                     val shopNames  = async { repo.getShopNames() }
+                    val adminConsoleName = async { repo.getAdminConsoleName() }
                     val baseline   = async { repo.getEmptyCansBaseline() }
                     val expense    = async { repo.getMonthlyExpense(currentMonth) }
                     val lastExpense = async { repo.getMonthlyExpense(previousMonth) }
@@ -232,6 +236,7 @@ class AdminViewModel(
                         tasks        = tasks.await(),
                         feed         = feed.await(),
                         shopNames    = shopNames.await(),
+                        adminConsoleName = adminConsoleName.await(),
                         baseline     = baseline.await(),
                         expense      = expense.await(),
                         lastExpense  = lastExpense.await(),
@@ -267,6 +272,7 @@ class AdminViewModel(
                     previousMonth       = previousMonth,
                     shopNames           = snapshot.shopNames,
                     shopName            = snapshot.shopNames.firstOrNull().orEmpty(),
+                    adminConsoleName    = snapshot.adminConsoleName,
                     emptyCansBaseline   = if (snapshot.baseline >= 0) snapshot.baseline else previous.emptyCansBaseline,
                     notifications       = snapshot.feed,
                     unreadNotifications = snapshot.feed.count { !it.isRead },
@@ -1285,6 +1291,21 @@ class AdminViewModel(
             }
             .onFailure {
                 _state.value = _state.value.copy(error = it.message, loading = false)
+            }
+    }
+
+    fun updateAdminConsoleName(newName: String) = viewModelScope.launch {
+        val cleanName = newName.trim()
+        if (cleanName.isBlank()) {
+            _state.value = _state.value.copy(error = "Admin console name cannot be blank.")
+            return@launch
+        }
+        runCatching { repo.updateAdminConsoleName(cleanName) }
+            .onSuccess {
+                _state.value = _state.value.copy(adminConsoleName = cleanName)
+            }
+            .onFailure {
+                _state.value = _state.value.copy(error = it.message ?: "Could not update admin console name.")
             }
     }
 

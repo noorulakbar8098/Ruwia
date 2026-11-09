@@ -2,6 +2,7 @@ package com.example.ruwia.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +29,9 @@ import com.example.ruwia.domain.Order
 import com.example.ruwia.domain.Payment
 import com.example.ruwia.presentation.UserViewModel
 import com.example.ruwia.ui.dashboard.*
+import org.jetbrains.compose.resources.painterResource
+import ruwia.shared.generated.resources.Res
+import ruwia.shared.generated.resources.home_background
 
 @Composable
 fun UserHomeScreen(
@@ -64,6 +69,13 @@ fun UserHomeScreen(
             .fillMaxSize()
             .background(NTColors.Background)
     ) {
+        Image(
+            painter = painterResource(Res.drawable.home_background),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+
         when {
             state.loading        -> UserSkeleton()
             state.error != null  -> NTErrorState(
@@ -463,7 +475,7 @@ private fun UserKpiCard(
         modifier = modifier,
         shape = RoundedCornerShape(NTDp.radXxl),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Column(modifier = Modifier.padding(NTDp.cardPad)) {
             Box(
@@ -597,7 +609,7 @@ private fun UserOrderCard(order: Order) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = NTDp.screenPad),
         shape = RoundedCornerShape(NTDp.radXxl),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Row(
             modifier = Modifier.padding(NTDp.md),
@@ -655,7 +667,7 @@ private fun UserPaymentCard(payment: Payment) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = NTDp.screenPad),
         shape = RoundedCornerShape(NTDp.radXxl),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Row(
             modifier = Modifier.padding(NTDp.md),

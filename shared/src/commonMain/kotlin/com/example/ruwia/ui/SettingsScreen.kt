@@ -55,6 +55,7 @@ fun SettingsScreen(
     onResetEmptyCases: () -> Unit = {},
     onOpenReceiveEmptyCans: () -> Unit = {},
     onShopNameChange: (Int, String) -> Unit = { _, _ -> },
+    onAdminConsoleNameChange: (String) -> Unit = {},
     contentPadding: PaddingValues = PaddingValues()
 ) {
     // Toggle states
@@ -67,8 +68,11 @@ fun SettingsScreen(
     var isLoggingOut   by remember { mutableStateOf(false) }
     var shopOneName    by remember { mutableStateOf(state.shopNames.getOrNull(0).orEmpty()) }
     var shopTwoName    by remember { mutableStateOf(state.shopNames.getOrNull(1).orEmpty()) }
+    val adminConsoleName = state.adminConsoleName
     var editingShopIndex by remember { mutableStateOf<Int?>(null) }
     var editingShopName  by remember { mutableStateOf("") }
+    var editingConsoleName by remember { mutableStateOf(false) }
+    var consoleNameDraft by remember { mutableStateOf("") }
 
     if (isLoggingOut) {
         SaaSLoadingOverlay(message = "Signing Out")
@@ -146,6 +150,22 @@ fun SettingsScreen(
                     onShopNameChange(index, clean)
                 }
                 editingShopIndex = null
+            }
+        )
+    }
+    if (editingConsoleName) {
+        ShopNameDialog(
+            title = "Rename Admin Console",
+            itemLabel = "admin console",
+            value = consoleNameDraft,
+            onValueChange = { consoleNameDraft = it },
+            onDismiss = { editingConsoleName = false },
+            onConfirm = {
+                val clean = consoleNameDraft.trim()
+                if (clean.isNotBlank()) {
+                    onAdminConsoleNameChange(clean)
+                }
+                editingConsoleName = false
             }
         )
     }
@@ -317,6 +337,19 @@ fun SettingsScreen(
                             icon = Icons.Rounded.Edit,
                             iconBg = NTColors.SurfaceVar,
                             iconFg = NTColors.TextSecondary,
+                            title = "Rename Admin Console",
+                            subtitle = "Current: $adminConsoleName",
+                            value = adminConsoleName,
+                            onClick = {
+                                consoleNameDraft = adminConsoleName
+                                editingConsoleName = true
+                            }
+                        )
+                        SettingsDivider()
+                        SettingsShopNameItem(
+                            icon = Icons.Rounded.Edit,
+                            iconBg = NTColors.SurfaceVar,
+                            iconFg = NTColors.TextSecondary,
                             title = "Rename Shop",
                             subtitle = "Current: ${shopOneName.ifBlank { "Not set" }}",
                             value = shopOneName,
@@ -400,7 +433,7 @@ private fun SettingsGroupCard(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
             border = BorderStroke(1.dp, NTColors.Border),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation),
             content = content
         )
     }
@@ -566,6 +599,7 @@ private fun SettingsShopNameItem(
 @Composable
 private fun ShopNameDialog(
     title: String,
+    itemLabel: String = "shop",
     value: String,
     onValueChange: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -577,7 +611,7 @@ private fun ShopNameDialog(
         text = {
             Column {
                 Text(
-                    "Set the display name for this shop. It will update on the inventory and employee screens.",
+                    "Set the display name for this $itemLabel.",
                     color = NTColors.TextSecondary,
                     fontSize = 13.sp
                 )
@@ -586,8 +620,8 @@ private fun ShopNameDialog(
                     value = value,
                     onValueChange = { onValueChange(capitalizeWords(it)) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Shop name", color = NTColors.TextTertiary, fontSize = 12.sp) },
-                    placeholder = { Text("e.g. Main Outlet", color = NTColors.TextTertiary) },
+                    label = { Text("$itemLabel name", color = NTColors.TextTertiary, fontSize = 12.sp) },
+                    placeholder = { Text(if (itemLabel == "shop") "e.g. Main Outlet" else "e.g. Water Operations", color = NTColors.TextTertiary) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         imeAction = ImeAction.Done,

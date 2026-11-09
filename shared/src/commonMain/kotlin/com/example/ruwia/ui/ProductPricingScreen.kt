@@ -77,7 +77,7 @@ fun ProductPricingScreen(
                         .padding(horizontal = NTDp.screenPad),
                     shape = RoundedCornerShape(NTDp.radXxl),
                     colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
                 ) {
                     Row(
                         modifier = Modifier.padding(NTDp.md),
@@ -135,7 +135,7 @@ fun ProductPricingScreen(
                         .padding(horizontal = NTDp.screenPad),
                     shape = RoundedCornerShape(NTDp.radXxl),
                     colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
                 ) {
                     Column(modifier = Modifier.padding(NTDp.cardPad)) {
                         BulkPricingRow("10+ cans (20L)",  "₹55 · save ₹5",   isDiscount = false)
@@ -164,7 +164,7 @@ private fun ProductPriceCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = NTDp.screenPad),
         shape = RoundedCornerShape(NTDp.radXxl),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Row(
             modifier = Modifier.padding(NTDp.md),

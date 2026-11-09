@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -45,6 +46,7 @@ import com.example.ruwia.domain.effectiveStockMap
 import com.example.ruwia.domain.is20LitreCan
 import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.theme.RuwiaColor
+import com.example.ruwia.ui.dashboard.NTDp
 import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.isoToDisplayTime
 import com.example.ruwia.ui.components.formKeyboardActions
@@ -959,6 +961,7 @@ private fun SaleLineCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(12.dp), clip = false)
             .background(cardBg, RoundedCornerShape(12.dp))
             .border(1.dp, cardBorder, RoundedCornerShape(12.dp))
             .padding(12.dp),

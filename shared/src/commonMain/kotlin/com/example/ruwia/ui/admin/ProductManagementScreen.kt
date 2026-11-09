@@ -995,11 +995,11 @@ private fun ProductCatalogSummaryCard(
 ) {
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(20.dp), ambientColor = Color(0xFF0F172A).copy(alpha = 0.04f), spotColor = Color(0xFF0F172A).copy(alpha = 0.04f)),
+            .fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = NTColors.Surface),
-        border = BorderStroke(1.dp, NTColors.Border)
+        border = BorderStroke(1.dp, NTColors.Border),
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Column(
             modifier = Modifier.padding(20.dp)
@@ -1205,11 +1205,11 @@ private fun ProductManagementCard(
 
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .shadow(2.dp, RoundedCornerShape(20.dp), ambientColor = Color(0xFF0F172A).copy(alpha = 0.04f), spotColor = Color(0xFF0F172A).copy(alpha = 0.04f)),
+            .fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = if (product.isActive) NTColors.Surface else NTColors.Background),
-        border = BorderStroke(1.dp, if (!product.isActive) NTColors.TextDisabled else NTColors.Border)
+        border = BorderStroke(1.dp, if (!product.isActive) NTColors.TextDisabled else NTColors.Border),
+        elevation = CardDefaults.cardElevation(defaultElevation = NTDp.cardElevation)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.data.getLocationService
 import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -118,10 +119,10 @@ fun InteractiveMapPickerCard(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
             .border(1.5.dp, NTColors.Border, RoundedCornerShape(16.dp)),
         color = NTColors.Surface,
-        shadowElevation = 4.dp,
+        shape = RoundedCornerShape(16.dp),
+        shadowElevation = NTDp.cardElevation,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             // Interactive Map area with centered Red Pin

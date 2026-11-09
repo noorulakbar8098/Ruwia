@@ -375,6 +375,7 @@ fun DispatchAnalyticsCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(20.dp), clip = false)
             .clip(RoundedCornerShape(20.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Divider, RoundedCornerShape(20.dp))

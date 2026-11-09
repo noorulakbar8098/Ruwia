@@ -93,21 +93,20 @@ fun NTSectionHeader(
 }
 
 // ── Dashboard header ─────────────────────────────────────────
-//  Premium SaaS header: logo · OWNER label · brand · bell · avatar.
+//  Premium SaaS header: logo · console name · account name · bell · avatar.
 
 @Composable
 fun NTDashboardHeader(
-    shopName: String,
     adminName: String,
+    consoleName: String = "ADMIN CONSOLE",
     notificationCount: Int = 0,
     onAvatarClick: () -> Unit = {},
     onSearchClick: () -> Unit = {},
     onNotificationClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val brandTitle = "neerthuli"
-    val ownerLabel = "OWNER · ${shopName.uppercase().ifBlank { "Admin" }}"
-    val avatarInitial = adminName.trim().firstOrNull()?.uppercase() ?: "N"
+    val displayName = adminName.trim().ifBlank { "Admin" }
+    val avatarInitial = displayName.firstOrNull()?.uppercase() ?: "A"
 
     Row(
         modifier = modifier
@@ -135,14 +134,14 @@ fun NTDashboardHeader(
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = ownerLabel,
+                text = consoleName.trim().ifBlank { "ADMIN CONSOLE" },
                 color = NTColors.TextTertiary, fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = brandTitle, color = NTColors.TextPrimary,
+                text = displayName, color = NTColors.TextPrimary,
                 fontSize = 19.sp, fontWeight = FontWeight.ExtraBold,
                 letterSpacing = (-0.3).sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -1045,6 +1044,7 @@ fun NTKpiCard(item: NTKpiItem, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
 
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
             .clip(RoundedCornerShape(NTDp.radLg)),

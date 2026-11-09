@@ -1,0 +1,40 @@
+- generic [ref=f13e3]:
+  - generic [ref=f13e4]:
+    - generic [aria-hidden] [ref=f13e6]:
+      - generic [ref=f13e7]: Loading
+      - progressbar [aria-hidden] [ref=f13e8]
+    - main [ref=f13e15]:
+      - generic [ref=f13e20]:
+        - heading "Verify that it’s you" [level=1] [ref=f13e21]
+        - generic [ref=f13e22]: Google wants to make sure that it's really you trying to access admin.google.com
+        - link "admin@uniwattelektrik.com selected. Switch account" [ref=f13e24] [cursor=pointer]:
+          - generic [ref=f13e27]: admin@uniwattelektrik.com
+      - generic [ref=f13e44]:
+        - figure [ref=f13e46]: "19"
+        - generic [ref=f13e47]:
+          - heading "Check your Galaxy Z Fold7" [level=2] [ref=f13e49]
+          - generic [ref=f13e53]:
+            - text: Google sent a notification to your Galaxy Z Fold7. Tap
+            - strong [ref=f13e54]: "Yes"
+            - text: on the Google prompt, then tap 19 on your phone to verify that it’s you.
+      - generic [ref=f13e55]:
+        - timer [ref=f13e57]:
+          - generic [ref=f13e58]: Resend it
+        - button "More ways to verify" [ref=f13e64]
+  - contentinfo [ref=f13e71]:
+    - combobox "Change language English (United Kingdom)" [ref=f13e75] [cursor=pointer]:
+      - generic [aria-hidden]:
+        - generic: English (United Kingdom)
+    - list [ref=f13e77]:
+      - listitem [ref=f13e78]:
+        - link "Open Google Account Help Centre (external, opens in a new window)" [ref=f13e79] [cursor=pointer]:
+          - /url: https://support.google.com/accounts?hl=en-GB&p=account_iph
+          - text: Help
+      - listitem [ref=f13e80]:
+        - link "Privacy Policy (external, opens in a new window)" [ref=f13e81] [cursor=pointer]:
+          - /url: https://accounts.google.com/TOS?loc=IN&hl=en-GB&privacy=true
+          - text: Privacy
+      - listitem [ref=f13e82]:
+        - link "Google Terms of Service (external, opens in a new window)" [ref=f13e83] [cursor=pointer]:
+          - /url: https://accounts.google.com/TOS?loc=IN&hl=en-GB
+          - text: Terms

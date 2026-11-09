@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -219,6 +220,7 @@ private fun SupplierRow(supplier: Supplier, onDelete: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
             .padding(NTDp.md),

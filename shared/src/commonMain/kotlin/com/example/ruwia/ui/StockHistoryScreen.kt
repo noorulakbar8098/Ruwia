@@ -44,6 +44,7 @@ import com.example.ruwia.domain.isEmptyCansSource
 import com.example.ruwia.domain.resolveMovementProductName
 import com.example.ruwia.presentation.AdminState
 import com.example.ruwia.ui.dashboard.NTColors
+import com.example.ruwia.ui.dashboard.NTDp
 import com.example.ruwia.ui.components.formKeyboardActions
 import com.example.ruwia.ui.dashboard.NTPrimaryTopBar
 import com.example.ruwia.util.isoToDisplayDate
@@ -436,6 +437,7 @@ private fun StockHistoryControls(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(20.dp), clip = false)
             .clip(RoundedCornerShape(20.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(20.dp))
@@ -909,7 +911,7 @@ private fun MovementCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(2.dp, RoundedCornerShape(24.dp))
+            .shadow(NTDp.cardElevation, RoundedCornerShape(24.dp))
             .clip(RoundedCornerShape(24.dp))
             .background(NTColors.Surface)
             .border(1.dp, NTColors.Border, RoundedCornerShape(24.dp))

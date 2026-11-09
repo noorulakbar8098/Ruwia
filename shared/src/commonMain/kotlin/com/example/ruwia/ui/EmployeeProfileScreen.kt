@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -110,6 +111,7 @@ fun EmployeeProfileScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radXxl), clip = false)
                     .clip(RoundedCornerShape(NTDp.radXxl))
                     .background(NTColors.Surface)
                     .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
@@ -347,6 +349,7 @@ private fun KPICard(
 ) {
     Box(
         modifier = modifier
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radXxl), clip = false)
             .clip(RoundedCornerShape(NTDp.radXxl))
             .background(NTColors.PrimaryLight)
             .padding(16.dp)

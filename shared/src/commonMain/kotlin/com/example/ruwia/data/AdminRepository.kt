@@ -988,6 +988,61 @@ class AdminRepository {
         }
     }
 
+    // ── Admin console display name ──────────────────────────────────────────
+
+    suspend fun getAdminConsoleName(): String {
+        val defaultName = "ADMIN CONSOLE"
+        val adminId = supabase.auth.currentUserOrNull()?.id ?: return defaultName
+        return try {
+            supabase.from("app_settings")
+                .select {
+                    filter {
+                        eq("admin_id", adminId)
+                        eq("settings_key", "admin_console_name")
+                    }
+                }
+                .decodeList<AppSetting>()
+                .firstOrNull()
+                ?.value
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: defaultName
+        } catch (e: Exception) {
+            e.printStackTrace()
+            defaultName
+        }
+    }
+
+    suspend fun updateAdminConsoleName(name: String) {
+        val cleanName = name.trim()
+        require(cleanName.isNotBlank()) { "Admin console name cannot be blank." }
+        val adminId = supabase.auth.currentUserOrNull()?.id
+            ?: throw IllegalStateException("Not authenticated.")
+        val setting = supabase.from("app_settings")
+            .select {
+                filter {
+                    eq("admin_id", adminId)
+                    eq("settings_key", "admin_console_name")
+                }
+            }
+            .decodeList<AppSetting>()
+            .firstOrNull()
+        val payload = buildJsonObject {
+            put("admin_id", adminId)
+            put("settings_key", "admin_console_name")
+            put("settings_value", cleanName)
+        }
+        if (setting != null) {
+            val settingId = setting.id
+                ?: throw IllegalStateException("Admin console setting is missing its record id.")
+            supabase.from("app_settings").update(payload) {
+                filter { eq("id", settingId) }
+            }
+        } else {
+            supabase.from("app_settings").insert(payload)
+        }
+    }
+
     // ── Empty-cases reset (live stock "Empty Cases" figure) ──────────────────
 
     /** Global baseline persisted on the admin tenant that the live "Empty

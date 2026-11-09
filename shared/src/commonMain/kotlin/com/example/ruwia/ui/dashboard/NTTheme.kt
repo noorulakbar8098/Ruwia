@@ -189,6 +189,7 @@ object NTDp {
     val xl        = 32.dp
     val screenPad = 20.dp
     val cardPad   = 20.dp
+    val cardElevation = 2.dp
 
     // Corner radii
     val radSm   = 8.dp

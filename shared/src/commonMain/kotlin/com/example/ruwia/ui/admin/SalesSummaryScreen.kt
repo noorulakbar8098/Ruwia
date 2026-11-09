@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -455,6 +456,7 @@ private fun SummaryKpiStrip(totalMargin: Double, totalSelling: Double, modifier:
 private fun SummaryKpiCard(label: String, value: String, bg: Color, fg: Color, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
+            .shadow(NTDp.cardElevation, RoundedCornerShape(16.dp), clip = false)
             .background(bg, RoundedCornerShape(16.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
@@ -478,6 +480,7 @@ private fun SaleEntriesBlock(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(16.dp), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(16.dp)),
     ) {
         Row(
@@ -737,7 +740,10 @@ private fun PerDayKpiRow(perDayMargin: Double, perDayExpense: Double, netPerDay:
 @Composable
 private fun PerDayCard(label: String, value: String, bg: Color, fg: Color, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.background(bg, RoundedCornerShape(14.dp)).padding(12.dp),
+        modifier = modifier
+            .shadow(NTDp.cardElevation, RoundedCornerShape(14.dp), clip = false)
+            .background(bg, RoundedCornerShape(14.dp))
+            .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(label, fontSize = 10.sp, color = fg.copy(alpha = 0.70f), textAlign = TextAlign.Center, lineHeight = 14.sp)
@@ -776,6 +782,7 @@ private fun StockActivityCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radLg), clip = false)
             .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
             .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
             .padding(NTDp.md),
