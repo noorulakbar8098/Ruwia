@@ -74,12 +74,13 @@ import kotlinx.datetime.toInstant
 // Deep-teal brand color shared with the home Business Overview card.
 // Green accents across this screen map to it via SaaSColors below.
 private val InvTeal = Color(0xFF0F2E2C)
-private val InvTealDeep = Color(0xFF0A1F1D)
 private val InvTealMint = Color(0xFF5EEAD4)
 
 private object SaaSColors {
-    val Primary       get() = InvTeal
-    val PrimaryDark   get() = InvTealDeep
+    // Foreground accent: deep teal on light surfaces, mint on dark ones.
+    val Primary       get() = NTColors.BrandInk
+    // Solid brand container (buttons): always deep teal with white content.
+    val PrimaryContainer get() = InvTeal
     val PrimaryLight  get() = NTColors.PrimaryLight
     val Background    get() = NTColors.Background
     val Surface       get() = NTColors.Surface
@@ -91,7 +92,7 @@ private object SaaSColors {
     val CardShadow    get() = if (NTColors.isDarkMode) Color.Black.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.05f)
 
     // Status colors
-    val Healthy       get() = InvTeal
+    val Healthy       get() = if (NTColors.isDarkMode) NTColors.SuccessText else InvTeal
     val HealthyLight  get() = NTColors.SuccessLight
     val LowStock      get() = NTColors.Warning
     val LowStockLight get() = NTColors.WarningLight
@@ -985,12 +986,12 @@ private fun ProductBreakdownCard(
 
     // Color theme
     val (iconBg, iconFg) = when {
-        product.name.contains("300", true) -> Color(0xFFEDE9FE) to Color(0xFF8B5CF6)
-        product.name.contains("500", true) -> Color(0xFFDBEAFE) to Color(0xFF3B82F6)
-        product.name.contains("1", true)   -> Color(0xFFCCFBF1) to Color(0xFF0D9488)
-        product.name.contains("2", true)   -> Color(0xFFD1FAE5) to Color(0xFF10B981)
-        product.name.contains("5", true)   -> Color(0xFFFFF9DB) to Color(0xFFF59E0B)
-        else                               -> Color(0xFFFEE2E2) to Color(0xFFEF4444)
+        product.name.contains("300", true) -> NTColors.StockIconBg to NTColors.StockIconFg
+        product.name.contains("500", true) -> NTColors.InfoLight to NTColors.Info
+        product.name.contains("1", true)   -> NTColors.PrimaryLight to NTColors.Primary
+        product.name.contains("2", true)   -> NTColors.SuccessLight to NTColors.Success
+        product.name.contains("5", true)   -> NTColors.WarningLight to NTColors.Warning
+        else                               -> NTColors.ErrorLight to NTColors.Error
     }
 
     val painter = when {
@@ -1090,12 +1091,12 @@ private fun ProductBreakdownCard(
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFF3F4F6))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                        .background(NTColors.SurfaceVar)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
                                         text = "Hidden",
-                                        color = Color(0xFF6B7280),
+                                        color = NTColors.TextSecondary,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -1104,10 +1105,10 @@ private fun ProductBreakdownCard(
                                     onClick = onToggleStatus,
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFFECFDF5),
-                                        contentColor = Color(0xFF10B981)
+                                        containerColor = NTColors.SuccessLight,
+                                        contentColor = NTColors.SuccessText
                                     ),
-                                    border = BorderStroke(1.dp, Color(0xFF6EE7B7)),
+                                    border = BorderStroke(1.dp, NTColors.Success.copy(alpha = 0.4f)),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                     modifier = Modifier.height(24.dp)
                                 ) {
@@ -1249,7 +1250,7 @@ private fun ProductBreakdownCard(
                                 Button(
                                     onClick = onEditPrice,
                                     shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.Primary),
+                                    colors = ButtonDefaults.buttonColors(containerColor = SaaSColors.PrimaryContainer),
                                     modifier = Modifier.weight(1f).height(46.dp),
                                     contentPadding = PaddingValues(horizontal = 8.dp)
                                 ) {
@@ -1318,10 +1319,10 @@ private fun ProductBreakdownCard(
                                 onClick = onToggleStatus,
                                 shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFFFF7ED),
-                                    contentColor = Color(0xFFF97316)
+                                    containerColor = NTColors.WarningLight,
+                                    contentColor = NTColors.WarningText
                                 ),
-                                border = BorderStroke(1.dp, Color(0xFFFDBA74)),
+                                border = BorderStroke(1.dp, NTColors.Warning.copy(alpha = 0.4f)),
                                 modifier = Modifier.weight(1f).height(46.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp)
                             ) {
@@ -1335,10 +1336,10 @@ private fun ProductBreakdownCard(
                                     onClick = onDeleteClick,
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFFFEE2E2),
-                                        contentColor = Color(0xFFEF4444)
+                                        containerColor = NTColors.ErrorLight,
+                                        contentColor = NTColors.ErrorText
                                     ),
-                                    border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                                    border = BorderStroke(1.dp, NTColors.Error.copy(alpha = 0.4f)),
                                     modifier = Modifier.weight(1f).height(46.dp),
                                     contentPadding = PaddingValues(horizontal = 8.dp)
                                 ) {
@@ -1445,7 +1446,7 @@ internal fun StockActivityRow(
     val (iconBg, iconFg, typeIcon) = when {
         isReturn -> Triple(SaaSColors.LowStockLight, SaaSColors.LowStock, Icons.AutoMirrored.Rounded.Undo)
         isAdd    -> Triple(SaaSColors.PrimaryLight, SaaSColors.Primary, Icons.Rounded.Download)
-        else     -> Triple(Color(0xFFF3E8FF), Color(0xFF8B5CF6), Icons.Rounded.LocalShipping)
+        else     -> Triple(NTColors.StockIconBg, NTColors.StockIconFg, Icons.Rounded.LocalShipping)
     }
     val expandRotation by animateFloatAsState(
         targetValue = if (isExpanded) 180f else 0f,
@@ -2119,7 +2120,7 @@ private fun CustomerPricePickerDialog(
                                             shape = RoundedCornerShape(10.dp),
                                             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
                                             colors = ButtonDefaults.buttonColors(
-                                                containerColor = if (isSaved) SaaSColors.PrimaryLight else SaaSColors.Primary,
+                                                containerColor = if (isSaved) SaaSColors.PrimaryLight else SaaSColors.PrimaryContainer,
                                                 contentColor = if (isSaved) SaaSColors.Primary else Color.White
                                             )
                                         ) {

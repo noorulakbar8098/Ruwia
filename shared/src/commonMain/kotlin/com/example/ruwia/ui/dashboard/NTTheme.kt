@@ -13,6 +13,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -36,7 +39,6 @@ object NTColors {
     // Backing states for dynamic animated colors (initially Light Mode defaults)
     internal var animPrimary by mutableStateOf(Color(0xFF0F9D8A))
     internal var animPrimaryLight by mutableStateOf(Color(0xFFDDF5F1))
-    internal var animPrimaryMid by mutableStateOf(Color(0xFF0F9D8A))
     internal var animPrimaryDark by mutableStateOf(Color(0xFF0D8A7A))
     internal var animPrimaryDeep by mutableStateOf(Color(0xFF0A6F62))
 
@@ -88,7 +90,6 @@ object NTColors {
     internal var animChartLine by mutableStateOf(Color(0xFF0F9D8A))
     internal var animChartFillTop by mutableStateOf(Color(0x600F9D8A))
     internal var animChartFillBot by mutableStateOf(Color(0x000F9D8A))
-    internal var animChartGrid by mutableStateOf(Color(0xFFD8E4E2))
     internal var animChartLabel by mutableStateOf(Color(0xFF607176))
 
     internal var animSaleIconBg by mutableStateOf(Color(0xFFDDF5F1))
@@ -109,9 +110,11 @@ object NTColors {
     // Public getters (returning animated colors dynamically)
     val Primary: Color get() = animPrimary
     val PrimaryLight: Color get() = animPrimaryLight
-    val PrimaryMid: Color get() = animPrimaryMid
     val PrimaryDark: Color get() = animPrimaryDark
     val PrimaryDeep: Color get() = animPrimaryDeep
+
+    /** Deep brand teal on light surfaces, mint on dark surfaces. */
+    val BrandInk: Color get() = if (isDarkMode) Primary else Color(0xFF0F2E2C)
 
     val Accent: Color get() = animAccent
     val AccentLight: Color get() = animAccentLight
@@ -161,7 +164,6 @@ object NTColors {
     val ChartLine: Color get() = animChartLine
     val ChartFillTop: Color get() = animChartFillTop
     val ChartFillBot: Color get() = animChartFillBot
-    val ChartGrid: Color get() = animChartGrid
     val ChartLabel: Color get() = animChartLabel
 
     val SaleIconBg: Color get() = animSaleIconBg
@@ -189,7 +191,7 @@ object NTDp {
     val xl        = 32.dp
     val screenPad = 20.dp
     val cardPad   = 20.dp
-    val cardElevation = 2.dp
+    val cardElevation = 1.dp
 
     // Corner radii
     val radSm   = 8.dp
@@ -230,7 +232,6 @@ fun NTTheme(
 
     val primary = animateColor(if (dark) Color(0xFF24C7B7) else Color(0xFF0F9D8A))
     val primaryLight = animateColor(if (dark) Color(0xFF123A39) else Color(0xFFDDF5F1))
-    val primaryMid = animateColor(if (dark) Color(0xFF24C7B7) else Color(0xFF0F9D8A))
     val primaryDark = animateColor(if (dark) Color(0xFF1E9D91) else Color(0xFF0D8A7A))
     val primaryDeep = animateColor(if (dark) Color(0xFF123A39) else Color(0xFF0A6F62))
 
@@ -282,7 +283,6 @@ fun NTTheme(
     val chartLine = animateColor(if (dark) Color(0xFF24C7B7) else Color(0xFF0F9D8A))
     val chartFillTop = animateColor(if (dark) Color(0x3324C7B7) else Color(0x600F9D8A))
     val chartFillBot = animateColor(if (dark) Color(0x0024C7B7) else Color(0x000F9D8A))
-    val chartGrid = animateColor(if (dark) Color(0xFF1D3135) else Color(0xFFD8E4E2))
     val chartLabel = animateColor(if (dark) Color(0xFF7F959A) else Color(0xFF607176))
 
     val saleIconBg = animateColor(if (dark) Color(0xFF123A39) else Color(0xFFDDF5F1))
@@ -303,7 +303,6 @@ fun NTTheme(
     SideEffect {
         NTColors.animPrimary = primary
         NTColors.animPrimaryLight = primaryLight
-        NTColors.animPrimaryMid = primaryMid
         NTColors.animPrimaryDark = primaryDark
         NTColors.animPrimaryDeep = primaryDeep
         NTColors.animAccent = accent
@@ -343,7 +342,6 @@ fun NTTheme(
         NTColors.animChartLine = chartLine
         NTColors.animChartFillTop = chartFillTop
         NTColors.animChartFillBot = chartFillBot
-        NTColors.animChartGrid = chartGrid
         NTColors.animChartLabel = chartLabel
         NTColors.animSaleIconBg = saleIconBg
         NTColors.animSaleIconFg = saleIconFg
@@ -361,6 +359,67 @@ fun NTTheme(
         NTColors.animPendIconFg = pendIconFg
     }
 
+    // Keep Material3 defaults (menus, dialogs, pickers, snackbars, switches)
+    // in sync with the app's own light/dark tokens. Without this, those
+    // components fall back to the default light scheme in dark mode.
+    val materialColors = if (dark) {
+        darkColorScheme(
+            primary = primary,
+            onPrimary = Color.White,
+            primaryContainer = primaryLight,
+            onPrimaryContainer = Color(0xFF5EEAD4),
+            secondary = primary,
+            onSecondary = Color.White,
+            background = background,
+            onBackground = textPrimary,
+            surface = surface,
+            onSurface = textPrimary,
+            surfaceVariant = surfaceVar,
+            onSurfaceVariant = textSecondary,
+            surfaceContainerLowest = background,
+            surfaceContainerLow = surface,
+            surfaceContainer = surface,
+            surfaceContainerHigh = surfaceVar,
+            surfaceContainerHighest = surfaceVar,
+            surfaceDim = background,
+            surfaceBright = surfaceVar,
+            outline = border,
+            outlineVariant = divider,
+            error = error,
+            onError = Color.White,
+            errorContainer = errorLight,
+            onErrorContainer = errorText,
+        )
+    } else {
+        lightColorScheme(
+            primary = primary,
+            onPrimary = Color.White,
+            primaryContainer = primaryLight,
+            onPrimaryContainer = primaryDeep,
+            secondary = primary,
+            onSecondary = Color.White,
+            background = background,
+            onBackground = textPrimary,
+            surface = surface,
+            onSurface = textPrimary,
+            surfaceVariant = surfaceVar,
+            onSurfaceVariant = textSecondary,
+            surfaceContainerLowest = surface,
+            surfaceContainerLow = surface,
+            surfaceContainer = surface,
+            surfaceContainerHigh = surfaceVar,
+            surfaceContainerHighest = surfaceVar,
+            surfaceDim = surfaceVar,
+            surfaceBright = surface,
+            outline = border,
+            outlineVariant = divider,
+            error = error,
+            onError = Color.White,
+            errorContainer = errorLight,
+            onErrorContainer = errorText,
+        )
+    }
+
     val scale = remember { Animatable(1f) }
     LaunchedEffect(dark) {
         // Soft compression, then bouncy spring expand
@@ -374,13 +433,15 @@ fun NTTheme(
         )
     }
 
-    Box(
-        modifier = Modifier
-            .graphicsLayer {
-                scaleX = scale.value
-                scaleY = scale.value
-            }
-    ) {
-        content()
+    MaterialTheme(colorScheme = materialColors) {
+        Box(
+            modifier = Modifier
+                .graphicsLayer {
+                    scaleX = scale.value
+                    scaleY = scale.value
+                }
+        ) {
+            content()
+        }
     }
 }

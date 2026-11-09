@@ -151,20 +151,22 @@ fun App() {
 
                 Screen.AdminHome -> {
                     NTTheme {
-                        AdminDashboardScreen(
-                            vm           = adminVm,
-                            onLogout     = {
-                                adminVm.clearState()
-                                employeeVm.clearState()
-                                authVm.logout()
-                                NotificationDeepLink.consume()
-                                screen = Screen.Login
-                            },
-                            adminName    = authState.displayName.ifEmpty { "Admin" },
-                            adminEmail   = authState.email,
-                            deepLinkNotificationId = pendingNotificationId,
-                            onNotificationDeepLinkHandled = NotificationDeepLink::consume,
-                        )
+                        RuwiaTheme {
+                            AdminDashboardScreen(
+                                vm           = adminVm,
+                                onLogout     = {
+                                    adminVm.clearState()
+                                    employeeVm.clearState()
+                                    authVm.logout()
+                                    NotificationDeepLink.consume()
+                                    screen = Screen.Login
+                                },
+                                adminName    = authState.displayName.ifEmpty { "Admin" },
+                                adminEmail   = authState.email,
+                                deepLinkNotificationId = pendingNotificationId,
+                                onNotificationDeepLinkHandled = NotificationDeepLink::consume,
+                            )
+                        }
                     }
                 }
 

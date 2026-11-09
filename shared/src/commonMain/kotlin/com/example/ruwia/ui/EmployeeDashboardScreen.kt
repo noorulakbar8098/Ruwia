@@ -3,7 +3,6 @@ package com.example.ruwia.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -43,11 +42,10 @@ import com.example.ruwia.ui.components.SaaSLoadingOverlay
 import com.example.ruwia.ui.dashboard.NTBottomNavigation
 import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.ui.graphics.graphicsLayer
+import com.example.ruwia.ui.dashboard.NTInteraction
 import com.example.ruwia.ui.dashboard.NTNavTab
+import com.example.ruwia.ui.dashboard.ntPressable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -718,7 +716,16 @@ private fun EmployeeHomeContent(
                     color      = NTColors.TextPrimary,
                 )
                 Row(
-                    modifier = Modifier.clickable { onTabSelected(1) },
+                    modifier = Modifier
+                        .ntPressable(
+                            onClick = { onTabSelected(1) },
+                            onClickLabel = "View all activity",
+                            role = Role.Button,
+                            pressedScale = 1f,
+                            pressedAlpha = NTInteraction.PressAlpha,
+                            ripple = false,
+                        )
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
@@ -827,10 +834,15 @@ private fun EmpHeader(
                     Box(
                         modifier = Modifier
                             .size(NTDp.avatarLg)
-                            .clip(CircleShape)
+                            .ntPressable(
+                                onClick = onProfileClick,
+                                onClickLabel = "Open profile",
+                                role = Role.Button,
+                                pressedScale = NTInteraction.PressScaleCompact,
+                                shape = CircleShape,
+                            )
                             .background(Color.White.copy(alpha = 0.1f))
-                            .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
-                            .clickable(onClick = onProfileClick),
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (initials.isBlank()) {
@@ -872,10 +884,15 @@ private fun EmpHeader(
                     Box(
                         modifier = Modifier
                             .size(42.dp)
-                            .clip(RoundedCornerShape(NTDp.radMd))
+                            .ntPressable(
+                                onClick = onNotificationsClick,
+                                onClickLabel = "Notifications",
+                                role = Role.Button,
+                                pressedScale = NTInteraction.PressScaleCompact,
+                                shape = RoundedCornerShape(NTDp.radMd),
+                            )
                             .background(Color.White.copy(alpha = 0.08f))
-                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(NTDp.radMd))
-                            .clickable(onClick = onNotificationsClick),
+                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(NTDp.radMd)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -892,7 +909,7 @@ private fun EmpHeader(
                                 .offset(x = 2.dp, y = (-2).dp)
                                 .size(20.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFEF4444))
+                                .background(NTColors.Error)
                                 .border(1.5.dp, NTColors.PrimaryDeep, CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -1114,25 +1131,20 @@ private fun QuickActionCard(
     modifier: Modifier = Modifier,
     color: Color = NTColors.Primary
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.96f else 1f,
-        label = "pressScale"
-    )
-
+    val shape = RoundedCornerShape(NTDp.radXxl)
     Box(
         modifier = modifier
             .height(100.dp)
-            .graphicsLayer(scaleX = scale, scaleY = scale)
-            .shadow(NTDp.cardElevation, RoundedCornerShape(NTDp.radXxl), clip = false)
-            .background(NTColors.Surface, RoundedCornerShape(NTDp.radXxl))
-            .border(1.dp, NTColors.Divider, RoundedCornerShape(NTDp.radXxl))
-            .clickable(
-                interactionSource = interactionSource,
-                indication = androidx.compose.foundation.LocalIndication.current,
-                onClick = onClick
+            .shadow(NTDp.cardElevation, shape, clip = false)
+            .ntPressable(
+                onClick = onClick,
+                onClickLabel = title,
+                role = Role.Button,
+                pressedScale = NTInteraction.PressScale,
+                shape = shape,
             )
+            .background(NTColors.Surface, shape)
+            .border(1.dp, NTColors.Divider, shape)
             .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {

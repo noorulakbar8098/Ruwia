@@ -73,7 +73,7 @@ private object SaaSColors {
     val Warning       get() = NTColors.Warning
     val DeepTeal      get() = Color(0xFF0F2E2C)
     val Mint          get() = Color(0xFF5EEAD4)
-    val MintDeep      get() = Color(0xFF0B6B5E)
+    val MintDeep      get() = if (NTColors.isDarkMode) NTColors.SuccessText else Color(0xFF0B6B5E)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1436,7 +1436,7 @@ private fun SaaSBarChart(
                         val value = step * i
                         val y = yAt(value)
                         drawLine(
-                            color = Color(0xFFE8EFED),
+                            color = NTColors.Border,
                             start = Offset(gutter, y), end = Offset(w, y),
                             strokeWidth = 1.dp.toPx(),
                             pathEffect = dash,

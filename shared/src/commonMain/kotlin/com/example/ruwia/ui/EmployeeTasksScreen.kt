@@ -54,6 +54,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import com.example.ruwia.ui.components.DeliveryTimelineView
 import com.example.ruwia.ui.components.DeliveryPrimaryButton
+import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 
 import androidx.compose.foundation.clickable
@@ -766,18 +767,18 @@ private fun taskProductSummary(task: DeliveryTask): String {
 }
 
 private object DeliveryTrackingPalette {
-    val Canvas = Color(0xFFFAF9F7)
-    val Surface = Color.White
-    val Ink = Color(0xFF252321)
-    val SecondaryInk = Color(0xFF77716B)
-    val Border = Color(0xFFECE8E3)
-    val SoftNeutral = Color(0xFFF4F2EF)
-    val Orange = Color(0xFFE86D2F)
-    val SoftOrange = Color(0xFFFFF1E8)
-    val Green = Color(0xFF26834A)
-    val SoftGreen = Color(0xFFEAF6ED)
-    val Red = Color(0xFFB5473C)
-    val SoftRed = Color(0xFFFCEDEA)
+    val Canvas get() = NTColors.Background
+    val Surface get() = NTColors.Surface
+    val Ink get() = NTColors.TextPrimary
+    val SecondaryInk get() = NTColors.TextSecondary
+    val Border get() = NTColors.Border
+    val SoftNeutral get() = NTColors.SurfaceVar
+    val Orange get() = if (NTColors.isDarkMode) Color(0xFFFB923C) else Color(0xFFE86D2F)
+    val SoftOrange get() = NTColors.WarningLight
+    val Green get() = if (NTColors.isDarkMode) Color(0xFF34D399) else Color(0xFF26834A)
+    val SoftGreen get() = NTColors.SuccessLight
+    val Red get() = NTColors.Error
+    val SoftRed get() = NTColors.ErrorLight
 }
 
 private fun DeliveryTask.isCompleted(): Boolean =

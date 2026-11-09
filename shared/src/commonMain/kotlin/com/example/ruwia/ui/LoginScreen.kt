@@ -43,7 +43,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.ImeAction
 import com.example.ruwia.ui.components.formKeyboardActions
-import com.example.ruwia.ui.dashboard.NTDp
+import com.example.ruwia.ui.dashboard.NTInteraction
+import com.example.ruwia.ui.dashboard.ntPressable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.autofill.AutofillNode
 import androidx.compose.ui.autofill.AutofillType
 import androidx.compose.ui.layout.boundsInWindow
@@ -63,23 +67,23 @@ import org.jetbrains.compose.resources.painterResource
 import ruwia.shared.generated.resources.Res
 import ruwia.shared.generated.resources.app_icon
 
-// ── Premium SaaS Color Palette ─────────────────────────────────────────────
+// ── Login palette ─────────────────────────────────────────────────────────
+//  One teal accent on a near-black teal canvas. Keep this list short:
+//  surfaces, text, border, error, and the brand gradient are all we need.
 private object DroplyColor {
-    val Background   = Color(0xFF08141F)
-    val Surface      = Color(0xFF132437)
-    val Card         = Color(0xD1162538) // Glassmorphism alpha
-    val Input        = Color(0xFF162B40)
+    val Background   = Color(0xFF07110F)
+    val Card         = Color(0xCC0E1B19) // Glassmorphism alpha
+    val Input        = Color(0xFF122421)
     val Border       = Color(0x14FFFFFF) // 0.08 alpha
-    val InputBorder  = Color(0xFF29455F)
-    val Primary      = Color(0xFF00C9A7)
-    val Secondary    = Color(0xFF14D8B3)
-    val Accent       = Color(0xFF0EA5E9)
-    val TextPrimary  = Color(0xFFFFFFFF)
-    val TextSecondary = Color(0xFF94A3B8)
-    val Placeholder  = Color(0xFF64748B)
+    val InputBorder  = Color(0xFF24443F)
+    val Primary      = Color(0xFF14C7B2)
+    val PrimaryDeep  = Color(0xFF0A8F7F)
+    val TextPrimary  = Color(0xFFF5F7F8)
+    val TextSecondary = Color(0xFF9BB0AC)
+    val Placeholder  = Color(0xFF6B817D)
     val Error        = Color(0xFFEF4444)
-    
-    val PrimaryGradient = Brush.linearGradient(listOf(Primary, Secondary))
+
+    val PrimaryGradient = Brush.linearGradient(listOf(Primary, PrimaryDeep))
 }
 
 @Composable
@@ -197,10 +201,10 @@ private fun PremiumBackgroundEffects(shimmerOffset: Float) {
                 alpha = 0.6f
             )
 
-            // Bottom Right Blue Glow
+            // Bottom-right teal depth
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(DroplyColor.Accent.copy(alpha = 0.15f), Color.Transparent),
+                    colors = listOf(DroplyColor.PrimaryDeep.copy(alpha = 0.22f), Color.Transparent),
                     center = Offset(size.width * 0.9f, size.height * 0.9f),
                     radius = size.width * 0.7f
                 ),
@@ -323,22 +327,16 @@ private fun LoginGlassCard(
     onForgotPass: () -> Unit,
     onToggleMode: () -> Unit
 ) {
+    val shape = RoundedCornerShape(24.dp)
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(
-                elevation = NTDp.cardElevation,
-                shape = RoundedCornerShape(32.dp),
-                ambientColor = Color.Black.copy(alpha = 0.10f),
-                spotColor = Color.Black.copy(alpha = 0.10f)
-            ),
-        shape = RoundedCornerShape(32.dp),
+        modifier = Modifier.fillMaxWidth(),
+        shape = shape,
         color = DroplyColor.Card,
         border = BorderStroke(1.dp, DroplyColor.Border)
     ) {
         Column(
-            modifier = Modifier.padding(32.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            modifier = Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             // ── Role Selector ──────────────────────────────────────
             if (!isSignUp) {
@@ -404,7 +402,15 @@ private fun LoginGlassCard(
                             ),
                             modifier = Modifier
                                 .align(Alignment.End)
-                                .clickable(onClick = onForgotPass)
+                                .ntPressable(
+                                    onClick = onForgotPass,
+                                    onClickLabel = "Forgot password",
+                                    role = Role.Button,
+                                    pressedScale = 1f,
+                                    pressedAlpha = NTInteraction.PressAlpha,
+                                    ripple = false,
+                                )
+                                .padding(horizontal = 4.dp, vertical = 6.dp)
                         )
                     }
                 }
@@ -460,7 +466,16 @@ private fun LoginGlassCard(
                         color = DroplyColor.Primary,
                         textDecoration = TextDecoration.Underline
                     ),
-                    modifier = Modifier.clickable(onClick = onToggleMode)
+                    modifier = Modifier
+                        .ntPressable(
+                            onClick = onToggleMode,
+                            onClickLabel = if (isSignUp) "Sign in" else "Sign up",
+                            role = Role.Button,
+                            pressedScale = 1f,
+                            pressedAlpha = NTInteraction.PressAlpha,
+                            ripple = false,
+                        )
+                        .padding(horizontal = 4.dp, vertical = 4.dp)
                 )
             }
         }
@@ -474,32 +489,35 @@ private fun PremiumSegmentedControl(
 ) {
     val isOwner = selectedRole == UserRole.admin
     
+    val segmentShape = RoundedCornerShape(16.dp)
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .height(52.dp)
-            .background(DroplyColor.Background, RoundedCornerShape(20.dp))
-            .border(1.dp, DroplyColor.InputBorder.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+            .background(DroplyColor.Background, segmentShape)
+            .border(1.dp, DroplyColor.InputBorder.copy(alpha = 0.5f), segmentShape)
             .padding(4.dp)
     ) {
         val maxWidth = maxWidth
         val indicatorWidth = maxWidth / 2
         val targetOffset = if (isOwner) 0.dp else indicatorWidth
-        
+
         val animatedOffset by animateDpAsState(
             targetValue = targetOffset,
-            animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow),
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow,
+            ),
             label = "indicator"
         )
 
-        // Sliding Indicator
+        // Sliding indicator
         Box(
             modifier = Modifier
                 .offset(x = animatedOffset)
                 .width(indicatorWidth)
                 .fillMaxHeight()
-                .shadow(elevation = 8.dp, shape = RoundedCornerShape(16.dp), spotColor = DroplyColor.Primary.copy(alpha = 0.4f))
-                .background(DroplyColor.PrimaryGradient, RoundedCornerShape(16.dp))
+                .background(DroplyColor.PrimaryGradient, RoundedCornerShape(12.dp))
         )
 
         Row(modifier = Modifier.fillMaxSize()) {
@@ -538,12 +556,15 @@ private fun RoleTab(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            ),
+            .ntPressable(
+                onClick = onClick,
+                onClickLabel = label,
+                role = Role.Tab,
+                pressedScale = NTInteraction.PressScaleCompact,
+                ripple = false,
+                shape = RoundedCornerShape(12.dp),
+            )
+            .semantics { this.selected = isSelected },
         contentAlignment = Alignment.Center
     ) {
         Row(
@@ -682,7 +703,7 @@ private fun DroplyInput(
                 onDone = if (isPassword) onImeDone else null,
             ),
             singleLine = true,
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = DroplyColor.Primary,
                 unfocusedBorderColor = DroplyColor.InputBorder,
@@ -706,7 +727,14 @@ private fun PrimaryActionButton(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (isPressed) 0.97f else 1f)
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) NTInteraction.PressScale else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "primaryActionScale",
+    )
 
     Button(
         onClick = onClick,
@@ -716,11 +744,11 @@ private fun PrimaryActionButton(
             .height(56.dp)
             .scale(scale)
             .shadow(
-                elevation = if (enabled && !isLoading) 16.dp else 0.dp,
-                shape = RoundedCornerShape(18.dp),
-                spotColor = DroplyColor.Primary.copy(alpha = 0.35f)
+                elevation = if (enabled && !isLoading) 8.dp else 0.dp,
+                shape = RoundedCornerShape(14.dp),
+                spotColor = DroplyColor.Primary.copy(alpha = 0.28f)
             ),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             disabledContainerColor = Color.White.copy(alpha = 0.05f)
@@ -761,7 +789,14 @@ private fun PrimaryActionButton(
 private fun GoogleSSOButton() {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (isPressed) 0.98f else 1f)
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) NTInteraction.PressScale else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "googleButtonScale",
+    )
 
     OutlinedButton(
         onClick = { },
@@ -769,7 +804,7 @@ private fun GoogleSSOButton() {
             .fillMaxWidth()
             .height(56.dp)
             .scale(scale),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.2.dp, Color.White.copy(alpha = 0.15f)),
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = Color.White.copy(alpha = 0.03f)

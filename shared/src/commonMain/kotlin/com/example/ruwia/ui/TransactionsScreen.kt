@@ -1877,7 +1877,7 @@ private fun TransactionDetailsSheet(
                             modifier = Modifier
                                 .size(38.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color.White.copy(alpha = 0.75f)),
+                                .background(NTColors.Surface.copy(alpha = 0.75f)),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(

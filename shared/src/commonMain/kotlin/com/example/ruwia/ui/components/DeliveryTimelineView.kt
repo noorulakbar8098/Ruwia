@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ruwia.domain.DeliveryTask
 import com.example.ruwia.domain.TaskTimelinePoint
+import com.example.ruwia.ui.dashboard.NTColors
 
 @Composable
 fun DeliveryTimelineView(
@@ -551,13 +552,12 @@ private fun DestinationTimelinePointRow(
 }
 
 private object TimelinePalette {
-    val Surface = Color.White
-    val SoftNeutral = Color(0xFFF7F5F2)
-    val Border = Color(0xFFECE8E3)
-    val Ink = Color(0xFF252321)
-    val SecondaryInk = Color(0xFF77716B)
-    val Orange = Color(0xFFE86D2F)
-    val Green = Color(0xFF26834A)
-    val Red = Color(0xFFDC2626)
-    val TimelineLine = Color(0xFFB8DCC2)
+    val Surface get() = NTColors.Surface
+    val SoftNeutral get() = NTColors.SurfaceVar
+    val Border get() = NTColors.Border
+    val Ink get() = NTColors.TextPrimary
+    val SecondaryInk get() = NTColors.TextSecondary
+    val Orange get() = if (NTColors.isDarkMode) Color(0xFFFB923C) else Color(0xFFE86D2F)
+    val Green get() = if (NTColors.isDarkMode) Color(0xFF34D399) else Color(0xFF26834A)
+    val Red get() = NTColors.Error
 }

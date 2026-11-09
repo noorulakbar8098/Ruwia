@@ -174,13 +174,13 @@ fun InteractiveMapLocationDialog(
                             Box(
                                 modifier = Modifier
                                     .size(36.dp)
-                                    .background(Color(0xFFFEE2E2), RoundedCornerShape(10.dp)),
+                                    .background(NTColors.ErrorLight, RoundedCornerShape(10.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.LocationOn,
                                     contentDescription = null,
-                                    tint = Color(0xFFEF4444),
+                                    tint = NTColors.Error,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }

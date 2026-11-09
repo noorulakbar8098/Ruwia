@@ -503,7 +503,7 @@ private fun NTRevenueBars(
             listOf(0.25f, 0.5f, 0.75f).forEach { r ->
                 val y = topPad + drawH * (1f - r)
                 drawLine(
-                    color = Color(0xFFE3ECEB),
+                    color = NTColors.Border,
                     start = Offset(0f, y), end = Offset(w, y),
                     strokeWidth = 1.dp.toPx()
                 )

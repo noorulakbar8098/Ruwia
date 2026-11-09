@@ -63,7 +63,8 @@ import kotlinx.datetime.toLocalDateTime
 // ─────────────────────────────────────────────────────────────
 
 // Deep teal shared with the home Business Overview card.
-private val HistTeal = Color(0xFF0F2E2C)
+private val HistTeal: Color get() = NTColors.BrandInk
+private val HistTealContainer = Color(0xFF0F2E2C)
 
 private enum class SortMode(val label: String, val icon: ImageVector) {
     Newest("Newest first", Icons.Rounded.ArrowDownward),
@@ -479,10 +480,10 @@ private fun StockHistoryControls(
                 modifier = Modifier
                     .size(32.dp)
                     .clip(CircleShape)
-                    .background(if (hasActiveFilter) HistTeal else NTColors.Surface)
+                    .background(if (hasActiveFilter) HistTealContainer else NTColors.Surface)
                     .border(
                         1.dp,
-                        if (hasActiveFilter) HistTeal else NTColors.Border,
+                        if (hasActiveFilter) HistTealContainer else NTColors.Border,
                         CircleShape,
                     )
                     .clickable(onClickLabel = "Open filters", onClick = { showFilterSheet = true }),
@@ -642,7 +643,7 @@ private fun HistoryFilterSheet(
                 Button(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = HistTeal,
+                        containerColor = HistTealContainer,
                         contentColor = Color.White,
                     ),
                     shape = RoundedCornerShape(14.dp),
@@ -691,7 +692,7 @@ private fun SortOptionRow(
             modifier = Modifier
                 .size(38.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(if (selected) HistTeal else NTColors.SurfaceVar),
+                .background(if (selected) HistTealContainer else NTColors.SurfaceVar),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -845,7 +846,7 @@ private fun HistoryChip(
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) HistTeal else NTColors.SurfaceVar)
+            .background(if (selected) HistTealContainer else NTColors.SurfaceVar)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,

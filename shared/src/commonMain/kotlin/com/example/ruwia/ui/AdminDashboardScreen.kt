@@ -16,9 +16,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -792,12 +794,27 @@ private fun AdminDashboardContent(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(NTColors.Background)) {
-        Image(
-            painter = painterResource(Res.drawable.home_background),
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
+        if (NTColors.isDarkMode) {
+            // The hero artwork is a light image. In dark mode it would wash
+            // out the whole screen, so use a deep-teal gradient instead.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(380.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color(0xFF0E2B27), NTColors.Background)
+                        )
+                    )
+            )
+        } else {
+            Image(
+                painter = painterResource(Res.drawable.home_background),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -941,15 +958,21 @@ private fun DeliveryTasksOverviewCard(
         tasks.count { it.normalizedStatus() == "completed" }
     }
 
+    val shape = RoundedCornerShape(22.dp)
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
-            .shadow(NTDp.cardElevation, RoundedCornerShape(22.dp))
-            .clip(RoundedCornerShape(22.dp))
+            .shadow(NTDp.cardElevation, shape)
+            .ntPressable(
+                onClick = onOpen,
+                onClickLabel = "Open delivery tasks",
+                role = Role.Button,
+                pressedScale = NTInteraction.PressScale,
+                shape = shape,
+            )
             .background(NTColors.Surface)
-            .border(1.dp, NTColors.Border, RoundedCornerShape(22.dp))
-            .clickable(onClickLabel = "Open delivery tasks", onClick = onOpen)
+            .border(1.dp, NTColors.Border, shape)
             .animateContentSize()
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -1059,15 +1082,21 @@ private fun StockAlertCard(
         lowCount == 1 -> "1 product needs restock"
         else          -> "$lowCount products need restock"
     }
+    val shape = RoundedCornerShape(24.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = NTDp.screenPad)
-            .shadow(NTDp.cardElevation, RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
+            .shadow(NTDp.cardElevation, shape)
+            .ntPressable(
+                onClick = onOpen,
+                onClickLabel = "Open inventory",
+                role = Role.Button,
+                pressedScale = NTInteraction.PressScale,
+                shape = shape,
+            )
             .background(NTColors.Surface)
-            .border(1.dp, NTColors.Border, RoundedCornerShape(24.dp))
-            .clickable(onClickLabel = "Open inventory", onClick = onOpen)
+            .border(1.dp, NTColors.Border, shape)
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

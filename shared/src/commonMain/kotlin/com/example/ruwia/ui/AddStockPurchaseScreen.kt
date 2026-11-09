@@ -41,7 +41,8 @@ import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 
 // Deep teal shared with the home Business Overview card.
-private val FormTeal = Color(0xFF0F2E2C)
+private val FormTeal: Color get() = NTColors.BrandInk
+private val FormTealContainer = Color(0xFF0F2E2C)
 
 private val skuSuggestions = listOf("20L", "2L", "1L", "500ml", "250ml")
 private const val DEFAULT_LOW_STOCK_ALERT = 5
@@ -386,10 +387,10 @@ fun AddStockPurchaseScreen(
                                         .weight(1f)
                                         .height(44.dp)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(if (isSelected) FormTeal else NTColors.SurfaceVar)
+                                        .background(if (isSelected) FormTealContainer else NTColors.SurfaceVar)
                                         .border(
                                             1.dp,
-                                            if (isSelected) FormTeal else NTColors.Border,
+                                            if (isSelected) FormTealContainer else NTColors.Border,
                                             RoundedCornerShape(10.dp)
                                         )
                                         .clickable(
@@ -655,7 +656,7 @@ fun AddStockPurchaseScreen(
                             modifier = Modifier
                                 .size(44.dp)
                                 .clip(CircleShape)
-                                .background(FormTeal)
+                                .background(FormTealContainer)
                         ) {
                             Icon(Icons.Rounded.Add, null, tint = Color.White)
                         }
@@ -746,13 +747,13 @@ fun AddStockPurchaseScreen(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFFFF3E8)),
+                                    .background(NTColors.WarningLight),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     Icons.AutoMirrored.Rounded.Undo,
                                     contentDescription = null,
-                                    tint = Color(0xFFF97316),
+                                    tint = NTColors.Warning,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -869,7 +870,7 @@ fun AddStockPurchaseScreen(
                             .fillMaxWidth()
                             .height(52.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(FormTeal)
+                            .background(FormTealContainer)
                             .background(
                                 Brush.verticalGradient(
                                     listOf(
@@ -989,7 +990,7 @@ fun AddStockPurchaseScreen(
                 confirmButton = {
                     Button(
                         onClick = { showErrorAlert = null },
-                        colors = ButtonDefaults.buttonColors(containerColor = FormTeal)
+                        colors = ButtonDefaults.buttonColors(containerColor = FormTealContainer)
                     ) {
                         Text("OK", color = Color.White)
                     }

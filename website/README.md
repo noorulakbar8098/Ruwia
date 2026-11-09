@@ -73,17 +73,17 @@ Open `src/config/app.config.ts` and update the `release` block:
 
 ```ts
 release: {
-  version: "2.4",                          // Your new version name
-  versionCode: 6,                          // Android versionCode
-  releaseDate: "December 2026",             // Human-readable date
-  apkSize: "28.9 MB",                      // File size
+  version: "2.5",                          // Your new version name
+  versionCode: 7,                          // Android versionCode
+  releaseDate: "November 9, 2026",          // Human-readable date
+  apkSize: "26.6 MB",                      // File size
   minAndroid: "Android 7.0 (API 24)",      // Minimum OS supported
   targetAndroid: "Android 16 (API 36)",    // Target SDK
   architecture: "Universal",               // Architecture compatibility
-  sha256: "YOUR_ACTUAL_SHA256_HASH_HERE",  // Generate using sha256sum
-  downloadUrl: "https://github.com/your-org/your-repo/releases/download/v2.4/app-release.apk",
-  githubReleaseUrl: "https://github.com/your-org/your-repo/releases/tag/v2.4",
-  allReleasesUrl: "https://github.com/your-org/your-repo/releases",
+  sha256: "21e3f2fcf74f12b149b90ff5aa908206b9f1aba02bcbf10bd420d134f5644744",
+  downloadUrl: "/downloads/ruwia-v2.5-release.apk",
+  githubReleaseUrl: "https://github.com/noorulakbar8098/Ruwia/releases",
+  allReleasesUrl: "https://github.com/noorulakbar8098/Ruwia/releases",
 }
 ```
 
@@ -141,7 +141,7 @@ A GitHub Actions workflow is pre-configured in [`.github/workflows/deploy-site.y
 
 1. In your GitHub repository, navigate to **Settings** > **Pages**.
 2. Under **Build and deployment** > **Source**, select **GitHub Actions**.
-3. Push to `main`. The workflow builds `website/out` and deploys it with the custom domain declared in [`website/public/CNAME`](./public/CNAME).
+3. Push to `main` or `feature/delivery-&-push-notify-feature`. The workflow builds `website/out` and deploys it with the custom domain declared in [`website/public/CNAME`](./public/CNAME).
 
 #### DNS records (Squarespace Domains)
 

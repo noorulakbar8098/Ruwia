@@ -46,6 +46,7 @@ import com.example.ruwia.domain.effectiveStockMap
 import com.example.ruwia.domain.is20LitreCan
 import com.example.ruwia.domain.shopMatchKey
 import com.example.ruwia.theme.RuwiaColor
+import com.example.ruwia.ui.dashboard.NTColors
 import com.example.ruwia.ui.dashboard.NTDp
 import com.example.ruwia.util.dbToDisplayDate
 import com.example.ruwia.util.isoToDisplayTime
@@ -1337,7 +1338,7 @@ private fun CanTrackingSection(
             Text(
                 "Only ${preview.maxReturnable} can(s) can be returned for this customer.",
                 fontSize = 11.sp,
-                color = Color(0xFFC0392B),
+                color = NTColors.ErrorText,
                 fontWeight = FontWeight.SemiBold,
             )
         } else if (!canEdit) {
@@ -1414,13 +1415,13 @@ private fun PaymentReceivedSection(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFFFFF3E0), RoundedCornerShape(10.dp))
+                    .background(NTColors.WarningLight, RoundedCornerShape(10.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Text("Previous balance", fontSize = 12.sp, color = RuwiaColor.TextSecondary, modifier = Modifier.weight(1f))
-                    Text("₹${previousBalance.toInt()}", fontSize = 12.sp, color = Color(0xFFC05000), fontWeight = FontWeight.SemiBold)
+                    Text("₹${previousBalance.toInt()}", fontSize = 12.sp, color = NTColors.WarningText, fontWeight = FontWeight.SemiBold)
                 }
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Text("This sale", fontSize = 12.sp, color = RuwiaColor.TextSecondary, modifier = Modifier.weight(1f))
@@ -1429,7 +1430,7 @@ private fun PaymentReceivedSection(
                 HorizontalDivider(color = RuwiaColor.Divider.copy(alpha = 0.5f))
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Text("Total due", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = RuwiaColor.TextPrimary, modifier = Modifier.weight(1f))
-                    Text("₹${totalDue.toInt()}", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFD9534F))
+                    Text("₹${totalDue.toInt()}", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = NTColors.ErrorText)
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -1469,7 +1470,7 @@ private fun PaymentReceivedSection(
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PaymentSummaryCell("Paid Now", "₹${paid.toInt()}", RuwiaColor.TealPrimary, Modifier.weight(1f))
-            PaymentSummaryCell("Total Due", "₹${due.toInt()}", Color(0xFFD9534F), Modifier.weight(1f))
+            PaymentSummaryCell("Total Due", "₹${due.toInt()}", NTColors.ErrorText, Modifier.weight(1f))
         }
 
         Spacer(Modifier.height(12.dp))

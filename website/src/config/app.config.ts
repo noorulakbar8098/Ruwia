@@ -81,23 +81,23 @@ export const APP_CONFIG = {
   // EDIT THESE VALUES WHEN PUBLISHING A NEW APK VERSION
   // ----------------------------------------------------------------------------
   release: {
-    version: "2.4",
-    versionCode: 6,
-    releaseDate: "November 7, 2026",
-    apkSize: "26.8 MB",
+    version: "2.5",
+    versionCode: 7,
+    releaseDate: "November 9, 2026",
+    apkSize: "26.6 MB",
     // File name Android shows in the download notification and Downloads app.
     // Keep this in sync with the actual file published under /downloads/.
-    apkFileName: "ruwia-v2.4-release.apk",
+    apkFileName: "ruwia-v2.5-release.apk",
     minAndroid: "Android 7.0 (Nougat, API 24)",
     targetAndroid: "Android 16 (API 36)",
     architecture: "Universal (arm64-v8a, armeabi-v7a, x86_64)",
     // Genuine SHA-256 checksum of the published APK.
-    // Verify with: shasum -a 256 ruwia-v2.4-release.apk
-    sha256: "9f32a7fcc1f6ab79357f803892abb139bba5f19bb1b52ceb223872156b2577dd",
+    // Verify with: shasum -a 256 ruwia-v2.5-release.apk
+    sha256: "21e3f2fcf74f12b149b90ff5aa908206b9f1aba02bcbf10bd420d134f5644744",
 
     // The signed APK is served as a static file from this website.
     // One click downloads it directly; no GitHub or external portal involved.
-    downloadUrl: publicAsset("/downloads/ruwia-v2.4-release.apk"),
+    downloadUrl: publicAsset("/downloads/ruwia-v2.5-release.apk"),
 
     // Source repository and release archive (secondary references only).
     githubReleaseUrl: "https://github.com/noorulakbar8098/Ruwia/releases",
@@ -283,10 +283,33 @@ export const APP_CONFIG = {
   // ----------------------------------------------------------------------------
   releases: [
     {
+      version: "2.5",
+      versionCode: 7,
+      releaseDate: "November 9, 2026",
+      isLatest: true,
+      apkSize: "26.6 MB",
+      sha256: "21e3f2fcf74f12b149b90ff5aa908206b9f1aba02bcbf10bd420d134f5644744",
+      downloadUrl: publicAsset("/downloads/ruwia-v2.5-release.apk"),
+      githubReleaseUrl: "https://github.com/noorulakbar8098/Ruwia/releases",
+      highlights: "Refined dashboards and smoother daily workflows across sales, stock, deliveries, and sign-in.",
+      features: [
+        "Updated dashboard visuals and interaction feedback for clearer operational summaries.",
+        "Refined employee task and delivery timeline interactions.",
+        "Improved sales, stock purchase, inventory, and transaction screen flows.",
+      ],
+      improvements: [
+        "Consistent colors, card surfaces, and chart styling across key app screens.",
+        "More responsive controls and clearer interaction states throughout the app.",
+      ],
+      fixes: [
+        "Polished sign-in and dashboard behavior across admin and employee workflows.",
+      ],
+    },
+    {
       version: "2.4",
       versionCode: 6,
       releaseDate: "November 7, 2026",
-      isLatest: true,
+      isLatest: false,
       apkSize: "26.8 MB",
       sha256: "9f32a7fcc1f6ab79357f803892abb139bba5f19bb1b52ceb223872156b2577dd",
       downloadUrl: publicAsset("/downloads/ruwia-v2.4-release.apk"),
@@ -432,7 +455,7 @@ export const APP_CONFIG = {
     {
       question: "What should I do if installation fails?",
       answer:
-        "If you encounter 'App not installed' or 'Installation blocked': (1) Ensure you have at least 100 MB of free storage space. (2) Check that your device is running Android 7.0 or newer. (3) If Google Play Protect shows a dialog, tap 'More details' and then tap 'Install anyway'. (4) If you previously installed the v2.3 build, uninstall it once before installing v2.4. This release uses a new signing certificate, and Android will not update an app across different signatures. Server data stays safe in your account and syncs back after you sign in.",
+        "If you encounter 'App not installed' or 'Installation blocked': (1) Ensure you have at least 100 MB of free storage space. (2) Check that your device is running Android 7.0 or newer. (3) If Google Play Protect shows a dialog, tap 'More details' and then tap 'Install anyway'. (4) If you previously installed the v2.3 build, uninstall it before installing v2.5 because v2.3 used a different signing certificate. Users of v2.4 can install v2.5 directly. Server data stays safe in your account and syncs back after you sign in.",
       category: "installation",
     },
   ] as FaqItem[],

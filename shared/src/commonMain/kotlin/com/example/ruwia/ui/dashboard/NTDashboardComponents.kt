@@ -1,5 +1,6 @@
 package com.example.ruwia.ui.dashboard
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,7 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -74,7 +77,8 @@ fun NTSectionHeader(
                 text = title,
                 color = NTColors.TextPrimary,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.2).sp
             )
             if (trailingText.isNotEmpty()) {
                 Text(
@@ -83,8 +87,15 @@ fun NTSectionHeader(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(NTDp.radSm))
-                        .clickable(onClickLabel = trailingText, onClick = onTrailingClick)
+                        .ntPressable(
+                            onClick = onTrailingClick,
+                            onClickLabel = trailingText,
+                            role = Role.Button,
+                            pressedScale = 1f,
+                            pressedAlpha = NTInteraction.PressAlpha,
+                            ripple = false,
+                            shape = RoundedCornerShape(NTDp.radSm),
+                        )
                         .padding(horizontal = 8.dp, vertical = 6.dp)
                 )
             }
@@ -118,8 +129,13 @@ fun NTDashboardHeader(
         Box(
             modifier = Modifier
                 .size(44.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(onClickLabel = "Open settings", onClick = onAvatarClick),
+                .ntPressable(
+                    onClick = onAvatarClick,
+                    onClickLabel = "Open settings",
+                    role = Role.Button,
+                    pressedScale = NTInteraction.PressScaleCompact,
+                    shape = RoundedCornerShape(12.dp),
+                ),
             contentAlignment = Alignment.Center
         ) {
             Image(
@@ -135,13 +151,13 @@ fun NTDashboardHeader(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = consoleName.trim().ifBlank { "ADMIN CONSOLE" },
-                color = NTColors.TextTertiary, fontSize = 10.sp,
+                color = Color.White.copy(alpha = 0.70f), fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = displayName, color = NTColors.TextPrimary,
+                text = displayName, color = Color.White,
                 fontSize = 19.sp, fontWeight = FontWeight.ExtraBold,
                 letterSpacing = (-0.3).sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -153,10 +169,15 @@ fun NTDashboardHeader(
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clip(CircleShape)
+                    .ntPressable(
+                        onClick = onNotificationClick,
+                        onClickLabel = "Notifications",
+                        role = Role.Button,
+                        pressedScale = NTInteraction.PressScaleCompact,
+                        shape = CircleShape,
+                    )
                     .background(NTColors.Surface)
-                    .border(1.dp, NTColors.Border, CircleShape)
-                    .clickable(onClickLabel = "Notifications", onClick = onNotificationClick),
+                    .border(1.dp, NTColors.Border, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -173,7 +194,7 @@ fun NTDashboardHeader(
                         .offset(x = (-1).dp, y = 1.dp)
                         .size(11.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFFEF4444))
+                        .background(NTColors.Error)
                         .border(2.dp, NTColors.Background, CircleShape)
                 )
             }
@@ -185,9 +206,14 @@ fun NTDashboardHeader(
         Box(
             modifier = Modifier
                 .size(44.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF0F2E2C))
-                .clickable(onClickLabel = "Open settings", onClick = onAvatarClick),
+                .ntPressable(
+                    onClick = onAvatarClick,
+                    onClickLabel = "Open settings",
+                    role = Role.Button,
+                    pressedScale = NTInteraction.PressScaleCompact,
+                    shape = CircleShape,
+                )
+                .background(Color(0xFF0F2E2C)),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -234,10 +260,15 @@ fun NTPrimaryTopBar(
             Box(
                 modifier = Modifier
                     .size(38.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .ntPressable(
+                        onClick = onBack,
+                        onClickLabel = "Back",
+                        role = Role.Button,
+                        pressedScale = NTInteraction.PressScaleCompact,
+                        shape = RoundedCornerShape(12.dp),
+                    )
                     .background(Color.White.copy(alpha = 0.10f))
-                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(12.dp))
-                    .clickable(onClickLabel = "Back", onClick = onBack),
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(20.dp))
@@ -301,8 +332,15 @@ fun NTIconCircleButton(
     bgColor: Color = NTColors.Surface
 ) {
     Box(
-        modifier = Modifier.size(40.dp).clip(CircleShape)
-            .background(bgColor).clickable(onClick = onClick),
+        modifier = Modifier
+            .size(40.dp)
+            .ntPressable(
+                onClick = onClick,
+                role = Role.Button,
+                pressedScale = NTInteraction.PressScaleCompact,
+                shape = CircleShape,
+            )
+            .background(bgColor),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = tint,
@@ -323,16 +361,16 @@ fun GlossyArrowButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.85f else 1f,
+        targetValue = if (pressed) NTInteraction.PressScaleCompact else 1f,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
         ),
         label = "glossyArrowScale",
     )
     val sheen by animateFloatAsState(
         targetValue = if (pressed) 1f else 0f,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = tween(durationMillis = NTMotion.Fast, easing = NTMotion.EaseOut),
         label = "glossyArrowSheen",
     )
     Box(
@@ -358,6 +396,7 @@ fun GlossyArrowButton(
                 interactionSource = interaction,
                 indication = null,
                 onClickLabel = contentDescription,
+                role = Role.Button,
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center
@@ -395,16 +434,21 @@ fun GlossyTealBox(
     contentAlignment: Alignment = Alignment.Center,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    var m = modifier
-        .clip(shape)
-        .background(if (enabled) GlossTeal else NTColors.TextDisabled)
+    var m = modifier.clip(shape)
+    if (onClick != null && enabled) {
+        m = m.ntPressable(
+            onClick = onClick,
+            onClickLabel = onClickLabel,
+            role = Role.Button,
+            pressedScale = NTInteraction.PressScale,
+            ripple = false,
+        )
+    }
+    m = m.background(if (enabled) GlossTeal else NTColors.TextDisabled)
     if (enabled) {
         m = m
             .background(glossSheen)
             .border(1.dp, Color.White.copy(alpha = 0.16f), shape)
-    }
-    if (onClick != null && enabled) {
-        m = m.clickable(onClickLabel = onClickLabel, onClick = onClick)
     }
     Box(modifier = m, contentAlignment = contentAlignment) {
         content()
@@ -424,11 +468,11 @@ fun NTGreetingSection(
             .padding(horizontal = NTDp.screenPad)
             .padding(top = NTDp.sm, bottom = NTDp.md)
     ) {
-        Text(text = greeting, color = NTColors.TextPrimary,
+        Text(text = greeting, color = Color.White,
             fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 30.sp,
             letterSpacing = (-0.4).sp)
         Spacer(modifier = Modifier.height(4.dp))
-        Text(text = subtext, color = NTColors.TextSecondary, fontSize = 14.sp, lineHeight = 20.sp)
+        Text(text = subtext, color = Color.White.copy(alpha = 0.78f), fontSize = 14.sp, lineHeight = 20.sp)
     }
 }
 
@@ -513,9 +557,15 @@ fun NTBusinessOverviewCard(
             Box {
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .ntPressable(
+                            onClick = { dropdownOpen = true },
+                            onClickLabel = "Change period",
+                            role = Role.Button,
+                            pressedScale = NTInteraction.PressScaleCompact,
+                            ripple = false,
+                            shape = RoundedCornerShape(10.dp),
+                        )
                         .background(OverviewSurface)
-                        .clickable(onClickLabel = "Change period", onClick = { dropdownOpen = true })
                         .heightIn(min = 40.dp)
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1311,11 +1361,18 @@ fun NTQuickActionsRow(
 
 @Composable
 private fun NTActionTile(action: NTQuickAction, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(NTDp.radLg)
     Box(
         modifier = modifier
-            .background(NTColors.Surface, RoundedCornerShape(NTDp.radLg))
-            .border(1.dp, NTColors.Border, RoundedCornerShape(NTDp.radLg))
-            .clickable(onClick = onClick)
+            .ntPressable(
+                onClick = onClick,
+                onClickLabel = action.label,
+                role = Role.Button,
+                pressedScale = NTInteraction.PressScale,
+                shape = shape,
+            )
+            .background(NTColors.Surface, shape)
+            .border(1.dp, NTColors.Border, shape)
             .padding(horizontal = 12.dp, vertical = 14.dp),
     ) {
         Column {
@@ -1373,10 +1430,29 @@ fun NTDateRangePicker(
     ) {
         options.forEach { range ->
             val isSelected = range == selected
+            val shape = RoundedCornerShape(NTDp.radFull)
+            val chipBg by animateColorAsState(
+                targetValue = if (isSelected) OverviewBg else Color.Transparent,
+                animationSpec = tween(NTMotion.Base, easing = NTMotion.EaseOut),
+                label = "dateRangeBg",
+            )
+            val chipFg by animateColorAsState(
+                targetValue = if (isSelected) Color.White else NTColors.TextTertiary,
+                animationSpec = tween(NTMotion.Base, easing = NTMotion.EaseOut),
+                label = "dateRangeFg",
+            )
             Box(
                 modifier = Modifier.weight(1f)
-                    .clip(RoundedCornerShape(NTDp.radFull))
-                    .background(if (isSelected) OverviewBg else Color.Transparent)
+                    .ntPressable(
+                        onClick = { onSelect(range) },
+                        onClickLabel = range.label(),
+                        role = Role.RadioButton,
+                        pressedScale = NTInteraction.PressScaleCompact,
+                        ripple = false,
+                        shape = shape,
+                    )
+                    .semantics { this.selected = isSelected }
+                    .background(chipBg)
                     // Subtle glassy top-light sheen on the selected chip.
                     .then(
                         if (isSelected) Modifier.background(
@@ -1393,21 +1469,15 @@ fun NTDateRangePicker(
                         if (isSelected) Modifier.border(
                             1.dp,
                             Color.White.copy(alpha = 0.16f),
-                            RoundedCornerShape(NTDp.radFull)
+                            shape
                         ) else Modifier
                     )
-                    .then(
-                        if (isSelected) Modifier.shadow(
-                            3.dp, RoundedCornerShape(NTDp.radFull), clip = false
-                        ) else Modifier
-                    )
-                    .clickable(onClickLabel = range.label(), onClick = { onSelect(range) })
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     range.label(),
-                    color = if (isSelected) Color.White else NTColors.TextTertiary,
+                    color = chipFg,
                     fontSize = 12.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -1437,6 +1507,7 @@ fun NTBottomNavigation(
     tabs: List<NTNavTab> = defaultNavTabs(),
     modifier: Modifier = Modifier,
 ) {
+    val barShape = RoundedCornerShape(NTDp.radXxl)
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -1447,8 +1518,9 @@ fun NTBottomNavigation(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .shadow(10.dp, RoundedCornerShape(24.dp), clip = false)
-                .background(NavBarBg, RoundedCornerShape(24.dp))
+                .shadow(8.dp, barShape, clip = false)
+                .background(NavBarBg, barShape)
+                .border(1.dp, Color.White.copy(alpha = 0.08f), barShape)
                 .padding(horizontal = 4.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
@@ -1462,28 +1534,49 @@ fun NTBottomNavigation(
 
 @Composable
 private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: () -> Unit) {
+    val tabShape = RoundedCornerShape(16.dp)
+    val chipShape = RoundedCornerShape(14.dp)
+    val iconBg by animateColorAsState(
+        targetValue = if (isSelected) OverviewSurface else Color.Transparent,
+        animationSpec = tween(NTMotion.Base, easing = NTMotion.EaseOut),
+        label = "navIconBg",
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (isSelected) Color.White else Color(0xFF8AA0A4),
+        animationSpec = tween(NTMotion.Base, easing = NTMotion.EaseOut),
+        label = "navIconTint",
+    )
+    val labelColor by animateColorAsState(
+        targetValue = if (isSelected) Color.White else Color(0xFFB4C2C6),
+        animationSpec = tween(NTMotion.Base, easing = NTMotion.EaseOut),
+        label = "navLabelColor",
+    )
     Column(
         modifier = Modifier
             .weight(1f)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClickLabel = tab.label, onClick = onClick)
+            .ntPressable(
+                onClick = onClick,
+                onClickLabel = tab.label,
+                role = Role.Tab,
+                pressedScale = NTInteraction.PressScaleCompact,
+                ripple = false,
+                shape = tabShape,
+            )
+            .semantics { this.selected = isSelected }
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
-                .background(
-                    if (isSelected) OverviewSurface
-                    else Color.Transparent
-                )
+                .clip(chipShape)
+                .background(iconBg)
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = tab.icon,
                 contentDescription = tab.label,
-                tint = if (isSelected) Color(0xFFFFFFFF) else Color(0xFF8AA0A4),
+                tint = iconTint,
                 modifier = Modifier.size(22.dp),
             )
             if (tab.badge > 0) {
@@ -1503,7 +1596,7 @@ private fun RowScope.NTNavTabItem(tab: NTNavTab, isSelected: Boolean, onClick: (
         Spacer(Modifier.height(3.dp))
         Text(
             text       = tab.label,
-            color      = if (isSelected) Color(0xFFFFFFFF) else Color(0xFFB4C2C6),
+            color      = labelColor,
             fontSize   = 10.sp,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
             maxLines   = 1,

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feature/delivery-&-push-notify-feature
     paths:
       - 'website/**'
       - '.github/workflows/deploy-site.yml'

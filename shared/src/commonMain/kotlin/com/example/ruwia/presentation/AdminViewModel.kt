@@ -517,18 +517,19 @@ class AdminViewModel(
             val lastExpense = async { repo.getMonthlyExpense(previousMonth) }
             val feed        = async { notifications.getFeed() }
             HomeSnapshot(
-                products     = products.await(),
-                movements    = movements?.await() ?: _state.value.recentMovements,
-                saleEntries  = sales.await(),
-                customers    = customers.await(),
-                orders       = orders.await(),
-                tasks        = tasks.await(),
-                feed         = feed.await(),
-                shopNames    = emptyList(),
-                baseline     = -1,
-                expense      = expense.await(),
-                lastExpense  = lastExpense.await(),
-                csat         = _state.value.csat,
+                products = products.await(),
+                movements = movements?.await() ?: _state.value.recentMovements,
+                saleEntries = sales.await(),
+                customers = customers.await(),
+                orders = orders.await(),
+                tasks = tasks.await(),
+                feed = feed.await(),
+                shopNames = emptyList(),
+                baseline = -1,
+                expense = expense.await(),
+                lastExpense = lastExpense.await(),
+                csat = _state.value.csat,
+                adminConsoleName = "${_state.value.adminConsoleName}",
             )
         }
         val previous = _state.value

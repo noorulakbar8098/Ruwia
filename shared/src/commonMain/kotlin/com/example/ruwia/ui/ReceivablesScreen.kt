@@ -51,6 +51,7 @@ private val HeroMint = Color(0xFF5EEAD4)
 
 /** Deep forest teal with the shared top-light sheen used by glossy actions. */
 private val GlossyTeal = Color(0xFF0F2E2C)
+private val GlossyTealInk: Color get() = NTColors.BrandInk
 
 private fun Modifier.glossyTealSurface(shape: Shape): Modifier = this
     .clip(shape)
@@ -1275,7 +1276,7 @@ private fun RecordPaymentSheet(
                         width = 1.dp,
                         color = when {
                             showError -> NTColors.Error
-                            amount.isNotBlank() -> GlossyTeal
+                            amount.isNotBlank() -> GlossyTealInk
                             else -> NTColors.Border
                         },
                         shape = RoundedCornerShape(16.dp),
@@ -1307,7 +1308,7 @@ private fun RecordPaymentSheet(
                             fontWeight = FontWeight.ExtraBold,
                             color = NTColors.TextPrimary,
                         ),
-                        cursorBrush = SolidColor(GlossyTeal),
+                        cursorBrush = SolidColor(GlossyTealInk),
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Decimal,
                             imeAction = ImeAction.Next,
@@ -1377,7 +1378,7 @@ private fun RecordPaymentSheet(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = GlossyTeal,
+                    focusedBorderColor = GlossyTealInk,
                     unfocusedBorderColor = NTColors.Border,
                     focusedContainerColor = NTColors.SurfaceVar,
                     unfocusedContainerColor = NTColors.SurfaceVar,
